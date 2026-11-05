@@ -163,8 +163,12 @@ and the reminder time (§4.9).
 
 - **UI**: Auth.js v5 with Google. Sign-in is allowed only for emails in `ALLOWED_EMAILS`.
   Sessions are JWT with a 90-day max age, so the home-screen PWA rarely signs out.
-  `DEV_AUTH_BYPASS=1` (local and e2e only, refused when `VERCEL_ENV=production`) signs in a fixed
-  dev user.
+  Google must report the address as verified. `DEV_AUTH_BYPASS=1` (local and e2e only) signs in
+  a fixed dev user (`dev@example.com`) with no sign-in step; it is refused on **every** Vercel
+  deployment (`VERCEL` or `VERCEL_ENV` set), previews included. A proxy (`web/proxy.ts`)
+  redirects signed-out page requests to `/sign-in`, and each page also calls `requireUser()`.
+  Previews have no Google redirect URI (their host changes per build), so they can't complete
+  Google sign-in.
 - **Machines**: bearer tokens, compared in constant time.
   - `AGENT_API_TOKEN`: `/api/imports*` and `/api/agent/*` (`bamboo-tools`).
   - `WORKER_API_TOKEN`: `/api/jobs/*` and `/api/worker/*`.
@@ -538,17 +542,21 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `AGENT_API_TOKEN`, `WORKER_API_TOKEN`, `CRON_SECRET` | web (+ tools / worker) | `openssl rand -hex 32` |
 | `HOUSEHOLD_TZ` | web | default `America/Los_Angeles` |
 | `APP_URL` | web | for links in Discord messages |
-| `DEV_AUTH_BYPASS` | web (dev/e2e) | refused in production |
+| `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: channel id) | tools | |
 | `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` |
 
 ### 8.2 Deploy
 
-- **Vercel** Git integration: `main` → production; PRs → previews.
+- **Vercel** Git integration: `main` → production; PRs → previews. The project's Root Directory
+  is `web` (with files outside it included in the build).
 - **Turso**: two databases, `bamboo` (prod) and `bamboo-preview`. Vercel env vars are scoped
-  per environment.
-- **Migrations**: the Vercel build command is `pnpm db:migrate && pnpm --filter web build`, run
-  against whichever DB that environment points at. Migrations must be **expand → contract**:
+  per environment; previews get their own `AUTH_SECRET` and machine tokens.
+- **Migrations**: the Vercel build command (`web/vercel.json`) is
+  `pnpm --dir .. db:migrate && pnpm build`, i.e. `pnpm db:migrate && pnpm --filter web build`
+  from the repo root, run against whichever DB that environment points at. On Vercel,
+  `db:migrate` fails the build if `TURSO_DATABASE_URL` is missing or local, or
+  `TURSO_AUTH_TOKEN` is missing, so a misconfigured environment never deploys. Migrations must be **expand → contract**:
   add freely; drop or rename only in a later PR once no deployed code uses the column.
 
 ### 8.3 Mac mini
@@ -616,6 +624,7 @@ bamboo/
 | 16 | Separate repo, DB, worker and skill from PandaBase; shared Ollama and OpenClaw | Independent deploys and failure; one model resident on a 32GB machine |
 | 17 | Mandarin only; no `lang` column yet | Cantonese is undecided; adding it later is one expand migration plus Jyutping and a zh-HK voice |
 | 18 | Single user, no `member` table | One learner; add a user column if a second learner is real |
+| 19 | `DEV_AUTH_BYPASS` is refused on every Vercel deployment, not just production; previews have no Google sign-in | Previews run unreviewed PR code on a guessable URL, so a stray env var must never open one; a per-preview redirect URI isn't possible with Google, and M1–M6 need no signed-in preview |
 
 ## Appendix A — Synthetic fixtures
 

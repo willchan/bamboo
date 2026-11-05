@@ -4,3 +4,29 @@ node_modules/
 !.env.example
 *.db
 private/
+
+# package manager
+.pnpm-store/
+
+# build output
+out/
+dist/
+build/
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
+
+# testing
+coverage/
+playwright-report/
+test-results/
+
+# local database side files
+*.db-journal
+*.db-shm
+*.db-wal
+
+# misc
+.DS_Store
+*.pem
+*.log

@@ -1,0 +1,10 @@
+# Docs are hand-wrapped Markdown; generated and build output is not ours to format.
+*.md
+pnpm-lock.yaml
+db/migrations/
+.next/
+next-env.d.ts
+coverage/
+private/
+# M0's throwaway spike has its own package.json and is not part of the workspace.
+spikes/

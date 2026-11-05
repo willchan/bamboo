@@ -73,7 +73,7 @@ genuinely useful** (share a conversation, get a deck).
 | Milestone | Status | PR |
 |---|---|---|
 | M0 Share-link spike | todo | |
-| M1 Skeleton, auth, deploy | todo | |
+| M1 Skeleton, auth, deploy | in review | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | todo | |
 | M3 Capture: engine | todo | |
 | M4 Worker | todo | |
@@ -150,6 +150,69 @@ Manual, listed in the PR for Will:
 **Out of scope:** domain tables, worker or tools logic.
 
 **Notes:**
+
+*Versions chosen (checked 2026-11-05):* Node **24** (`.nvmrc` = `24`, `engines.node` =
+`>=24 <25`; built on 24.22.2), pnpm **12.16.1** (`packageManager`), Next.js **16.4.5** (App
+Router, Turbopack), React **19.3.1**, Auth.js **next-auth 5.0.0-beta.32** (v5 is still only on the
+`beta` tag), Tailwind **4.3.4** (`@tailwindcss/postcss`), Drizzle ORM **0.45.4** + drizzle-kit
+**0.31.11** (`dialect: "turso"`), `@libsql/client` **0.18.0**, TypeScript **6.0.3**, ESLint
+**9.39.5**, typescript-eslint **8.72.1**, eslint-config-next **16.4.5**, Prettier **3.9.10**,
+Vitest **5.1.0**, tsx **4.23.15**. Runtime and build deps are pinned exactly; `@types/*` use
+ranges.
+
+*Deviations / choices:*
+- **TypeScript 6, not 7.** typescript-eslint 8.72's peer range is still `<6.1.0`. Same call as
+  PandaBase; revisit when it supports 7.
+- **ESLint 9, not 10.** pnpm flags 9.39.5 as deprecated, but eslint-config-next 16.4.5 still pulls
+  `eslint-plugin-react` 7.37, whose peer range stops at ESLint 9.
+- **`DEV_AUTH_BYPASS` is stricter than DESIGN said:** refused on every Vercel deployment
+  (`VERCEL` or `VERCEL_ENV` set), not only production. It needs no click: `getCurrentUser()`
+  returns the fixed dev user (`dev@example.com`) and the proxy lets every request through. Under
+  the bypass, a missing `AUTH_SECRET` falls back to a dev-only constant, so `DEV_AUTH_BYPASS=1
+  pnpm dev` works with no `.env.local`. DESIGN §3.1, §8.1 and §10 #19 updated.
+- **Previews can't complete Google sign-in** (Google has no wildcard redirect URIs and the host
+  changes per build). Preview `ALLOWED_EMAILS` is left unset. DESIGN §3.1 and §10 #19.
+- **Vercel Root Directory is `web`**, so the build command lives in `web/vercel.json` as
+  `pnpm --dir .. db:migrate && pnpm build` (same effect as DESIGN's root-level command). On
+  Vercel, `db:migrate` refuses a missing/local `TURSO_DATABASE_URL` or a missing
+  `TURSO_AUTH_TOKEN`, so a misconfigured environment fails its build instead of deploying against
+  an unmigrated DB. DESIGN §8.2 updated.
+- **Icons are generated, not committed PNGs:** `web/components/bamboo-mark.tsx` is one SVG used in
+  the UI and rendered by `app/icon.tsx` (`/icon/192`, `/icon/512`, prerendered at build) and
+  `app/apple-icon.tsx` (180×180). The mark stays inside the maskable safe zone. The manifest is
+  `app/manifest.ts` (`/manifest.webmanifest`, `display: standalone`), plus `appleWebApp` metadata.
+- No shadcn/ui yet: the two M1 pages use plain Tailwind with CSS-variable tokens in
+  `app/globals.css` (light + dark via `prefers-color-scheme`). Add components when M2 needs them.
+- System fonts (with PingFang SC / Noto Sans SC for hanzi); no `next/font/google`, so
+  `next build` needs no network.
+- `setting` is `key text PK, value text NOT NULL` (migration `0000_setting`). M6 decides the value
+  encoding.
+- CI adds two cheap steps beyond the plan: the migrations match the schema
+  (`drizzle-kit check` + `db:generate` leaves no diff) and they apply to a fresh `db/dev.db`.
+- `spikes/` (M0's) is excluded from ESLint and Prettier: it is not part of the workspace.
+
+*For M2+:*
+- Packages ship TypeScript source with no build step (`exports: ./src/index.ts`); `/web`
+  transpiles `@bamboo/db` and `@bamboo/shared` (`next.config.ts`). The worker and tools run with
+  `tsx`.
+- ESLint: the root `eslint.config.mjs` (JS + typescript-eslint + prettier) covers `/db`,
+  `/shared`, `/worker`, `/agent/tools`; `/web` has its own (next core-web-vitals + typescript +
+  prettier). `pnpm lint` = ESLint in every package + `prettier --check .`; Prettier ignores `*.md`
+  and `db/migrations/`. `verbatimModuleSyntax` is on: use `import type`.
+- `web` `typecheck` runs `next typegen && tsc --noEmit` (typed `PageProps`/`LayoutProps`);
+  `next-env.d.ts` is gitignored.
+- Next's types make `NodeJS.ProcessEnv.NODE_ENV` required, so functions that take an env for tests
+  use `Env` from `web/lib/auth/allowlist.ts`.
+- Auth: pages call `requireUser()` / `getCurrentUser()` from `web/lib/auth/current.ts` (never
+  `auth()` directly, or the dev bypass is skipped). `web/proxy.ts` excludes `api/`, so machine
+  routes must authenticate themselves.
+- DB: `createTestDb()` from `@bamboo/db` gives a migrated in-memory libSQL per test. After editing
+  `db/src/schema/*`, run `pnpm db:generate` and commit the migration; CI fails otherwise.
+- `pnpm-workspace.yaml` `allowBuilds` denies install scripts for `esbuild`, `sharp` and
+  `unrs-resolver`; a new dep that needs one must be added there.
+- Playwright is not installed yet; M2 adds it and `test:e2e`.
+- `Makefile`: `worker-install`, `worker-logs`, `mac-update` (M4) and `agent-install` (M5) are
+  stubs that exit 1.
 
 ---
 

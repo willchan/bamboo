@@ -1,0 +1,15 @@
+packages:
+  - web
+  - db
+  - shared
+  - worker
+  - agent/tools
+
+# Dependency build scripts are opt-in (pnpm 10+). Prebuilt binaries suffice for these: sharp
+# (Next's image optimiser), esbuild (tsx, drizzle-kit, vitest) and unrs-resolver (ESLint import
+# resolver) ship their platform binaries as optional dependencies. A new dependency that really
+# needs its install script must be allowed here.
+allowBuilds:
+  esbuild: false
+  sharp: false
+  unrs-resolver: false

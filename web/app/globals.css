@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/* Dark mode follows the system (DESIGN §6): Bamboo is mostly used at night. */
+:root {
+  color-scheme: light dark;
+  --background: #f7f6ef;
+  --foreground: #1b231e;
+  --card: #ffffff;
+  --muted: #5d6b62;
+  --border: #dfe3d8;
+  --primary: #2f6b4a;
+  --primary-foreground: #f7f6ef;
+  --danger: #a33a2a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #111814;
+    --foreground: #e9eee8;
+    --card: #19221d;
+    --muted: #a3b0a7;
+    --border: #2c3831;
+    --primary: #7cc49a;
+    --primary-foreground: #10261a;
+    --danger: #f0a090;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-danger: var(--danger);
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC",
+    sans-serif;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  /* Standalone PWA on iPhone: keep content clear of the notch and home indicator. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
