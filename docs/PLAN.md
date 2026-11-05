@@ -73,7 +73,7 @@ genuinely useful** (share a conversation, get a deck).
 | Milestone | Status | PR |
 |---|---|---|
 | M0 Share-link spike | todo | |
-| M1 Skeleton, auth, deploy | in review | |
+| M1 Skeleton, auth, deploy | in review | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | todo | |
 | M3 Capture: engine | todo | |
 | M4 Worker | todo | |
