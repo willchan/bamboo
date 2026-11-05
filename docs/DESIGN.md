@@ -13,33 +13,37 @@
                        │        domain logic: web/lib/domain (pure, tested)               │
                        │        Drizzle ORM ───────────────────────▶ Turso (libSQL)       │
                        │        Vercel Cron: /api/cron/daily                              │
-                       └──────▲──────────────────────▲─────────────────────▲─────────────┘
-         presigned PUT        │ HTTPS (bearer)       │ HTTPS (bearer)      │
-  iOS Shortcut / PWA ─▶ R2    │ CAPTURE token        │ WORKER token        │ web-push
-  (imports/*.pdf)             │                      │                     ▼
-                              │   ┌──── Mac mini (M6, 32GB) — outbound only ────┐   iPhone
-                     iOS Shortcut │  bamboo-worker (Node 24, launchd)           │
-                                  │   ├─ polls /api/jobs/claim                  │
-                                  │   ├─ pdftotext (poppler) → segment turns    │
-                                  │   └─ Ollama client ──▶ Ollama (shared with  │
-                                  │                         PandaBase, Metal)   │
-                                  └─────────────────────────────────────────────┘
+                       └───────────────▲──────────────────────────────▲──────────────────┘
+                                       │ HTTPS (bearer) AGENT token   │ HTTPS (bearer) WORKER token
+  ┌────────────────────────── Mac mini (M6, 32GB) — outbound only ────┼──────────────────┐
+  │  OpenClaw (existing)                                              │                  │
+  │   ├─ bamboo skill  (/agent/skills/bamboo/SKILL.md)                │                  │
+  │   │    PDF/text in #bamboo ─▶ bamboo-tools import                 │                  │
+  │   ├─ command automations: bamboo-tools replies (5 min),           │                  │
+  │   │                       bamboo-tools nudge (daily)              │                  │
+  │   └─ Discord ◀──────────────────────▶ Will (iPhone Discord)       │                  │
+  │  bamboo-tools (Node CLI): pdftotext → normalize → segment → POST new turns           │
+  │  bamboo-worker (Node, launchd): claims extract_turn jobs ─▶ Ollama (shared with      │
+  │                                                              PandaBase, Metal)       │
+  └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Ownership rule (same as PandaBase):** the State Engine (`/web` + `/db`) owns all data and
-business logic: dedupe, ranking, validation of LLM output, scheduling. The worker is a stateless
-transformer (PDF → turns, turn → raw extraction) that talks only to the HTTP API.
+business logic: dedupe, ranking, validation of LLM output, scheduling. The tools CLI and the
+worker are stateless clients of the HTTP API. They parse files and call models; they never touch
+the DB.
 
 ### 1.1 Components
 
 | Component | Runs on | Responsibility |
 |---|---|---|
-| `/web` | Vercel | UI (PWA), API, domain logic, daily cron |
-| `/db` | package | Drizzle schema, migrations, seed and phrase-import scripts (`@bamboo/db`) |
-| `/shared` | package | Zod contracts shared by web and worker, text normalization (`@bamboo/shared`) |
-| `/worker` | Mac mini, native Node via launchd | Claims jobs, runs `pdftotext`, segments turns, calls Ollama, posts results |
-| Ollama | Mac mini, native | Local LLM. **Shared with PandaBase**; see §1.2 |
-| R2 | Cloudflare | Uploaded import PDFs (private bucket, 30-day lifecycle) |
+| `/web` | Vercel | PWA UI, API, domain logic, daily cron |
+| `/db` | package | Drizzle schema, migrations, seed/phrase-import scripts (`@bamboo/db`) |
+| `/shared` | package | Zod contracts, text normalization, PDF-text segmentation, turn keys (`@bamboo/shared`) |
+| `/agent/skills/bamboo` | Mac, OpenClaw | Discord behavior: intake of PDFs and text in `#bamboo`; replies and the nudge come from command automations |
+| `/agent/tools` | Mac, invoked by OpenClaw | `bamboo-tools`, a deterministic Node CLI: import, replies, nudge |
+| `/worker` | Mac, native Node via launchd | Claims `extract_turn` jobs, calls Ollama, posts results |
+| Ollama | Mac, native | Local LLM. **Shared with PandaBase**; see §1.2 |
 
 ### 1.2 Mac mini resource budget
 
@@ -52,7 +56,8 @@ PandaBase already runs on this Mac (its DESIGN §1.2). Its host settings
   Chinese, and the task is copy-and-classify, not writing Chinese.
 - Requests: `think: false`, `temperature: 0`, `num_ctx: 8192`, `keep_alive: "2m"`, `format` set
   to the JSON schema of the result contract.
-- A backlog import (~70 turns) takes roughly 20–40 min of model time. That's fine: it is a batch job.
+- The first (backlog) import of ~70 turns takes roughly 20–40 min of model time; later imports
+  take minutes.
 
 ## 2. Data model
 
@@ -66,17 +71,16 @@ Turso/libSQL via Drizzle. IDs are ULIDs (text). Times are integer ms since epoch
 | column | type | notes |
 |---|---|---|
 | `id` | text pk | |
-| `lang` | `'cmn' \| 'yue'` | Mandarin / Cantonese |
 | `kind` | `'term' \| 'frame' \| 'sentence'` | frames contain `…` as the slot |
 | `hanzi` | text | normalized (§4.1) |
-| `hanzi_key` | text | dedupe key (§4.1); **unique with `lang`** |
+| `hanzi_key` | text **unique** | dedupe key (§4.1) |
 | `english` | text | meaning (term) or intent (frame/sentence) |
-| `addressee` | text null | `yuesao`, `toddler`, `nanny`, `inlaws`, `anyone` (free text allowed) |
+| `addressee` | text null | `yuesao`, `toddler`, `nanny`, `anyone` (free text allowed) |
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
 | `note` | text null | short usage note |
-| `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `family`, `units`, `holiday`, … |
-| `romanization` | json `[char, roman \| null][]` | computed (§4.2), never from the LLM |
-| `romanization_override` | json null | same shape; Will's per-syllable edits |
+| `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
+| `pinyin` | json `[char, syllable \| null][]` | computed (§4.2), never from the LLM |
+| `pinyin_override` | json null | same shape; Will's per-syllable edits |
 | `source` | `'manual' \| 'import' \| 'seed'` | |
 | `source_turn_id` | text null | fk `turn` |
 | `asked_count` | int default 1 | +1 each time an import shows he asked again |
@@ -102,9 +106,20 @@ Turso/libSQL via Drizzle. IDs are ULIDs (text). Times are integer ms since epoch
 
 ### 2.2 Imports, turns, candidates
 
-**`import`**: `id`, `kind` (`'pdf' | 'text'`), `r2_key` null, `status`
-(`'queued' | 'segmenting' | 'extracting' | 'done' | 'failed'`), `turns_total`, `turns_new`,
-`error` null, `created_at`, `finished_at` null.
+**`import`**:
+
+| column | notes |
+|---|---|
+| `id` | |
+| `kind` | `'pdf' \| 'text'` |
+| `origin` | `'discord' \| 'web'` |
+| `file_name` | null for text |
+| `discord_channel_id`, `discord_message_id` | null for web; the reply target |
+| `turns_total`, `turns_new` | counted by the CLI, verified by the engine |
+| `status` | `'extracting' \| 'done'` (`done` once every job is `done` or `failed`) |
+| `jobs_failed` | int |
+| `notified_at` | null until the Discord reply is posted |
+| `created_at`, `finished_at` | |
 
 **`turn`**: one user message plus Gemini's reply.
 
@@ -122,7 +137,7 @@ Turso/libSQL via Drizzle. IDs are ULIDs (text). Times are integer ms since epoch
 | column | notes |
 |---|---|
 | `id`, `turn_id` | |
-| `lang`, `kind`, `hanzi`, `hanzi_key`, `english`, `addressee`, `heard_as`, `tags` | as `phrase` |
+| `kind`, `hanzi`, `hanzi_key`, `english`, `addressee`, `heard_as`, `tags` | as `phrase` |
 | `ask_count` | int default 1; merged duplicates add to it |
 | `score` | real; §4.6 |
 | `flags` | json `string[]`, e.g. `long`, `heard_as_dropped` |
@@ -132,13 +147,12 @@ Turso/libSQL via Drizzle. IDs are ULIDs (text). Times are integer ms since epoch
 
 ### 2.3 Platform
 
-- **`job`**: the PandaBase job queue, simplified. Columns: `id`, `type`
-  (`'segment_import' | 'extract_turn'`), `status` (`'queued' | 'leased' | 'done' | 'failed'`),
-  `input` json, `result` json null, `attempt` int, `lease_expires_at` null, `model` null,
-  `prompt_version` null, `error` null, `created_at`, `finished_at` null.
+- **`job`**: the PandaBase job queue, simplified to one type. Columns: `id`, `type`
+  (`'extract_turn'`), `status` (`'queued' | 'leased' | 'done' | 'failed'`), `input` json,
+  `result` json null, `attempt` int, `lease_expires_at` null, `model` null, `prompt_version` null,
+  `error` null, `created_at`, `finished_at` null.
 - **`event`**: telemetry. Columns: `id`, `type`, `data` json, `at`. See §7.
-- **`push_subscription`**: `id`, `endpoint` unique, `keys` json, `created_at`. Added in M7.
-- **`setting`**: key/value for user preferences: `push_local_time`, `review_lang_filter`.
+- **`setting`**: key/value: `nudge_enabled` and similar preferences.
 
 ## 3. API and auth
 
@@ -149,32 +163,36 @@ Turso/libSQL via Drizzle. IDs are ULIDs (text). Times are integer ms since epoch
   `DEV_AUTH_BYPASS=1` (local and e2e only, refused when `VERCEL_ENV=production`) signs in a fixed
   dev user.
 - **Machines**: bearer tokens, compared in constant time.
+  - `AGENT_API_TOKEN`: `/api/imports*` and `/api/agent/*` (`bamboo-tools`).
   - `WORKER_API_TOKEN`: `/api/jobs/*` and `/api/worker/*`.
-  - `CAPTURE_API_TOKEN`: `/api/imports*` only (for the iOS Shortcut).
   - `CRON_SECRET`: `/api/cron/*` (Vercel Cron sends it as a bearer).
-- UI mutations use **server actions**; the routes below exist for machines and for the
-  upload flow.
+- UI mutations use **server actions**; the routes below are for machines.
 
 ### 3.2 Routes
 
 | Route | Auth | Purpose |
 |---|---|---|
-| `POST /api/imports/upload-url` | session or capture | `{content_type}` → `{key, url}`: presigned R2 PUT, 15 min, `imports/{yyyy}/{mm}/{ulid}.pdf`, ≤ 50 MB |
-| `POST /api/imports` | session or capture | `{kind:'pdf', key}` or `{kind:'text', user_text?, reply_text}` → `{import_id}`. PDF → queues `segment_import`. Text → creates one turn directly (§4.5) and queues `extract_turn` if new |
-| `GET /api/imports/{id}` | session or capture | status and counts |
-| `POST /api/jobs/claim` | worker | `{types: [...]}` → a job or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. `segment_import` includes a presigned R2 GET |
-| `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model?, prompt_version?}` or `{…, status:'failed', error}`. A stale `attempt` returns `409`. The result is validated against the job type's contract and applied in the same transaction (§5) |
-| `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok, pdftotext_ok}` → `event` |
-| `GET /api/cron/daily` | cron | expire candidates (§4.7), requeue expired leases, prune events > 180 d; M7: send the push |
-| `POST /api/push/subscribe` | session | M7 |
+| `POST /api/imports/known` | agent | `{turn_keys: string[]}` (≤ 5,000) → `{unknown: string[]}` so the CLI uploads only new turns |
+| `POST /api/imports` | agent | `{kind, origin, file_name?, discord_channel_id?, discord_message_id?, turns_total, turns: [{user_text, reply_text, position}]}` (≤ 2 MB; the CLI chunks with `import_id` on later calls) → `{import_id, turns_new}`. The engine recomputes each `turn_key`, upserts, and queues one `extract_turn` per new turn. Header `Idempotency-Key: discord:<message id>` |
+| `GET /api/agent/notifications` | agent | finished imports with a Discord message and no `notified_at`, each with a one-line `summary` |
+| `POST /api/imports/{id}/notified` | agent | sets `notified_at` |
+| `GET /api/agent/nudge` | agent | `{text}` or `{text: null}` when nothing is due or new (§4.9) |
+| `POST /api/jobs/claim` | worker | → a job or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1` |
+| `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version}` or `{…, status:'failed', error}`. A stale `attempt` returns `409`. The result is validated against `ExtractTurnResult` and applied in the same transaction (§4.6) |
+| `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `event` |
+| `GET /api/cron/daily` | cron | expire candidates (§4.7), requeue expired leases, prune events > 180 d |
 
-Contracts are Zod schemas in `shared/src/contracts/`. Web and worker import the same schemas
-(there is no codegen; everything is TypeScript).
+The PWA's paste box uses a server action that calls the same import service as
+`POST /api/imports` (`origin: 'web'`, `kind: 'text'`).
+
+Contracts are Zod schemas in `shared/src/contracts/`. Web, worker and tools import the same
+schemas (there is no codegen; everything is TypeScript).
 
 ## 4. Algorithms
 
-All of these are pure functions in `web/lib/domain/` (or `shared/` where the worker also needs
-them), with unit tests. Every tunable lives in `web/lib/config.ts`.
+All of these are pure functions in `web/lib/domain/` (or `shared/` where the Mac side also needs
+them), with unit tests. Every tunable lives in `web/lib/config.ts` (the Mac-side tunables live in
+`shared/src/config.ts`).
 
 ### 4.1 Text normalization (`shared/src/text.ts`)
 
@@ -190,21 +208,18 @@ PDF text from Gemini share pages has two kinds of damage, both seen in the real 
 1. NFKC. This maps the Kangxi Radicals block (U+2F00–2FD5) and most of U+2E80–2EFF.
 2. Apply an explicit map for the CJK Radicals Supplement characters that NFKC leaves alone. Seen so
    far: `⻄→西 ⻋→车 ⻓→长 ⻛→风 ⻥→鱼 ⻧→麦`. Extend the table as needed; any other character
-   left in U+2E80–2FDF is kept, with a `normalize_unmapped_radical` event.
+   left in U+2E80–2FDF is kept and reported in the import's telemetry.
 3. Collapse whitespace runs inside lines and trim.
 
 `hanziKey(s)` = `normalizeText(s)` with everything except CJK ideographs, ASCII letters and
-digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您是说吗`. The key does **not**
-convert between simplified and traditional characters.
+digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您是说吗`.
 
-### 4.2 Romanization (`web/lib/domain/romanize.ts`)
+### 4.2 Pinyin (`web/lib/domain/pinyin.ts`)
 
-- **cmn**: `pinyin-pro` with tone marks, `type: 'all'` (or the equivalent per-character output
-  in the installed version), and tone sandhi enabled only for 一/不. The output is aligned
-  per character: `[char, syllable | null]`, with `null` for non-hanzi.
-- **yue**: `to-jyutping` (`getJyutpingList`) → `[char, jyutping | null]`, using tone numbers.
-- Romanization is recomputed whenever `hanzi` changes. If an override exists and the new hanzi
-  differs, the override is dropped and the UI shows "romanization override cleared".
+- `pinyin-pro` with tone marks, output aligned per character: `[char, syllable | null]`, with
+  `null` for non-hanzi. Tone sandhi is shown only for 一/不.
+- Pinyin is recomputed whenever `hanzi` changes. If an override exists and the new hanzi differs,
+  the override is dropped and the UI says so.
 - Display (§6): ruby text above each hanzi, using the override where present.
 - Gemini's own pinyin is **never stored**. Its errors are the reason this module exists.
 
@@ -229,25 +244,26 @@ Check the parameter names against the installed version.
    come at the end. New cards are taken in kept order (oldest kept first).
 3. **Siblings**: once one card of a phrase has been shown today, the phrase's other card is
    buried until tomorrow (`buried_until`).
-4. **Language filter**: the `review_lang_filter` setting (`all | cmn | yue`).
-5. Grading applies the ts-fsrs `next()` result, writes `review_log`
-   (`source: 'session'`) and sets `introduced_at` on first sight.
+4. Grading applies the ts-fsrs `next()` result, writes `review_log` (`source: 'session'`) and
+   sets `introduced_at` on first sight.
 
 **Used it ✓** (`markUsed(phrase_id)`): pick the phrase's `say` card (or `listen` if it has no
 `say` card). If it has not been reviewed today, apply **Good** with `source: 'real_use'`.
 Otherwise, only log a `real_use` event. Real use never counts toward `newPerDay`.
 
-**Asked again** (§5.3): apply **Again** with `source: 'asked_again'` to every non-new card of
+**Asked again** (§4.6): apply **Again** with `source: 'asked_again'` to every non-new card of
 the phrase, at most once per phrase per import.
 
-### 4.5 Turn identity
+### 4.5 Turn identity (`shared/src/turns.ts`)
 
 `turn_key = sha256(hanziKey(user_text))`, keyed on **Will's own words only**. Re-exporting the
 conversation re-flows the reply text (page breaks, duplicated lines), but his short prompts come
 through stably. Two genuinely identical prompts on different days collapse into one. That is
-rare and harmless.
+rare and harmless. Text imports: `turn_key = sha256(hanziKey(user_text ?? '') + '\n' +
+hanziKey(reply_text))`.
 
-Text imports: `turn_key = sha256(hanziKey(user_text ?? '') + '\n' + hanziKey(reply_text))`.
+The CLI computes keys to ask `/api/imports/known`; the engine recomputes them and is the
+authority.
 
 ### 4.6 Candidate validation and ranking (`web/lib/domain/candidates.ts`)
 
@@ -258,10 +274,10 @@ On `extract_turn` completion, for each raw item:
    stops the model inventing Chinese). Count drops in telemetry.
 2. Keep `heard_as` only if it occurs (case-insensitive, spaces ignored) in `user_text`;
    otherwise null it and add the `heard_as_dropped` flag.
-3. If a `phrase` exists with the same `(lang, hanzi_key)`: set candidate status to `merged`,
-   increment `phrase.asked_count`, set `last_asked_at`, and apply *asked again* (§4.4).
-   That phrase does not appear in the inbox.
-4. Else, if a `pending` candidate exists with the same `(lang, hanzi_key)`, add 1 to its `ask_count`,
+3. If a `phrase` exists with the same `hanzi_key`: set candidate status to `merged`, increment
+   `phrase.asked_count`, set `last_asked_at`, and apply *asked again* (§4.4). That phrase does
+   not appear in the inbox.
+4. Else, if a `pending` candidate exists with the same `hanzi_key`, add 1 to its `ask_count`,
    re-score it, and push its expiry forward. Don't create a new candidate.
 5. Else, create a candidate with `expires_at = now + config.inbox.ttlDays` (14).
 
@@ -272,7 +288,7 @@ score = kindWeight[kind]            // term 1, frame 3, sentence 1
       + turnWeight[turn.kind]       // decode 3, say 1, errand −2, other −1
       + (heard_as ? 2 : 0)
       + 3 × (ask_count − 1)
-      + (tags ∩ config.rank.coreTags ≠ ∅ ? 1 : 0)     // feeding, baby, food, toddler, units, family
+      + (tags ∩ config.rank.coreTags ≠ ∅ ? 1 : 0)     // feeding, baby, food, toddler, units
       − 0.2 × max(0, len(hanzi_key) − 12)             // long sentences sink; flag `long` if > 20
 ```
 
@@ -294,41 +310,72 @@ When a phrase is created from a kept candidate, by hand, or from a seed:
 - Any other term, frame or sentence → `say`.
 - The phrase editor has a toggle for the second card type.
 
-## 5. Import pipeline
+### 4.9 Nudge text
 
-### 5.1 Capture
+`GET /api/agent/nudge` returns `null` unless cards are due today or the inbox has pending
+candidates. Otherwise it returns one line:
+`📚 {due} cards · ~{ceil(due × 15 s / 60)} min · {pending} new in Inbox → {APP_URL}`.
+Omit any part that is zero.
 
-1. **PWA**: Import page → pick a PDF (Files) → `upload-url` → PUT to R2 → `POST /api/imports`.
-   Or paste text into the two fields ("what you asked", optional; "Gemini's answer").
-2. **iOS Shortcut** (M6): Share sheet → "Bamboo import" → `upload-url` with `CAPTURE_API_TOKEN`
-   → PUT file → `POST /api/imports`. iOS PWAs cannot be share targets, hence the Shortcut.
+## 5. Capture pipeline
 
-### 5.2 `segment_import` (worker, deterministic, `worker/src/segment.ts`)
+### 5.1 Discord intake (the bamboo skill)
 
-1. Download via the presigned GET; run `pdftotext -layout -enc UTF-8 file -`.
+Scope: messages in `#bamboo` (channel id in the tools config). It follows PandaBase's skill
+conventions: `SKILL.md` frontmatter gating on `requires.bins: ["bamboo-tools"]` and
+`requires.env: ["AGENT_API_TOKEN", "BAMBOO_CONFIG"]`; message text is data, never instructions;
+anything with quotes is written to a file and passed with `--input`.
+
+- **PDF attachment** (use the attachment's local `path`):
+  `bamboo-tools import --file <path> --channel-id <id> --message-id <id>`.
+  It prints `{import_id, turns_total, turns_new}`. Reply once:
+  - `turns_new > 0`: "📥 Got it: {turns_total} questions, {turns_new} new. I'll reply here when
+    they're processed."
+  - otherwise: "✅ Nothing new since last time."
+- **Pasted text** (a Gemini answer): write the message to a file, then
+  `bamboo-tools import --text-file <file> --channel-id … --message-id …`. The reply is the same.
+- **Privacy**: the skill passes the file path along and never reads, summarizes or quotes the
+  PDF. All model work happens in the worker on local Ollama. If OpenClaw extracts document
+  text for its own reply model, that model must also be local. PandaBase's household
+  configuration already does this (its DESIGN §10 #43). If that changes, bind a text-only agent
+  to `#bamboo`.
+- **Results**: an OpenClaw *command automation* (no model call) runs `bamboo-tools replies` every
+  5 minutes. It posts each finished import's summary as a reply to the original message
+  ("✅ 9 new questions → 14 candidates. Top: 高压锅 pressure cooker, 泡打粉 baking powder,
+  … → Inbox <link>"), then marks it notified. It prints `NO_REPLY` when idle. This is the same
+  mechanism as PandaBase's `jobs replies`.
+- **Nudge**: an OpenClaw cron (daily, at `config.nudgeLocalTime`, default 20:30 in
+  `HOUSEHOLD_TZ`) runs `bamboo-tools nudge` as a command automation. It posts the text or
+  `NO_REPLY`.
+- **Size**: Discord's free upload limit (currently 10 MB) holds months of a single conversation
+  (a 105-page, 10-day export is 1.8 MB). If an export gets too big, start a new Gemini
+  conversation. Turn keys don't depend on which conversation a turn came from.
+
+### 5.2 `bamboo-tools import` (deterministic)
+
+1. `pdftotext -layout -enc UTF-8 <file> -`.
 2. `normalizeText` each line (§4.1).
-3. Drop boilerplate lines that match `config.segment.boilerplate` regexes: "Sign in",
-   "Gemini may display inaccurate info…", "Google Privacy Policy…", "Your privacy & Gemini
-   Apps", "Answering … standard", "Created with … Published …", the share URL line, "Source: …",
-   and the **"Explore related …" block** (header plus suggestion chips up to the next blank-line
-   gap).
+3. Drop boilerplate lines that match `segment.boilerplate` regexes (`shared/src/config.ts`):
+   "Sign in", "Gemini may display inaccurate info…", "Google Privacy Policy…", "Your privacy &
+   Gemini Apps", "Answering … standard", "Created with … Published …", the share-URL line,
+   "Source: …", and the **"Explore related …" block** (header plus suggestion chips up to the
+   next blank-line gap).
 4. Collapse consecutive duplicate lines (page breaks repeat lines).
-5. **Speaker detection**: Will's messages are right-aligned bubbles. A *user block* is a run of
-   lines with indent ≥ `config.segment.userIndentMin` (20) that contain Latin letters. It starts
-   after a blank line, and the next non-blank line after it has indent < `replyIndentMax` (8).
-   Everything up to the next user block is the reply. Indented table cells inside replies don't
-   start with a blank-line gap followed by a low-indent line, which keeps most false positives out.
-   Images in the conversation are lost in the PDF; their turns still have text.
-6. Post `{turns: [{user_text, reply_text, position}]}`. The page title (the first line) is
-   ignored.
+5. **Speaker detection** (`shared/src/segment.ts`): Will's messages are right-aligned bubbles. A
+   *user block* is a run of lines with indent ≥ `userIndentMin` (20) that contain Latin letters.
+   It starts after a blank line, and the next non-blank line after it has indent <
+   `replyIndentMax` (8). Everything up to the next user block is the reply. Indented table cells
+   inside replies don't start with a blank-line gap followed by a low-indent line, which keeps
+   most false positives out. Images are lost in the PDF; their turns still have text.
+6. Compute turn keys → `POST /api/imports/known` → `POST /api/imports` with only the unknown
+   turns, chunked to ≤ 2 MB.
+
+`bamboo-tools segment --file <pdf>` is a dry run: it prints the turn count and the first and
+last 5 user prompts, and makes no API calls. Use it to check a parse on the Mac.
 
 Segmentation will be imperfect. Errors cost little, because the LLM sees each turn whole and
-the verbatim check guards the output. The weekly stats (§7) show the turn count per import and
-the extraction drop rate, which is how a bad parse gets noticed.
-
-The engine, on completion: upserts turns by `turn_key`; for each **new** turn, creates an
-`extract_turn` job; sets `import.turns_total/turns_new` and status `extracting` (or `done` if
-nothing is new).
+the verbatim check guards the output. The import summary's turn count is the visible sanity
+check.
 
 ### 5.3 `extract_turn` (worker → Ollama)
 
@@ -339,7 +386,6 @@ highest N wins). Output contract `ExtractTurnResult`:
 {
   turn_kind: 'decode' | 'say' | 'errand' | 'other',
   items: Array<{                       // ≤ 8
-    lang: 'cmn' | 'yue',
     kind: 'term' | 'frame' | 'sentence',
     hanzi: string,                     // copied exactly from the turn
     english: string,                   // ≤ 120 chars
@@ -357,15 +403,15 @@ Prompt guidance (v1):
   variant if present), the 1–4 key terms, and any **reusable frame**. Write frames with `…` for
   the slot, e.g. `阿姨，您是说…吗？`.
 - **errand**: extract at most the Chinese nouns (an ingredient, a product), if any are present.
-- Copy hanzi **exactly** from the text. Never write Chinese that isn't in the turn. Use `yue`
-  only for clearly Cantonese items (e.g. 肥仔水).
+- Copy hanzi **exactly** from the text. Never write Chinese that isn't in the turn. Skip items
+  that are Cantonese-only (e.g. 肥仔水).
 - Keep the `english` field short.
 
 The worker calls Ollama with `format` set to the JSON schema of the result. It validates with Zod.
 On invalid output it sends one repair turn (the bad reply plus the validation error); a second
-failure fails the attempt. After 3 attempts the job is `failed`. The Import page shows failed
-turns with a **Retry** button, which requeues with `attempt` reset. The job records `model` and
-`prompt_version` (`extract_turn.v1`).
+failure fails the attempt. After 3 attempts the job is `failed` and counted in
+`import.jobs_failed`. The Imports page has a **Retry failed** button, which requeues with
+`attempt` reset. The job records `model` and `prompt_version` (`extract_turn.v1`).
 
 The engine, on completion: sets `turn.kind`/`extracted_at` and runs §4.6. When the import's last
 job finishes, it sets the import to `done` and logs `import_finished`.
@@ -374,44 +420,39 @@ job finishes, it sets the import to `done` and logs `import_finished`.
 
 Mobile-first; tested at a 390×844 viewport.
 
-- **Today** (`/`): due count, new count available, language filter, **Start**; an inbox badge.
+- **Today** (`/`): due count, new count available, **Start**; an inbox badge.
 - **Review** (`/review`): one card at a time.
   - *Say*: the front shows the English intent and an addressee chip ("→ 阿姨"). Tap to reveal the
-    hanzi with ruby romanization; audio plays automatically.
+    hanzi with ruby pinyin; audio plays automatically.
   - *Listen*: the front autoplays audio and shows a 🔊 button and an optional "you heard:
     *podafen*" hint. Tap to reveal the meaning and hanzi.
   - The back has 4 grade buttons (with their next interval shown), slow-replay, **Used it ✓**, and
     an edit link.
-- **Inbox** (`/inbox`): the ranked shortlist. Each row shows hanzi + romanization, English, kind,
+- **Inbox** (`/inbox`): the ranked shortlist. Each row shows hanzi + pinyin, English, kind,
   "heard: …", "asked ×N", and a turn excerpt on expand. Buttons: Keep / Skip / Edit-then-keep.
-- **Phrases** (`/phrases`): search and filter by language, kind or tag; add or edit; Used it ✓;
-  suspend.
-- **Import** (`/import`): PDF picker, paste form, list of recent imports with status, counts and
-  failed turns.
-- **Stats** (`/stats`, M7): PRD §6 measures.
+- **Phrases** (`/phrases`): search and filter by kind or tag; add or edit; Used it ✓; suspend.
+- **Imports** (`/imports`): recent imports with status, counts and failed jobs (Retry); a paste
+  box for a single Gemini answer.
+- **Stats** (`/stats`): PRD §6 measures.
 
-**Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN` (prefer an
-"Enhanced"/"Premium" voice, e.g. Tingting) for `cmn`, `zh-HK` (e.g. Sinji) for `yue`. Rate 0.9,
-and 0.6 for slow replay. Speak the hanzi, with `…` replaced by a short pause. iOS needs a user
-gesture before the first utterance; the Start tap counts. If no matching voice is found, show a
-one-time hint: *Settings → Accessibility → Spoken Content → Voices → Chinese*.
+**Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN`, preferring an
+"Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.6 for slow replay. Speak the hanzi,
+with `…` replaced by a short pause. iOS needs a user gesture before the first utterance; the
+Start tap counts. If no `zh-CN` voice is found, show a one-time hint:
+*Settings → Accessibility → Spoken Content → Voices → Chinese*.
 
-**PWA**: `manifest.webmanifest` (standalone, icons, theme color) and a minimal service worker.
-The service worker is needed for push in M7; offline review is not in scope.
-
-**Push (M7)**: the `web-push` library with VAPID keys. The daily cron at `config.push.utcHour`
-sends one notification per subscription if anything is due or new: "5 cards · ~3 min". Vercel
-Hobby cron runs at most daily, at an imprecise time within the hour. That is acceptable.
+**PWA**: `manifest.webmanifest` (standalone, icons, theme color). There's no service worker in
+the MVP: no offline review and no web push (the nudge comes through Discord).
 
 ## 7. Telemetry and stats
 
-`event` types: `import_finished {import_id, turns_total, turns_new}`,
+`event` types: `import_finished {import_id, turns_total, turns_new, jobs_failed}`,
 `extraction {turn_id, model, prompt_version, latency_ms, turn_kind, items, dropped_not_verbatim,
 repaired}`, `candidate_decided {action, score, rank}`, `candidate_expired`,
-`asked_again {phrase_id}`, `review {card_type, lang, rating, source}`,
-`session_finished {cards, ms}`, `worker_heartbeat {...}`, `normalize_unmapped_radical {char}`.
+`asked_again {phrase_id}`, `review {card_type, rating, source}`, `session_finished {cards, ms}`,
+`worker_heartbeat {...}`.
 
-The Stats page (M7) shows, for the last 4 weeks:
+The Stats page shows, for the last 4 weeks:
 
 - days with a session per week;
 - true retention on review-state cards;
@@ -421,9 +462,9 @@ The Stats page (M7) shows, for the last 4 weeks:
 - extraction drop rate;
 - the last worker heartbeat.
 
-A Claude session asked to "review extraction quality" reads these numbers plus samples of
-dropped and skipped candidates, and proposes prompt or weight changes, the same way PandaBase's
-diagnostics playbook works.
+A Claude Code session asked to "review extraction quality" reads these numbers plus samples of
+dropped and skipped candidates (from the prod DB, on the Mac), and proposes prompt or weight
+changes. This is the same practice as PandaBase's diagnostics playbook.
 
 ## 8. Environments and operations
 
@@ -434,12 +475,12 @@ diagnostics playbook works.
 | `AUTH_SECRET`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` | web | |
 | `ALLOWED_EMAILS` | web | comma-separated |
 | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | web, db scripts | local dev: `file:db/dev.db` |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | web | presigning via `aws4fetch` |
-| `WORKER_API_TOKEN`, `CAPTURE_API_TOKEN`, `CRON_SECRET` | web (+ worker / Shortcut) | `openssl rand -hex 32` |
+| `AGENT_API_TOKEN`, `WORKER_API_TOKEN`, `CRON_SECRET` | web (+ tools / worker) | `openssl rand -hex 32` |
 | `HOUSEHOLD_TZ` | web | default `America/Los_Angeles` |
-| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | web | M7 |
+| `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused in production |
-| `BAMBOO_API_URL`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15), `PDFTOTEXT_BIN` (`pdftotext`) | worker | `~/.config/bamboo/worker.env` |
+| `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: channel id) | tools | |
+| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` |
 
 ### 8.2 Deploy
 
@@ -449,27 +490,30 @@ diagnostics playbook works.
 - **Migrations**: the Vercel build command is `pnpm db:migrate && pnpm --filter web build`, run
   against whichever DB that environment points at. Migrations must be **expand → contract**:
   add freely; drop or rename only in a later PR once no deployed code uses the column.
-- **R2**: bucket `bamboo` (private), lifecycle rule deleting `imports/` after 30 days.
 
-### 8.3 Mac mini (worker)
+### 8.3 Mac mini
 
-- Runs natively (no Docker; it's plain Node and needs only `pdftotext`). Prereqs:
-  `brew install poppler`, Node 24, pnpm, and Ollama with `qwen3.5:9b` pulled (already there for
-  PandaBase).
-- Checkout at `~/src/bamboo`. A LaunchAgent `ops/launchd/com.bamboo.worker.plist` runs
+- Prereqs: `brew install poppler` (for `pdftotext`), Node 24, pnpm, and Ollama with `qwen3.5:9b`
+  pulled (already there for PandaBase). Checkout at `~/src/bamboo`.
+- **Worker**: a LaunchAgent `ops/launchd/com.bamboo.worker.plist` runs
   `pnpm --filter @bamboo/worker start` with `KeepAlive`, logs to `~/Library/Logs/bamboo/`.
-- `make worker-install` installs the plist; `make worker-update` runs `git pull --ff-only`,
-  `pnpm install --frozen-lockfile`, then `launchctl kickstart -k`; `make worker-logs`.
-- Heartbeat at startup and every 10 min. Today shows "worker offline" if the last heartbeat is
-  > 1 h old and imports are waiting.
-- The worker claims a job type only if its prerequisites are present: the model is pulled
-  (`GET /api/tags`) and `pdftotext` runs.
+  It sends a heartbeat at startup and every 10 min, and claims jobs only if the model is pulled
+  (`GET /api/tags`). Today shows "worker offline" if the last heartbeat is > 1 h old and jobs are
+  waiting.
+- **Agent**: `make agent-install` links `bamboo-tools` onto PATH, writes the tools config from
+  `agent/bamboo.config.example.json`, and adds `agent/skills` to OpenClaw's
+  `skills.load.extraDirs`, backing up `openclaw.json` first, as PandaBase does. The two command
+  automations (replies every 5 min; nudge daily) are added the same way PandaBase's are.
+  Create a `#bamboo` Discord channel and allow the agent in it.
+- `make worker-update` runs `git pull --ff-only`, `pnpm install --frozen-lockfile`, then
+  `launchctl kickstart -k`; `make worker-logs` tails the logs.
 
-### 8.4 Private data on the Mac
+### 8.4 Private data
 
-`private/` at the repo root is gitignored. The real Gemini PDF and any generated personal seed
-deck live there. They are never committed, never used as test fixtures, and never quoted in docs
-or PRs. Test fixtures are synthetic (Appendix A).
+Real Gemini exports reach the Mac only as Discord attachments, which OpenClaw stores. If a
+developer copies one for debugging, it goes in `private/` at the repo root, which is gitignored.
+Exports are never committed, never used as test fixtures, and never quoted in docs, PRs or
+commit messages (counts only). Test fixtures are synthetic (Appendix A).
 
 ## 9. Repository layout
 
@@ -479,10 +523,12 @@ bamboo/
   docs/       PRD.md DESIGN.md PLAN.md ROADMAP.md
   web/        Next.js app — app/, components/, lib/domain/ (pure), lib/repo/ (DB), lib/config.ts
   db/         @bamboo/db — src/schema/*, migrations/, scripts (seed, import-phrases)
-  shared/     @bamboo/shared — src/contracts/* (Zod), src/text.ts
-  worker/     @bamboo/worker — src/ (claim loop, segment, ollama), prompts/, tests/fixtures/
-  seeds/      yue-holiday.json (committed)
-  private/    gitignored — real exports, personal seed decks
+  shared/     @bamboo/shared — src/contracts/*, text.ts, segment.ts, turns.ts, config.ts;
+              tests/fixtures/ (synthetic export)
+  worker/     @bamboo/worker — src/ (claim loop, ollama client), prompts/
+  agent/      skills/bamboo/SKILL.md; tools/ (@bamboo/tools → bamboo-tools CLI);
+              bamboo.config.example.json
+  private/    gitignored
   ops/launchd/
   .github/workflows/ci.yml
 ```
@@ -492,25 +538,28 @@ bamboo/
 | # | Decision | Why |
 |---|---|---|
 | 1 | Keep Gemini as the in-the-moment tutor; Bamboo owns memory | Gemini is good and already a habit; replacing it is the hardest habit change and the weakest part of a local-model stack |
-| 2 | Capture = import the whole conversation (PDF/text), dedupe by turn | Removes per-message effort (no screenshots, no special prompts); the backlog is valuable seed data |
-| 3 | Local LLM extracts; it never writes Chinese for study | 9B models copy and classify Chinese well, but their natural Mandarin and especially Cantonese is weaker; verbatim check enforces it |
-| 4 | Romanization computed (pinyin-pro / to-jyutping) with overrides | Gemini's pinyin is inconsistent even within a single reply |
-| 5 | Ranked shortlist + 3 new/day + 14-day expiry | ~300 candidates per 10 days vs ~3/day capacity; choosing is the product |
-| 6 | "Asked again" = merge + Again rating | Re-asking is the clearest forgetting signal available |
-| 7 | "Used it ✓" = Good review | Real use is the goal and the best retrieval practice |
-| 8 | Say (production) cards by default; Listen for decoded words | Practice matches use: speaking to family, understanding the yuesao |
-| 9 | FSRS at 0.85 retention | Smaller review load for a 5-minute budget |
-| 10 | Device TTS (Web Speech) first | Free, offline, decent zh-CN/zh-HK voices on iOS; neural TTS deferred |
-| 11 | Same stack and conventions as PandaBase, minus codegen and Docker | Familiar; all-TypeScript makes OpenAPI → Pydantic unnecessary; Node worker needs no container |
-| 12 | Separate repo, DB and worker from PandaBase; shared Ollama | Independent deploys and failure; one model resident on a 32GB machine |
-| 13 | R2 presigned upload | Long PDFs exceed Vercel's request body limit; presigned PUT works from an iOS Shortcut |
-| 14 | Turn identity = hash of Will's prompt text | Stable across re-exports, unlike reply layout |
-| 15 | Single user, no `member` table | One learner; add a user column when a second learner is real (ROADMAP) |
+| 2 | Capture = send the whole conversation PDF (or a pasted answer) to OpenClaw in `#bamboo` | One share from the phone, no screenshots; reuses PandaBase's Discord intake pattern and replies in-thread |
+| 3 | Parse PDFs on the Mac in `bamboo-tools`; upload only new turns as text | `pdftotext` is local; no file storage (R2) or presigned uploads needed; payloads stay small |
+| 4 | Local LLM extracts; it never writes Chinese for study | 9B models copy and classify Chinese well; verbatim check enforces it |
+| 5 | Pinyin computed (pinyin-pro) with overrides | Gemini's pinyin is inconsistent even within a single reply |
+| 6 | Ranked shortlist + 3 new/day + 14-day expiry | ~300 candidates per 10 days vs ~3/day capacity; choosing is the product |
+| 7 | "Asked again" = merge + Again rating | Re-asking is the clearest forgetting signal available |
+| 8 | "Used it ✓" = Good review | Real use is the goal and the best retrieval practice |
+| 9 | Say (production) cards by default; Listen for decoded words | Practice matches use: speaking to family, understanding the yuesao |
+| 10 | FSRS at 0.85 retention | Smaller review load for a 5-minute budget |
+| 11 | Device TTS (Web Speech) | Free, offline, decent zh-CN voices on iOS |
+| 12 | Nudge via Discord, not web push | OpenClaw cron already exists; avoids service worker, VAPID and iOS PWA push quirks |
+| 13 | Same stack and conventions as PandaBase, minus codegen and Docker | Familiar; all-TypeScript makes OpenAPI → Pydantic unnecessary; Node needs no container |
+| 14 | Separate repo, DB, worker and skill from PandaBase; shared Ollama and OpenClaw | Independent deploys and failure; one model resident on a 32GB machine |
+| 15 | Turn identity = hash of Will's prompt text | Stable across re-exports and across conversations |
+| 16 | Mandarin only; no `lang` column yet | Cantonese is undecided; adding it later is one expand migration (`lang` default `cmn`) plus Jyutping and a zh-HK voice |
+| 17 | Single user, no `member` table | One learner; add a user column if a second learner is real |
 
 ## Appendix A — Synthetic PDF-text fixture
 
-`worker/tests/fixtures/gemini-export.txt` (and a small generated `gemini-export.pdf` if
-practical) must be **invented content** that reproduces every quirk of the real export:
+`shared/tests/fixtures/gemini-export.txt` (the `pdftotext -layout` output; tests start from text,
+so CI doesn't need poppler) must be **invented content** that reproduces every quirk of the real
+export:
 
 - a title line, a share-URL line, and a "Created with … Published …" line;
 - user prompts right-aligned at ~25–30 columns of indent, some over 2–4 lines, one repeated
@@ -525,7 +574,7 @@ practical) must be **invented content** that reproduces every quirk of the real 
 - consecutive duplicated lines;
 - at least one each of: a decode turn ("she said something like *gaoyaguo*"), a say turn, an
   errand turn (a shopping question with no Chinese worth keeping), and a turn whose reply
-  contains a Cantonese term.
+  contains a Cantonese-only term.
 
 Expected segmentation output lives next to it as JSON and is asserted in tests.
 
