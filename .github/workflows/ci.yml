@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    # claude/** too: GitHub skips pull_request runs while a PR conflicts with main, so a
+    # head-commit run still reports.
+    branches: [main, "claude/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6 # version from package.json "packageManager"
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - name: Migrations are consistent and match the schema
+        run: |
+          pnpm db:check
+          pnpm db:generate
+          if [ -n "$(git status --porcelain -- db/migrations)" ]; then
+            git status --porcelain -- db/migrations
+            echo "::error::Schema changed without a migration: run pnpm db:generate and commit it."
+            exit 1
+          fi
+      - name: Migrations apply to a fresh database
+        run: pnpm db:migrate
+      - run: pnpm --filter web build
