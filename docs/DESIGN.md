@@ -471,9 +471,14 @@ rather than returning empty text; count unknown components; keep the synthetic f
 turns). Every such turn would share the same `turn_key` (§4.5), so it needs a different key; see
 M0's Notes in PLAN.md.
 
-*Snapshot or live? Unconfirmed.* It isn't known yet whether a share link is a frozen snapshot or
-shows messages added after sharing. Either way the dedupe in §4.5 works: a re-share carries the
-whole conversation and only unseen prompts become new turns. The test is in M0's Notes.
+*Snapshot or live? **Frozen snapshot**, and a re-share makes a **new link** (tested in M0).*
+After Will added turns to the conversation, the original link still returned exactly what it had
+before: the same 86 turns, with identical prompts, timestamps and replies. Re-sharing produced a
+link with a different share id that returned 88 turns. Its first 86 were identical to the old
+link's (prompts, timestamps and replies), followed by the 2 new turns; the title was unchanged.
+So each re-share is a separate public link that carries the whole conversation so far. The
+turn-key dedupe in §4.5 turns that into "88 questions, 2 new". Old links stay public until Will
+deletes them, which is why the reply after a link import reminds him (§5.1).
 
 A failure (layout changed, or the link was deleted) replies "⚠️ Couldn't read that link. Send the
 PDF instead." and logs `share_parse_failed`. A deleted or unknown link shows up as an HTTP 404 on

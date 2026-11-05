@@ -8,3 +8,5 @@ coverage/
 private/
 # M0's throwaway spike has its own package.json and is not part of the workspace.
 spikes/
+# M0 share-link fixtures mirror real markup and an exact expected parse: never reformat them.
+agent/tools/tests/fixtures/share-*

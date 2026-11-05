@@ -121,16 +121,19 @@ either way: it is a required path, not a contingency.
   The RPC call itself is a plain `POST`, though, so "plain fetch" works in two steps.
 - **The link host**: `share.gemini.google/<code>` 301 → `gemini.google.com/share/<id>` 200 (one
   hop). `g.co/gemini/share/…` 302s to the same host.
-- **Snapshot or live: unconfirmed.** Will's second link (after adding a message and re-sharing)
-  wasn't available, so this wasn't tested. How Will can test it on the Mac:
-  1. `node spikes/share-link/read.mjs <link A>`: note `turns:`, `last turn at:` and the
-     `share:` id it prints.
-  2. Add one message to the same Gemini conversation. **Don't** re-share. Run it on link A again:
-     the same turn count means a **frozen snapshot**; one more means **live**.
-  3. Re-share and run it on the new link B: expect one more turn. Compare its `share:` id with
-     A's to see whether re-sharing makes a new link or updates the old one.
-  Either answer works with the turn-key dedupe (DESIGN §4.5); it only changes what PRD §5.3 says
-  about re-sharing. Record the result here and in DESIGN §5.2.
+- **Snapshot or live: frozen snapshot; a re-share is a new link** (tested after M1 merged, with
+  Will's second link). Counts only:
+  - After Will added turns and re-shared, link A still returned 86 turns, with prompts,
+    timestamps and replies identical to the first run.
+  - Link B has a **different** share id and returns **88** turns: A's 86 unchanged (prompts,
+    timestamps and replies; same title), then 2 new turns, neither of them image-only.
+  - **What this means for M5:** every re-share is a new public link carrying the whole
+    conversation so far, and old links never change. Turn-key dedupe (DESIGN §4.5) is therefore
+    what makes a re-share cost only the new turns: importing B after A gives "88 questions, 2
+    new". Re-reading an old link is always "Nothing new since last time". No idempotency on the
+    link URL is needed beyond the turn keys. Because links pile up, the "this link is public,
+    delete it in Gemini → Settings → Public links" line in the reply (DESIGN §5.1) matters; keep
+    it. The redirect shape for link B was the same as A's.
 - **For M5** (`agent/tools/src/share.ts`): port `readViaRpc`, `parseBatchexecute` and
   `flattenRich` from `spikes/share-link/read.mjs`. Don't ship Playwright: if the RPC breaks,
   reply "send the PDF" (`share_parse_failed`), and use the spike's `--dom` reader to repair it.
@@ -149,10 +152,14 @@ either way: it is a required path, not a contingency.
     planned `share-page.html`. Both share one expected-turns file, `share-page.expected.json`.
     `spikes/share-link/make-fixtures.mjs` generates the RPC fixture from invented text, and
     `check-fixtures.mjs` checks that both readers produce the expected turns.
+  - Snapshot-vs-live was first left unconfirmed (no second link yet) and tested in a follow-up
+    push to the same PR.
   - DESIGN §10 gained row #20 and Appendix A a *Share RPC* entry (both outside M0's *Owns*,
     called out in the PR).
   - `agent/tools/tests/fixtures/` is created here, before M1 creates the `agent/tools` package.
     Only the fixture files are added; there's no `package.json`.
+  - `.prettierignore` lists `agent/tools/tests/fixtures/share-*`: the fixture HTML mirrors real
+    markup and the expected JSON is an exact parse, so neither is reformatted.
   - The spike uses npm (`package-lock.json`), not pnpm, so it can never be pulled into the pnpm
     workspace. Chromium is installed inside the spike's `node_modules`
     (`PLAYWRIGHT_BROWSERS_PATH=0`), only for `--dom`, `--compare` and `check-fixtures.mjs`.
