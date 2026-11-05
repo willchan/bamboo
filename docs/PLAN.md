@@ -72,8 +72,8 @@ genuinely useful** (share a conversation, get a deck).
 
 | Milestone | Status | PR |
 |---|---|---|
-| M0 Share-link spike | todo | |
-| M1 Skeleton, auth, deploy | in review | [#2](https://github.com/willchan/bamboo/pull/2) |
+| M0 Share-link spike | in review | |
+| M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | todo | |
 | M3 Capture: engine | todo | |
 | M4 Worker | todo | |
@@ -111,6 +111,54 @@ either way: it is a required path, not a contingency.
 **Out of scope:** integrating into `bamboo-tools` (M5).
 
 **Notes:**
+- **Verdict: link works.** The method is in DESIGN §5.2 (and §10 #20): two plain HTTPS requests
+  (resolve the link, then Gemini's `ujx1Bf` batchexecute RPC), no browser. On Will's real link
+  (counts only): 86 turns, 1 of them an image-only prompt with no text; ~1.2 s by RPC and ~5 s by
+  headless Chromium. Both methods agreed on the title, the turn count and every prompt (86/86
+  exact), and on the reply hanzi of 84/86 turns. The other 2 are checklist widgets, which the DOM
+  renders as an empty iframe; the RPC has their text.
+- **Plain fetch of the page doesn't work**: the HTML is an Angular shell with no conversation.
+  The RPC call itself is a plain `POST`, though, so "plain fetch" works in two steps.
+- **The link host**: `share.gemini.google/<code>` 301 → `gemini.google.com/share/<id>` 200 (one
+  hop). `g.co/gemini/share/…` 302s to the same host.
+- **Snapshot or live: unconfirmed.** Will's second link (after adding a message and re-sharing)
+  wasn't available, so this wasn't tested. How Will can test it on the Mac:
+  1. `node spikes/share-link/read.mjs <link A>`: note `turns:`, `last turn at:` and the
+     `share:` id it prints.
+  2. Add one message to the same Gemini conversation. **Don't** re-share. Run it on link A again:
+     the same turn count means a **frozen snapshot**; one more means **live**.
+  3. Re-share and run it on the new link B: expect one more turn. Compare its `share:` id with
+     A's to see whether re-sharing makes a new link or updates the old one.
+  Either answer works with the turn-key dedupe (DESIGN §4.5); it only changes what PRD §5.3 says
+  about re-sharing. Record the result here and in DESIGN §5.2.
+- **For M5** (`agent/tools/src/share.ts`): port `readViaRpc`, `parseBatchexecute` and
+  `flattenRich` from `spikes/share-link/read.mjs`. Don't ship Playwright: if the RPC breaks,
+  reply "send the PDF" (`share_parse_failed`), and use the spike's `--dom` reader to repair it.
+  Use `node:https` with a big `maxHeaderSize`: Node's `fetch` fails on Google's response headers
+  (`UND_ERR_HEADERS_OVERFLOW`). Test against `agent/tools/tests/fixtures/share-rpc.txt` and
+  `share-page.expected.json`.
+- **For M3/M5: image-only prompts.** Their prompt text is empty, so with DESIGN §4.5 every such
+  turn gets the same `turn_key` and all but the first would be dropped as "known". Suggested fix
+  (not made here, as §4.5 isn't M0's): when `hanziKey(user_text)` is empty, key the turn like a
+  text import, on the reply. The PDF path presumably has the same case; check it in M5.
+- **Will's prompts here had no hanzi at all**, so `hanziKey` keys his turns on their English
+  letters and digits. That's fine for dedupe, and it's why the RPC's verbatim prompt text
+  matters more than the reply formatting.
+- **Deviations:**
+  - An extra fixture, `agent/tools/tests/fixtures/share-rpc.txt` (the RPC response), next to the
+    planned `share-page.html`. Both share one expected-turns file, `share-page.expected.json`.
+    `spikes/share-link/make-fixtures.mjs` generates the RPC fixture from invented text, and
+    `check-fixtures.mjs` checks that both readers produce the expected turns.
+  - DESIGN §10 gained row #20 and Appendix A a *Share RPC* entry (both outside M0's *Owns*,
+    called out in the PR).
+  - `agent/tools/tests/fixtures/` is created here, before M1 creates the `agent/tools` package.
+    Only the fixture files are added; there's no `package.json`.
+  - The spike uses npm (`package-lock.json`), not pnpm, so it can never be pulled into the pnpm
+    workspace. Chromium is installed inside the spike's `node_modules`
+    (`PLAYWRIGHT_BROWSERS_PATH=0`), only for `--dom`, `--compare` and `check-fixtures.mjs`.
+- **Versions:** Node 24.22, Playwright 1.65.0 (Chrome Headless Shell 158). Gemini web build
+  `boq_gemini-web-uiserver_20261103.01_p0` at the time of the test.
+- Debug copies of the real page and RPC response stayed in the gitignored `private/`.
 
 ---
 
