@@ -109,7 +109,7 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 In order of preference:
 
 1. **Share link** (3 taps): in the Gemini app, Share → Discord → `#bamboo`.
-2. **PDF** (fallback): a printed conversation shared to `#bamboo`.
+2. **PDF** (fallback, always supported): a printed conversation shared to `#bamboo`.
 3. **Pasted answer**: a single Gemini answer pasted into `#bamboo`, or into the PWA's paste box.
 
 The behavior:

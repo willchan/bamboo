@@ -20,6 +20,7 @@ and shares that Mac's Ollama and OpenClaw.
 | [docs/PRD.md](docs/PRD.md) | You need to know *what* the product does and *why* |
 | [docs/DESIGN.md](docs/DESIGN.md) | You're changing architecture, schema, API, algorithms, prompts or ops |
 | [docs/PLAN.md](docs/PLAN.md) | You're executing a build milestone: follow its *Session protocol* |
+| [docs/PROMPTS.md](docs/PROMPTS.md) | You're Will, starting a session (orchestrator, milestone, plan update, quality review) |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build a tutor, Cantonese, a Discord quiz, or neural TTS: they're deferred |
 
 Read only the sections your task needs.

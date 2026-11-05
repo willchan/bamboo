@@ -599,7 +599,7 @@ bamboo/
 |---|---|---|
 | 1 | Keep Gemini as the in-the-moment tutor; Bamboo owns memory | A 9B local model is clearly worse than Gemini Flash at decoding guesses in context and at natural Mandarin, and lacks voice/photo input; revisit with a measured comparison (ROADMAP) |
 | 2 | Review in a PWA, not Discord | Audio, big grade buttons and short rounds work better in a page than as chat turns |
-| 3 | Capture = share link (primary), PDF (fallback), pasted answer, all via OpenClaw in `#bamboo` | Share link is ~3 taps from the Gemini app; reuses PandaBase's Discord intake pattern and replies in-thread |
+| 3 | Capture = share link (primary), PDF (always supported), pasted answer, all via OpenClaw in `#bamboo` | Share link is ~3 taps from the Gemini app; a share page's layout can change without notice, so the PDF path is required, not optional; reuses PandaBase's Discord intake pattern and replies in-thread |
 | 4 | Read pages and PDFs on the Mac; upload only new turns as text | The Mac can reach Gemini and has `pdftotext`; no file storage or presigned uploads; small payloads |
 | 5 | Turn identity = hash of Will's prompt text | Stable across re-shares, formats and multiple conversations |
 | 6 | Local LLM extracts and rates; it never writes Chinese for study | 9B models copy and classify Chinese well; the verbatim check enforces it, examples included |

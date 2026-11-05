@@ -21,6 +21,42 @@
    call it out in the PR.
 8. Never commit, quote or paste Will's real conversations (CLAUDE.md *Privacy*). Report counts only.
 
+## Orchestrator protocol
+
+Will can run the plan through one long-lived **orchestrator** session on the Mac, which dispatches
+a fresh **milestone session** for each milestone (for example, a subagent in its own git
+worktree). The orchestrator:
+
+1. **Plans the next step.** It reads `CLAUDE.md`, this file in full, and the Notes of merged
+   milestones. A milestone is *ready* when everything it depends on is merged. It tells Will what it
+   intends to dispatch next, and why.
+2. **Gathers Will's inputs first.** Milestone sessions can't ask Will anything, so the orchestrator
+   collects what they need before dispatching. M0 needs a share link (and optionally a PDF in
+   `private/`). M1 needs the accounts listed in its manual steps, which can also be done after the
+   PR.
+3. **Dispatches** each ready milestone with this prompt:
+   *"You are the milestone session for M<N> of Bamboo. Follow docs/PLAN.md › Session protocol
+   for M<N> exactly. Inputs from Will: <…>. When done, report: the PR URL, the acceptance results,
+   the deviations you recorded in Notes, and every manual step Will must take."* Independent ready
+   milestones (M0 ∥ M1; M4 ∥ M5) may run in parallel, each in its own worktree.
+4. **Reviews** each result:
+   - reads the PR diff and Notes;
+   - checks it against the milestone's acceptance and CLAUDE.md rules (privacy above all);
+   - sends the milestone session back to fix anything missing.
+5. **Propagates changes.** If a milestone deviated, or found something that changes later
+   milestones (for example, M0 finds share links unreadable), the orchestrator updates the
+   downstream milestones' sections, DESIGN.md and PRD.md in a small `claude/plan-update-<topic>`
+   PR. It lists those changes to Will in plain words. It never quietly drops scope; dropping or
+   adding a feature is Will's call.
+6. **Hands over to Will** for anything outside the repo: account setup, env vars, phone checks,
+   and **merging**. The orchestrator asks before merging any PR, unless Will has said that green PRs
+   in this plan may be merged without asking.
+7. **Keeps the status table current,** then loops back to step 1 until M6 is merged. At the end it
+   summarizes what was built, what changed from the plan, and the open ROADMAP candidates.
+
+If the orchestrator's context gets long, it can be restarted: everything it needs is in this file
+(the status table and Notes) and the PRs.
+
 ## Dependency graph
 
 ```
@@ -71,8 +107,9 @@ and its expected-turns JSON (synthetic content; Appendix A).
 
 **Acceptance:** `node spikes/share-link/read.mjs <link>` on the Mac prints the title, turn count,
 and the first 3 user prompts truncated to 40 chars. The PR contains only counts and synthetic
-content. DESIGN §5.2 states one of: **link works** (method), or **PDF only** (why). If PDF only,
-update PRD §5.3 and the M5 scope in this file.
+content. DESIGN §5.2 states one of: **link works** (method), or **link not supported** (why). If
+the link doesn't work, drop link import from PRD §5.3 and from M5. PDF import is built in M5
+either way: it is a required path, not a contingency.
 
 **Out of scope:** integrating into `bamboo-tools` (M5).
 
@@ -254,7 +291,8 @@ command automations, `make install-agent-*`).
 **Owns:**
 - `/agent/tools` (`bamboo-tools`): `import --url | --file | --text-file`, `segment` (dry run),
   `replies`, and `nudge` (the CLI side only; the engine route is M6);
-- `agent/tools/src/share.ts` (from M0's findings);
+- `agent/tools/src/share.ts` (from M0's findings; omit if M0 found links unreadable);
+- the **PDF path is required** whatever M0 found: `--file`, `pdftotext`, segmentation;
 - `shared/src/segment.ts` and the synthetic PDF-text fixture;
 - `agent/skills/bamboo/SKILL.md` and `agent/bamboo.config.example.json`;
 - the Makefile target `agent-install` (PATH, config, extraDirs with a backup, command
