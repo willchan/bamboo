@@ -23,8 +23,7 @@ If you'd rather start each milestone yourself, use one session per milestone:
 > rely on them. Finish with the PR URL, acceptance results, deviations recorded in Notes, and every
 > manual step I must take.
 
-For M0, add: *"Here's a Gemini share link to test with: <link>. A PDF of the same conversation is
-in private/."*
+For M0, add: *"Here's a Gemini share link to test with: <link>."*
 
 ## Plan update (after a surprise)
 

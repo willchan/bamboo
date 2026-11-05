@@ -31,9 +31,8 @@ worktree). The orchestrator:
    milestones. A milestone is *ready* when everything it depends on is merged. It tells Will what it
    intends to dispatch next, and why.
 2. **Gathers Will's inputs first.** Milestone sessions can't ask Will anything, so the orchestrator
-   collects what they need before dispatching. M0 needs a share link (and optionally a PDF in
-   `private/`). M1 needs the accounts listed in its manual steps, which can also be done after the
-   PR.
+   collects what they need before dispatching. M0 needs a share link. M1 needs the accounts listed
+   in its manual steps, which can also be done after the PR.
 3. **Dispatches** each ready milestone with this prompt:
    *"You are the milestone session for M<N> of Bamboo. Follow docs/PLAN.md › Session protocol
    for M<N> exactly. Inputs from Will: <…>. When done, report: the PR URL, the acceptance results,
@@ -100,9 +99,7 @@ and its expected-turns JSON (synthetic content; Appendix A).
 3. For whatever works, find a robust way to get: the title; the ordered user and model turns; the
    text with line breaks; and whether the page reflects later messages or is a frozen snapshot
    (ask Will to add a message and re-share).
-4. Check against his PDF export, if he has one in `private/`: compare turn counts, and confirm
-   the user prompts match closely enough for turn keys (§4.5) to agree across formats.
-5. Write the findings into DESIGN §5.2: method, selectors or data path, wait strategy, known
+4. Write the findings into DESIGN §5.2: method, selectors or data path, wait strategy, known
    fragility, timing. Make the synthetic fixture from the real structure, with all text replaced.
 
 **Acceptance:** `node spikes/share-link/read.mjs <link>` on the Mac prints the title, turn count,

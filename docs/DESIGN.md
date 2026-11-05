@@ -571,7 +571,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 ### 8.4 Private data
 
 Real conversations reach the Mac only through Discord, as links or as attachments that OpenClaw
-stores. If a developer saves one for debugging, it goes in `private/` at the repo root, which is
+stores. Will never needs to put files on the Mac's filesystem. If a developer session saves a
+copy while debugging, it goes in `private/` at the repo root, which is
 gitignored. Real conversations are never committed, never used as test fixtures, and never quoted
 in docs, PRs or commit messages (counts only). Test fixtures are synthetic (Appendix A).
 
