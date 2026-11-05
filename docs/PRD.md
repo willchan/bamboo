@@ -12,7 +12,9 @@ Mandarin to stay the main language he speaks with his toddler. He speaks it ever
 - his **toddler**, who attends a Mandarin-immersion preschool,
 - the toddler's **nanny**.
 
-Today the learning happens in one long **Gemini app** conversation on his phone:
+Today the learning happens in **Gemini** conversations on his phone, so far mostly one long
+conversation. Separate conversations per person (yuesao, toddler, in-laws) are likely later. Three
+kinds of question come up:
 
 - **"What is she saying?"** He types a toneless guess at a word the yuesao said ("gaoyaguo",
   "podafen", "some sort of shui") and Gemini decodes it (高压锅, 泡打粉, …).
@@ -29,9 +31,9 @@ Why the forgetting happens:
 1. **He reads, he doesn't retrieve.** He reads the answer off the screen (or shows the screen), so
    nothing is recalled from memory and nothing sticks.
 2. **The items are too big.** Gemini's sentences are long and formal. The parts he can reuse are
-   **frames** (阿姨，您是说…吗？ / X 的时候用 Y / …可以吗？) and **nouns**.
+   **frames** (阿姨，您是说…吗？ / X 的时候用 Y / …可以吗？) and **words used in a sentence**.
 3. **There is too much, unsorted.** In ten days, about 70 questions produced around 300 candidate items, most of them one-offs.
-4. **Capture is painful.** Saving anything means a pile of screenshots.
+4. **Capture is painful.** Saving anything means screenshots, or 5–10 taps to print a PDF.
 
 Gemini is also sometimes wrong. Its pinyin can be inconsistent within one reply, and the occasional
 sentence is unnatural. So nothing it says should be trusted blindly.
@@ -39,104 +41,127 @@ sentence is unnatural. So nothing it says should be trusted blindly.
 ## 2. User
 
 A single user (Will), signing in with Google, mostly on an iPhone and occasionally on a laptop.
-He is busy, with newborn twins and a toddler, and gives this about **5 minutes a day**. He knows
-some hanzi but leans on pinyin for new words; characters still help. He already talks to his
-household's **OpenClaw** agent in Discord (PandaBase).
+He is busy, with newborn twins and a toddler, and will most likely practise **for a few minutes
+before bed**, possibly whispering or with earphones. He knows some hanzi but leans on pinyin for new
+words; characters still help. He already talks to his household's **OpenClaw** agent in Discord
+(PandaBase).
 
 ## 3. Learning principles (what the product is built on)
 
 1. **Retrieval, not re-reading.** Every card makes him produce or recall something before showing
    the answer.
-2. **Practise the way it will be used.** Most cards are **English intent → say it aloud**. Words
-   the yuesao uses get **listen → understand** cards. Reading hanzi is a bonus, not the goal.
+2. **Practise the way it will be used.** Most cards are **English intent → say it** (aloud, or
+   whispered or mouthed when the house is asleep). Words the yuesao uses get **listen →
+   understand** cards. Words always come with an example sentence, so he learns how they are used.
 3. **Spacing.** Cards are scheduled with FSRS, aiming for about 85% recall to keep the daily load small.
-4. **Choosing beats capturing.** He keeps at most ~3 new items a day, picked from a ranked shortlist.
-   Everything else expires quietly.
-5. **Real use is the real review.** Saying a phrase to the yuesao or his toddler from memory (and
-   being understood) is recorded as a review, and is the goal of the whole system.
-6. **Small and finished.** A session is about 5 minutes and then says "done". There are no streak guilt mechanics.
-7. **Trust nothing the LLM says about pronunciation.** Pinyin is computed from characters (with
+4. **A tiny daily unit.** The daily goal is **one round** (~10 cards, ~2–3 min), the way
+   Duolingo-style apps use a short lesson as the unit. More rounds are optional.
+5. **Bamboo chooses; Will corrects.** New material is picked automatically from a ranked queue,
+   at most 3 new cards a day. Will never has to sort an inbox; he flags bad picks while reviewing.
+6. **Trust nothing the LLM says about pronunciation.** Pinyin is computed from characters (with
    manual override); audio comes from a TTS voice, not from LLM text.
 
 ## 4. Product principles (inherited from PandaBase)
 
-1. **Nothing blocks on a human.** Inbox candidates expire; skipped days don't pile up guilt.
+1. **Nothing blocks on a human.** No step needs Will to act for the system to keep working.
+   Skipped days don't pile up guilt.
 2. **Local models only** for every runtime LLM call (Ollama on the Mac mini). Family content
    (children's names, health details) never goes to a cloud LLM API.
-3. **Observable.** Extraction quality and review stats are visible so a Claude session can tune
-   prompts and ranking later.
+3. **Observable.** Extraction and ranking quality are visible so a Claude Code session can tune
+   prompts and weights later.
 
 ## 5. MVP scope (Mandarin only)
 
 ### 5.1 Phrases and cards
 
 - A **phrase** is one thing worth remembering:
-  - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen");
+  - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen"),
+    with **1–3 example sentences** taken from Gemini's answers;
   - a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？);
-  - a **sentence**: a full thing to say, with who it's for (yuesao, toddler, nanny).
-- Each phrase carries: hanzi, English meaning or intent, addressee or context, computed pinyin
-  (tone marks), an optional note, and tags (domain: feeding, baby care, food, groceries,
-  household, toddler, units, …).
+  - a **sentence**: a full thing to say, kept short, with who it's for (yuesao, toddler, nanny).
+- Each phrase carries: hanzi, English meaning or intent, addressee, computed pinyin (tone marks),
+  examples, an optional note, and tags (domain: feeding, baby care, food, groceries, household,
+  toddler, units, …).
 - Each phrase has one or two **cards**:
-  - **Say**: the front shows the English intent and who it's for; he says it aloud; the back shows
-    hanzi with pinyin above it and plays audio.
+  - **Say**: the front shows the English intent and who it's for; he says it; the back shows hanzi
+    with pinyin above it, plays audio, and (for terms) shows an example sentence.
   - **Listen**: the front plays audio (and shows "you heard: *podafen*" as a hint if available); he
-    recalls the meaning; the back shows everything.
-  - Defaults: decoded terms get **Listen** (plus **Say** if he toggles it); frames and sentences get **Say**.
-- He can add or edit a phrase by hand. Pinyin recomputes on save, and he can override any
-  syllable (polyphones like 得/行/长).
+    recalls the meaning; the back shows everything including the example.
+  - Defaults: decoded terms get **Listen**; everything else gets **Say**. A toggle adds the other
+    type.
+- He can add or edit a phrase by hand. Hand-added phrases go to the front of the queue. Pinyin
+  recomputes on save, and he can override any syllable (polyphones like 得/行/长).
 
 ### 5.2 Daily review (the core loop)
 
-- A PWA installed on the iPhone home screen. Opening it shows **Today**: due count, new count, and
-  a Start button.
-- A session holds at most **3 new cards** and stops after **~20 reviews or 5 minutes**, whichever
-  comes first. Then it says it's done and offers "a few more" without pressing.
+- A PWA installed on the iPhone home screen. **Today** shows what's due and a **Start** button.
+- A **round** is ~10 cards: due cards first, with up to 3 new cards a day mixed in. After a round:
+  "✓ Done for today" if nothing else is due, or "Another round?" (optional).
 - Grades: Again / Hard / Good / Easy (FSRS). Big buttons, one hand.
-- Audio comes from the device's own Mandarin voice (`zh-CN`). There is a replay button and a slow-replay button.
-- **Used it ✓**: on any phrase, from the card back or the phrase list. "I said this for real and
-  was understood." It counts as a successful review that day.
+- The **first time** a new card appears, two more buttons:
+  - **Not useful**: the phrase is dropped, and the drop teaches the ranking.
+  - **Already know**: graded Easy, so it comes back much later.
+- Audio comes from the device's Mandarin voice (`zh-CN`). There is a replay button and a slow-replay
+  button. Earphones are recommended at night.
 
-### 5.3 Capture: send the conversation to OpenClaw in Discord
+### 5.3 Capture: send conversations to OpenClaw in Discord
 
-- In the Gemini app: Share → export or print the conversation to PDF → share it to Discord, in the
-  **`#bamboo`** channel. He can also paste a single Gemini answer there as text.
-- OpenClaw's **bamboo** skill picks it up, acknowledges it in one line, and hands it to Bamboo.
-  When processing finishes (minutes, on the Mac's local model), it replies in a thread:
-  "✅ 9 new questions → 14 candidates. Top: 高压锅 (pressure cooker), … → Inbox".
-- He sends the *whole* conversation whenever convenient (daily or every few days). Bamboo processes
-  only questions it hasn't seen before. His first send is the backlog and becomes his starter deck.
-- Each new turn is classified (**decode / say / errand / other**) and mined for terms, frames and
-  sentences. Errand turns contribute at most their nouns.
-- Candidates land in the **Inbox** (web), ranked. Items he asked about more than once and words the
-  yuesao said rank highest. He sees the top ~10 and taps **Keep**, **Skip**, or **Edit**.
-  Unreviewed candidates expire after 14 days. If he asks about something again later, the
-  candidate comes back with a higher rank.
-- If a candidate matches a phrase he already has, it doesn't create a duplicate; it just records
-  that he asked about it again (a signal that he has forgotten it).
-- The PWA also has a paste box for a single answer, for when Discord isn't handy.
+In order of preference:
 
-### 5.4 Daily nudge
+1. **Share link** (3 taps): in the Gemini app, Share → Discord → `#bamboo`.
+2. **PDF** (fallback): a printed conversation shared to `#bamboo`.
+3. **Pasted answer**: a single Gemini answer pasted into `#bamboo`, or into the PWA's paste box.
 
-- Once a day, at a set time, the bamboo skill posts in `#bamboo` if anything is due or waiting:
-  "📚 5 cards · ~3 min · 4 new in Inbox → link". It posts nothing on days with nothing to do,
-  and it never follows up.
+The behavior:
+
+- OpenClaw's **bamboo** skill acknowledges in one line and hands the conversation to Bamboo. When
+  processing finishes (minutes, on the Mac's local model), it replies:
+  "✅ 9 new questions → 14 phrases queued. Next up: 高压锅 (pressure cooker), …". After a link
+  import, the reply also reminds him that the link is public and can be deleted in Gemini
+  (Settings → Public links).
+- He shares a **whole conversation** whenever convenient, as often as he likes, from any number of
+  conversations. Bamboo processes only questions it hasn't seen before. The first share is the
+  backlog and becomes his starter material. The conversation's title ("Yuesao…", "Toddler…") is
+  used as context for who phrases are for.
+- Each new question is classified (**decode / say / errand / other**) and mined for terms (with
+  examples), frames and short sentences. Errand questions contribute at most their nouns.
+- Everything extracted goes into a ranked **Up next** queue. Ranking:
+  - words the yuesao said rank high;
+  - anything asked about more than once ranks high;
+  - reusable frames rank high;
+  - core topics get a boost;
+  - the local model's "how likely to come up again at home" rating counts;
+  - long sentences sink;
+  - old items fade.
+- Each day the top items become new cards. **Up next** can be browsed (move to top, remove), but
+  never has to be.
+- If he asks again about something he's already learning, Bamboo doesn't duplicate it. It treats
+  this as **forgotten** and shows it again soon. A dropped item he asks about again returns to
+  the queue.
+
+### 5.4 Daily reminder
+
+- One message in `#bamboo`, in the evening, if a round is due and not yet done:
+  "📚 1 round · ~3 min → link". The default time is 21:00; after two weeks it moves to just before
+  his usual practice time. There's nothing on days with nothing to do, and never a follow-up.
 
 ## 6. Success measures
 
 Reviewed monthly from the Stats page:
 
-- **Habit**: sessions on ≥ 5 days/week.
+- **Habit**: a round on ≥ 5 days/week.
 - **Retention**: FSRS true-retention on reviews ≥ 80%.
-- **Real use**: ≥ 3 "Used it ✓" taps per week.
-- **Forgetting signal falls**: fewer "asked again" hits for phrases that are already in the deck.
-- **Inbox health**: keep rate of the shown shortlist ≥ 30% (lower means ranking or extraction is
-  off); extraction errors (bad hanzi, hallucinated items) < 5% of kept items.
+- **Forgetting signal falls**: fewer "asked again" hits on phrases he's already learning.
+- **Ranking quality**: "Not useful" on < 15% of introduced phrases.
+- **Extraction quality**: invented or garbled items < 5% of introduced phrases (hanzi not found in
+  the source, wrong meaning).
 
 ## 7. Non-goals (MVP)
 
 - **Cantonese** (deferred; see ROADMAP).
-- A chat tutor (Bamboo does not replace Gemini in the moment). Quiz mode in Discord is also deferred.
+- A chat tutor: Gemini stays the tutor. A local-model comparison is in ROADMAP.
+- A quiz mode in Discord.
+- "Used it for real" tracking.
 - Grammar lessons, courses, gamification, streak penalties.
 - Handwriting or character-writing practice.
 - Pronunciation scoring or speech recognition.

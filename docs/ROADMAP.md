@@ -3,40 +3,46 @@
 > Living document. Ideas discussed and deliberately deferred from the MVP. Before building one,
 > check the Stats page (PRD §6): build what the data says is the bottleneck.
 
-## Capture
+## Tutor
 
-- **Share-link import.** Fetch `share.gemini.google/...` pages server-side instead of a PDF. This
-  is untested: the pages are probably rendered by JavaScript (needing a headless browser on the
-  Mac), each link is a frozen snapshot, and the layout can change without notice. It would
-  replace the PDF step only if it proves reliable.
-- **Images in turns.** The PDF drops photos (a menu, a product label). If they matter, the
-  worker could OCR them with the local VLM.
+- **Local tutor evaluation.** Replay ~20 of Will's real past questions (from the `turn` table)
+  through local models, e.g. the current 9B and a ~30B-class model that fits the 32GB Mac
+  alongside PandaBase. Compare their answers with Gemini's on decoding accuracy, naturalness and
+  latency. Will judges blind. If a local model is good enough, a Bamboo "Ask" page (with
+  automatic capture) becomes viable without breaking the local-only rule.
+- **Tutor that reuses what's due.** When answering "how do I say X", prefer phrasing that
+  reuses due or recently introduced frames and words.
 
 ## Practice
 
-- **Ask box.** A Bamboo page that answers "how do I say X to Y" with a capable LLM and saves
-  automatically, so capture costs nothing. This needs either a cloud LLM (reopening the
-  local-only decision) or a much stronger local model. It also only works if it's as fast as the
-  Gemini app in the moment.
-- **Scenario drills.** Short role-plays built from kept phrases ("the yuesao asks what to buy for
-  soup"), done aloud.
-- **Listening practice.** Short TTS clips of kept phrases strung together for a commute, or
-  recordings of the yuesao and in-laws (with consent) attached to phrases.
+- **"Use it" cards.** Prompt: "say a sentence with 泡打粉". The answer is checked against the
+  examples. Do this if term cards prove too passive.
+- **Scenario drills.** Short role-plays built from active phrases ("the yuesao asks what to buy
+  for soup"), done aloud.
+- **Listening.** Strings of TTS clips for a commute, or recordings of the yuesao (with consent)
+  attached to phrases.
 - **Self-recording.** Record yourself on the Say back, then compare with the TTS.
-- **Neural TTS.** Azure or Google voices for `zh-CN`/`zh-HK`, cached in R2, if the device voices
-  grate. This is a cloud call, but not an LLM call.
-- **Offline review.** Cache the day's cards in the service worker.
+- **Neural TTS.** Azure or Google `zh-CN` voices, cached, if the device voice grates. This is a
+  cloud call, but not an LLM call.
+- **Offline review.** Cache the day's round in a service worker.
+- **"Used it for real".** Dropped because Will wouldn't tap it. Revisit only if a passive signal
+  appears.
 
 ## Agent
 
-- **OpenClaw skill pack.** A "quiz me" mode in Discord, and a nudge that mentions due phrases.
-  The agent is a client of Bamboo's API (PandaBase's pattern: skill + tools CLI + scoped
-  token).
-- **Tutor that reuses what's due.** When helping Will say something new, prefer phrasing that
-  reuses due or recently kept frames and words.
+- **Quiz mode in Discord.** "Quiz me": a few Say cards as messages, graded with reactions; the
+  results go to Bamboo as reviews.
 
-## People
+## Languages and people
 
-- **Second learner** (spouse, Cantonese side): add a `user_id` to phrase, card and review data,
-  plus a per-user allowlist.
-- **Native-speaker check.** A way for his wife to review the `review_needed` items quickly.
+- **Cantonese** (for the in-laws): add a `lang` column (default `cmn`; dedupe on
+  `(lang, hanzi_key)`), Jyutping via `to-jyutping`, a `zh-HK` voice, and spoken-Cantonese
+  extraction rules. Content must be checked by a native speaker; local models write Cantonese
+  poorly.
+- **Second learner** (spouse): add `user_id` to phrase, card and review data, plus a per-user
+  allowlist.
+
+## Capture
+
+- **Images in conversations.** PDFs drop photos (a menu, a product label). If they matter, OCR
+  them with the local vision model PandaBase already uses.

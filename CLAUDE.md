@@ -1,11 +1,17 @@
 # CLAUDE.md
 
-Bamboo helps Will remember the Mandarin (and some Cantonese) he looks up in Gemini for talking
-to his family: the yuesao, his toddler, the nanny, and his in-laws. It imports the Gemini
-conversation, extracts phrases with a **local** LLM on the Mac mini, and runs a 5-minute daily
-spoken review (FSRS) in a PWA. It is a Next.js + Turso **State Engine** on Vercel plus a Node
-**worker** on the Mac mini, talking over an authenticated HTTP API. It follows the stack and
-conventions of PandaBase (`github.com/willchan/pandabase`) and shares that Mac's Ollama.
+Bamboo helps Will remember the Mandarin he looks up in Gemini for talking to his family: the
+yuesao, his toddler and the nanny. He shares Gemini conversations to OpenClaw in Discord
+(`#bamboo`). A **local** LLM on the Mac mini extracts phrases into a ranked queue, and a PWA runs
+a short daily spoken review (one round of ~10 cards, FSRS).
+
+The pieces:
+- a Next.js + Turso **State Engine** on Vercel;
+- a Node **worker** and a **`bamboo-tools`** CLI with an OpenClaw skill on the Mac mini;
+- an authenticated HTTP API between them.
+
+It's all TypeScript. It follows PandaBase's stack and conventions (`github.com/willchan/pandabase`)
+and shares that Mac's Ollama and OpenClaw.
 
 ## Start here
 
@@ -14,7 +20,7 @@ conventions of PandaBase (`github.com/willchan/pandabase`) and shares that Mac's
 | [docs/PRD.md](docs/PRD.md) | You need to know *what* the product does and *why* |
 | [docs/DESIGN.md](docs/DESIGN.md) | You're changing architecture, schema, API, algorithms, prompts or ops |
 | [docs/PLAN.md](docs/PLAN.md) | You're executing a build milestone: follow its *Session protocol* |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build a tutor, Discord, share-link import, or neural TTS: they're deferred |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build a tutor, Cantonese, a Discord quiz, or neural TTS: they're deferred |
 
 Read only the sections your task needs.
 
@@ -24,25 +30,27 @@ Read only the sections your task needs.
   that changes architecture, schema, API contracts, algorithms or prompts updates
   `docs/DESIGN.md` (including §10 *Key decisions*). Deviations from a milestone go in its
   **Notes** in `docs/PLAN.md`.
-- **The State Engine owns data and logic.** The worker never touches the DB; it calls the API.
-  Domain rules (ranking, validation of LLM output, scheduling, romanization) are pure, tested
-  functions in `web/lib/domain/` (or in `shared/` when the worker needs them too).
-- **Never trust LLM-written Chinese metadata.** Romanization is always computed (pinyin-pro /
-  to-jyutping) and Gemini's pinyin is never stored. Extracted hanzi must appear verbatim in the
-  source turn, or the item is dropped.
+- **The State Engine owns data and logic.** The worker and `bamboo-tools` never touch the DB; they
+  call the API. Domain rules (validation of LLM output, dedupe, ranking, scheduling, the reminder
+  decision, pinyin) are pure, tested functions in `web/lib/domain/`, or in `shared/` when the Mac
+  side needs them too.
+- **Never trust LLM-written Chinese metadata.** Pinyin is always computed (pinyin-pro), and
+  Gemini's pinyin is never stored. Extracted hanzi, including example sentences, must appear
+  verbatim in the source turn, or they are dropped.
 - **Local models only at runtime.** No cloud LLM API calls anywhere in Bamboo. The worker uses
-  Ollama on the Mac.
+  Ollama on the Mac. The OpenClaw skill never reads or summarizes conversation content itself.
 - **Prompts are versioned files** in `worker/prompts/`. Changing a prompt means a new version file;
   jobs record `prompt_version`.
-- **Tunables live in `web/lib/config.ts`.** No magic numbers in domain code.
-- **Contracts are Zod schemas in `shared/src/contracts/`**, imported by both web and worker.
+- **Tunables live in config**: `web/lib/config.ts` (engine) and `shared/src/config.ts` (Mac side).
+  No magic numbers in domain code.
+- **Contracts are Zod schemas in `shared/src/contracts/`**, imported by web, worker and tools.
 - **Migrations are expand → contract.** Migrations run in the Vercel build before new code
   serves; add freely, and drop or rename only in a later PR.
-- **Nothing blocks on a human.** Inbox candidates expire; every review flow has a default outcome.
-- **Privacy:** `private/` holds Will's real Gemini exports and personal seed decks. Never commit
-  it, never use it as a test fixture, and never quote it in docs, PRs or commit messages
-  (counts only). Children's names and health details must not appear in the repo. Fixtures are
-  synthetic.
+- **Nothing blocks on a human.** The queue picks new material automatically; stale items expire.
+- **Privacy:** Will's real conversations (share links, PDFs) are never committed, never used as
+  test fixtures, and never quoted in docs, PRs or commit messages; report counts only. Debug
+  copies go in the gitignored `private/`. Children's names and health details must not appear in
+  the repo. Fixtures are synthetic.
 - **Bug fixes start with a regression test** that fails before the fix.
 
 ## Commands
@@ -56,6 +64,7 @@ pnpm lint && pnpm typecheck && pnpm test   # what CI runs, plus: pnpm --filter w
 pnpm --filter web test:e2e                 # Playwright, phone viewport
 pnpm db:generate                           # after editing db/src/schema/*: new migration (commit it)
 pnpm db:migrate                            # apply migrations to TURSO_DATABASE_URL (default file:db/dev.db)
-pnpm db:import-phrases <file.json>         # load a seed deck (M2+)
-make worker-install / worker-update / worker-logs   # Mac mini worker via launchd (M5+)
+pnpm db:seed                               # synthetic dev phrases (M2+)
+bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse on the Mac (M5+)
+make worker-install / worker-logs / agent-install / mac-update   # Mac mini (M4+)
 ```
