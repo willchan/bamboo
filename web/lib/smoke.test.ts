@@ -2,6 +2,7 @@
 // route handlers (on an in-memory DB), so a new route that forgot its token check fails here.
 import { createTestDb, type Db } from "@bamboo/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GET as evalTurnsGET } from "@/app/api/agent/eval/turns/route";
 import { GET as notificationsGET } from "@/app/api/agent/notifications/route";
 import { GET as nudgeGET } from "@/app/api/agent/nudge/route";
 import { GET as cronGET } from "@/app/api/cron/daily/route";
@@ -23,6 +24,7 @@ const handlers: Record<string, (req: Request) => Promise<Response>> = {
     notifiedPOST(req, { params: Promise.resolve({ id: "smoke-check" }) }),
   "/api/agent/notifications": notificationsGET,
   "/api/agent/nudge": nudgeGET,
+  "/api/agent/eval/turns": evalTurnsGET,
   "/api/jobs/claim": claimPOST,
   "/api/jobs/complete": completePOST,
   "/api/worker/heartbeat": heartbeatPOST,

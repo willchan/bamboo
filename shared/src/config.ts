@@ -94,6 +94,32 @@ export const sharedConfig = {
      */
     maxReplyCharsForModel: 6000,
   },
+  /**
+   * The tutor evaluation (docs/ROADMAP.md › Tutor): `GET /api/agent/eval/turns` and
+   * `bamboo-eval` on the Mac (agent/tools/src/eval/). Flags override `defaultModels` etc.
+   */
+  tutorEval: {
+    defaultLimit: 20,
+    maxLimit: 50,
+    defaultSeed: "bamboo",
+    maxSeedChars: 100,
+    /** Replayed one at a time, in this order. */
+    defaultModels: ["qwen3.5:9b", "qwen3.5:27b"],
+    /** Keep the model loaded between questions; it's unloaded (`keep_alive: 0`) after its last. */
+    keepAlive: "10m",
+    /** Thinking off by default (as the worker); `--think` turns it on. Sampling: model defaults. */
+    think: false,
+    /** Same as the worker's, so the 9B isn't reloaded for a different context size. */
+    numCtx: 8192,
+    /** One answer gives up after this long (the 27B answers slowly on the 32 GB Mac). */
+    answerTimeoutSeconds: 600,
+    /** Loading a model (the warm-up call before timing answers) gives up after this long. */
+    loadTimeoutSeconds: 600,
+    /** Default output directory, under the home of the account it runs as; never the repo. */
+    outRoot: "~/bamboo-eval",
+    /** docs/PROMPTS.md holds the tutor system prompt between `<!-- <marker>:start/end -->`. */
+    promptMarker: "tutor-eval-system-prompt",
+  },
 } as const;
 
 /** The reminder appended to link-import replies (DESIGN §5.1); share links stay public. */

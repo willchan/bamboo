@@ -2,6 +2,7 @@
 // database: everything goes through here.
 import {
   ApiError,
+  EvalTurnsResponse,
   ImportResponse,
   KnownResponse,
   NotificationsResponse,
@@ -122,6 +123,12 @@ export class Api {
 
   async markNotified(importId: string): Promise<void> {
     await this.call("POST", `/api/imports/${encodeURIComponent(importId)}/notified`, null, {});
+  }
+
+  /** The tutor evaluation's sample (`bamboo-eval run`); read-only. */
+  async evalTurns(limit: number, seed: string): Promise<EvalTurnsResponse> {
+    const q = new URLSearchParams({ limit: String(limit), seed });
+    return (await this.call("GET", `/api/agent/eval/turns?${q}`, EvalTurnsResponse))!;
   }
 
   async nudge(): Promise<string | null> {

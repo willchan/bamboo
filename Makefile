@@ -1,6 +1,6 @@
 # Thin wrappers over pnpm. Targets marked "stub" are filled in by the milestone named.
 .PHONY: install dev lint typecheck test build check db-migrate \
-	worker-install worker-logs agent-install mac-update
+	worker-install worker-logs agent-install mac-update tutor-eval
 
 install:
 	pnpm install
@@ -42,3 +42,9 @@ agent-install:
 
 mac-update: # git pull --ff-only, pnpm install --frozen-lockfile, worker-install (reload/kickstart)
 	ops/scripts/mac-update.sh
+
+# Local tutor evaluation (DESIGN §5.4), as openclaw-agent: bamboo-eval with ARGS, e.g.
+#   make tutor-eval ARGS="run --seed nov"   then ARGS="serve --out <dir> --host <ip>", "score …"
+# Output goes to ~/bamboo-eval/<run id>/, never the checkout.
+tutor-eval:
+	@agent/tools/node_modules/.bin/tsx agent/tools/src/eval/main.ts $(ARGS)
