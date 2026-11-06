@@ -566,7 +566,8 @@ model time. Five runs in all while tuning the term-example wording (each 40–50
   SIGTERM reaches the worker; `ExitTimeOut` 300 s (launchd's default 20 s is shorter than a model
   call). The `start` script is the same command. DESIGN §8.3, §10 #38.
 - **The worker reads `worker.env` itself** (`BAMBOO_WORKER_ENV`, default
-  `~/.config/bamboo/worker.env`; the process env wins), so the plist has no secret. It warns if
+  `~/.config/bamboo/worker.env`; the process env wins; *since the M5 post-merge fix, the file
+  wins*), so the plist has no secret. It warns if
   the file is readable by others. A missing/incomplete config exits 78 after a 5-min wait under
   launchd so `KeepAlive` doesn't spin. `worker-install` doesn't load the agent until
   `WORKER_API_TOKEN` is set. §10 #41.
@@ -692,7 +693,8 @@ idempotency, backup, additive extraDirs, automations, no token in any output or 
   (`~/.openclaw/.env`) already holds PandaBase's `AGENT_API_TOKEN`; Bamboo's token can't share
   the name, and new gateway env needs a gateway restart. `bamboo-tools` reads `agent.env`
   (`BAMBOO_API_URL`, `AGENT_API_TOKEN`, mode 600) and `bamboo.config.json` (Discord ids) from
-  `~/.config/bamboo/`; the process env wins. DESIGN §5.1, §8.1, §10 #33.
+  `~/.config/bamboo/`; the process env wins. DESIGN §5.1, §8.1, §10 #33. *(Changed post-merge,
+  below: the file wins.)*
 - **`import` prints the reply.** Its JSON has a `reply` field the skill posts verbatim: "📥 Got
   it…", "✅ Nothing new since last time." (plus the public-link line for links), or a failure
   line (`share_parse_failed` asks for the PDF; `pdftotext_missing` / `pdf_unreadable` ask for the
@@ -740,6 +742,12 @@ idempotency, backup, additive extraDirs, automations, no token in any output or 
 - **README**: the deploy step's cron check said *Settings → Cron Jobs*; Vercel has it under
   *Observability → Cron Jobs* (fixed, also in M3's manual steps above). New *Mac mini: Discord
   intake* section.
+- **Post-merge fix: the gateway's `AGENT_API_TOKEN` won.** With the process env winning,
+  `bamboo-replies` (which inherits `~/.openclaw/.env`) sent PandaBase's token and got 401, while
+  a by-hand run worked. Now `agent.env` wins, `AGENT_API_TOKEN` is never read from the env (the
+  env fallback is `BAMBOO_AGENT_API_TOKEN`), and a 401 names the token's source (path or env
+  name, never the value). `worker.env` now wins over the env too, for one rule on the Mac.
+  Regression test in `agent/tools/src/cli.test.ts`. DESIGN §8.1, §8.3, §10 #42.
 - During this session, the CLI calls made from Will's account (`openclaw config file`, `config
   get`, `automations list`) created an unused `~/.openclaw/state/` in **Will's** account (not the
   gateway's); it can be deleted. Read-only `ssh agent` probes (config get, automations list) ran

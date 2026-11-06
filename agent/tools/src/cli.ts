@@ -23,7 +23,9 @@ export const USAGE = `usage: bamboo-tools <command> [options]
       Today's review reminder, or NO_REPLY.
 
 Settings: ~/.config/bamboo/agent.env (BAMBOO_API_URL, AGENT_API_TOKEN) and
-~/.config/bamboo/bamboo.config.json (BAMBOO_CONFIG); see agent/bamboo.config.example.json.`;
+~/.config/bamboo/bamboo.config.json (BAMBOO_CONFIG); see agent/bamboo.config.example.json.
+The file wins over the environment, and the environment's AGENT_API_TOKEN (PandaBase's, in
+OpenClaw's gateway env) is never read; BAMBOO_AGENT_API_TOKEN is the env fallback.`;
 
 /** Every command the skill or an automation may name (checked by the skill test). */
 export const COMMANDS = {
@@ -129,11 +131,13 @@ function failure(code: keyof typeof FAILURE_REPLIES, message: string, exit = 1):
 }
 
 function api(settings: Settings, deps: Deps): Api | string {
-  if (!settings.apiUrl) return "BAMBOO_API_URL is not set (~/.config/bamboo/agent.env)";
-  if (!settings.token) return "AGENT_API_TOKEN is not set (~/.config/bamboo/agent.env)";
+  if (!settings.apiUrl) return `BAMBOO_API_URL is not set (${settings.envFile})`;
+  if (!settings.token)
+    return `AGENT_API_TOKEN is not set (${settings.envFile}; the gateway's AGENT_API_TOKEN is never used)`;
   return new Api({
     baseUrl: settings.apiUrl,
     token: settings.token,
+    tokenSource: settings.tokenSource ?? undefined,
     fetch: deps.fetch,
     retryDelayMs: deps.retryDelayMs,
   });

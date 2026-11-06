@@ -31,7 +31,7 @@ function deps(extraEnv: Record<string, string> = {}): Deps {
     env: {
       HOME: home,
       BAMBOO_API_URL: "https://bamboo.test/",
-      AGENT_API_TOKEN: engine.token,
+      BAMBOO_AGENT_API_TOKEN: engine.token,
       ...extraEnv,
     },
     readShare: async () => share,
@@ -177,7 +177,7 @@ describe("bamboo-tools import", () => {
     expect(JSON.parse(r.out)).toMatchObject({ error: "wrong_channel" });
     const n = await run(
       importArgs(["--url", "https://share.gemini.google/x"]),
-      deps({ AGENT_API_TOKEN: "" }),
+      deps({ BAMBOO_AGENT_API_TOKEN: "" }),
     );
     expect(JSON.parse(n.out)).toMatchObject({ error: "not_configured" });
     expect(n.err).toContain("AGENT_API_TOKEN");
@@ -193,6 +193,44 @@ describe("bamboo-tools import", () => {
     d.env = { HOME: home };
     const r = await run(importArgs(["--url", "https://share.gemini.google/x"]), d);
     expect(r.code).toBe(0);
+  });
+
+  // Regression: OpenClaw automations inherit the gateway env (~/.openclaw/.env), whose
+  // AGENT_API_TOKEN is PandaBase's. bamboo-tools sent that one and got 401 (DESIGN §8.3).
+  it("uses agent.env's token, never the gateway's AGENT_API_TOKEN", async () => {
+    writeFileSync(
+      join(home, ".config", "bamboo", "agent.env"),
+      `BAMBOO_API_URL=https://bamboo.test\nAGENT_API_TOKEN=${engine.token}\n`,
+    );
+    const d = deps();
+    d.env = { HOME: home, AGENT_API_TOKEN: "pandabase-token" };
+    const r = await run(["replies"], d);
+    expect(r).toEqual({ code: 0, out: NO_REPLY });
+    expect(engine.calls.map((c) => c.headers.get("authorization"))).toEqual([
+      `Bearer ${engine.token}`,
+    ]);
+  });
+
+  it("prefers agent.env's URL, and names the token's source (not its value) on a 401", async () => {
+    const envFile = join(home, ".config", "bamboo", "agent.env");
+    writeFileSync(envFile, `BAMBOO_API_URL=https://bamboo.test\nAGENT_API_TOKEN=stale-token\n`);
+    const d = deps({ BAMBOO_API_URL: "https://elsewhere.test" });
+    const hosts: string[] = [];
+    d.fetch = ((input: string, init?: RequestInit) => {
+      hosts.push(new URL(input).host);
+      return engine.fetch(input, init);
+    }) as typeof fetch;
+    const r = await run(["replies"], d);
+    expect(hosts).toEqual(["bamboo.test"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("401 unauthorized");
+    expect(r.err).toContain(`token from ${envFile} (AGENT_API_TOKEN)`);
+    expect(r.err).not.toContain("stale-token");
+
+    writeFileSync(envFile, "BAMBOO_API_URL=https://bamboo.test\n");
+    const e = await run(["replies"], deps({ BAMBOO_AGENT_API_TOKEN: "stale-token" }));
+    expect(e.err).toContain("token from env BAMBOO_AGENT_API_TOKEN");
+    expect(e.err).not.toContain("stale-token");
   });
 
   it("retries a 409 conflict and a 5xx, and reports other API errors", async () => {
@@ -305,7 +343,7 @@ describe("bamboo-tools replies", () => {
   });
 
   it("fails clearly without a token", async () => {
-    const r = await run(["replies"], deps({ AGENT_API_TOKEN: "" }));
+    const r = await run(["replies"], deps({ BAMBOO_AGENT_API_TOKEN: "" }));
     expect(r.code).toBe(1);
     expect(r.err).toContain("AGENT_API_TOKEN");
   });

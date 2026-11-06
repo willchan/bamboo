@@ -30,6 +30,8 @@ export type Fetch = typeof fetch;
 export interface ApiOptions {
   baseUrl: string;
   token: string;
+  /** Where the token came from (a path or an env name, never the value), named on a 401. */
+  tokenSource?: string;
   fetch?: Fetch;
   retries?: number;
   retryDelayMs?: number;
@@ -87,7 +89,9 @@ export class Api {
       lastError = new ApiCallError(
         res.status,
         code,
-        `${method} ${path}: ${res.status} ${code}${err.success && err.data.message ? ` (${err.data.message})` : ""}`,
+        `${method} ${path}: ${res.status} ${code}${err.success && err.data.message ? ` (${err.data.message})` : ""}${
+          res.status === 401 && this.opts.tokenSource ? `; token from ${this.opts.tokenSource}` : ""
+        }`,
       );
       if (!(res.status >= 500 || code === "conflict")) break;
     }

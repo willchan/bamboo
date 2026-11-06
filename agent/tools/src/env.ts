@@ -5,7 +5,10 @@
 //   ~/.config/bamboo/agent.env            BAMBOO_API_URL, AGENT_API_TOKEN (mode 600)
 //   ~/.config/bamboo/bamboo.config.json   Discord ids (from agent/bamboo.config.example.json)
 //
-// Variables already in the process environment win over the file.
+// Bamboo's own file wins. The process environment is only a fallback, and only for Bamboo's own
+// names (BAMBOO_*): a generic name such as AGENT_API_TOKEN is never read from it, because an
+// OpenClaw automation inherits the gateway env, where that name holds PandaBase's token. The
+// token's env fallback (tests, a one-off shell) is BAMBOO_AGENT_API_TOKEN.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +27,10 @@ export type ToolsConfig = z.infer<typeof ToolsConfig>;
 export interface Settings {
   apiUrl: string | null;
   token: string | null;
+  /** Where the token came from (a file path and key, or an env name), never its value. */
+  tokenSource: string | null;
+  /** The agent.env path that was read (or would have been). */
+  envFile: string;
   configPath: string;
   /** null when the file is missing; throws when it's present but invalid. */
   config: ToolsConfig | null;
@@ -54,12 +61,25 @@ const readIfExists = (path: string): string | null => {
   }
 };
 
+/** The process-env name for each setting; agent.env uses the key itself. */
+export const ENV_NAMES = {
+  BAMBOO_API_URL: "BAMBOO_API_URL",
+  AGENT_API_TOKEN: "BAMBOO_AGENT_API_TOKEN",
+  BAMBOO_CONFIG: "BAMBOO_CONFIG",
+} as const;
+
 export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
   const dir = configDir(env);
   const envFile = env.BAMBOO_AGENT_ENV || join(dir, "agent.env");
   const fileVars = parseEnvFile(readIfExists(envFile) ?? "");
-  const get = (k: string) => env[k] || fileVars[k] || null;
-  const configPath = get("BAMBOO_CONFIG") ?? join(dir, "bamboo.config.json");
+  /** agent.env first, then the Bamboo-specific env name. */
+  const get = (k: keyof typeof ENV_NAMES): { value: string; source: string } | null => {
+    if (fileVars[k]) return { value: fileVars[k], source: `${envFile} (${k})` };
+    const name = ENV_NAMES[k];
+    if (env[name]) return { value: env[name], source: `env ${name}` };
+    return null;
+  };
+  const configPath = get("BAMBOO_CONFIG")?.value ?? join(dir, "bamboo.config.json");
   const raw = readIfExists(configPath);
   let config: ToolsConfig | null = null;
   if (raw !== null) {
@@ -68,9 +88,12 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
       throw new Error(`${configPath}: ${parsed.error.issues.map((i) => i.message).join("; ")}`);
     config = parsed.data;
   }
+  const token = get("AGENT_API_TOKEN");
   return {
-    apiUrl: get("BAMBOO_API_URL")?.replace(/\/+$/u, "") ?? null,
-    token: get("AGENT_API_TOKEN"),
+    apiUrl: get("BAMBOO_API_URL")?.value.replace(/\/+$/u, "") ?? null,
+    token: token?.value ?? null,
+    tokenSource: token?.source ?? null,
+    envFile,
     configPath,
     config,
   };

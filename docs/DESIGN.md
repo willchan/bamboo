@@ -793,8 +793,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `HOUSEHOLD_TZ` | web | default `America/Los_Angeles` |
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
-| `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file. Never in OpenClaw's gateway env, which holds PandaBase's `AGENT_API_TOKEN` (§5.1) |
-| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path) and the process env wins over the file |
+| `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600; `BAMBOO_AGENT_ENV` overrides the path). **The file wins**; the process env is only a fallback, for `BAMBOO_*` names only: the token's env name is `BAMBOO_AGENT_API_TOKEN`, and `AGENT_API_TOKEN` is never read from the env (§8.3, §10 #42). Never in OpenClaw's gateway env, which holds PandaBase's `AGENT_API_TOKEN` (§5.1) |
+| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env, which only fills variables the file doesn't name (§10 #42) |
 
 ### 8.2 Deploy
 
@@ -858,6 +858,15 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   allowlist: it checks that `#bamboo` is enabled for the bot and, if not, prints the
   `openclaw config set channels.discord.guilds.<guild>.channels.<channel> …` command for Will
   (copy `#pandabase`'s entry: `enabled`, `requireMention: false`, the same `users`).
+- **Settings precedence: Bamboo's own file wins.** OpenClaw's command automations (and the
+  skill's commands) run with the gateway's env, `~/.openclaw/.env`, which is PandaBase's and
+  defines `AGENT_API_TOKEN` (PandaBase's token). So `bamboo-tools` reads its settings from
+  `agent.env` first and never reads the generic `AGENT_API_TOKEN` from its process env; the env
+  is a fallback for Bamboo-specific names only (`BAMBOO_API_URL`, `BAMBOO_CONFIG`, and
+  `BAMBOO_AGENT_API_TOKEN` for the token, e.g. in tests). On a 401 it prints where the token came
+  from (`token from <path> (AGENT_API_TOKEN)` or `token from env BAMBOO_AGENT_API_TOKEN`), never
+  the value. The worker follows the same rule for `worker.env` (its LaunchAgent has a clean env,
+  but a by-hand run from a shell that has PandaBase's variables must not pick them up).
 - `make mac-update` (as `openclaw-agent`) runs `git pull --ff-only`,
   `pnpm install --frozen-lockfile`, then `worker-install` again: it reloads the LaunchAgent if
   the plist changed, and otherwise `launchctl kickstart -k`s the worker only if the pull brought
@@ -939,6 +948,7 @@ bamboo/
 | 39 | The verbatim check moved from `web/lib/domain/queue.ts` to `shared/src/verbatim.ts` | The worker's eval must measure exactly what the engine drops; one implementation, re-exported by `queue.ts` |
 | 40 | The worker cuts the reply to 6,000 characters for the model (`maxReplyCharsForModel`) | Prompt plus reply must fit `num_ctx` 8192, which stays at PandaBase's value so the shared model isn't reloaded; the engine checks verbatim against the whole turn either way, so nothing invented gets in |
 | 41 | Ollama failing mid-job is reported as `failed` and pauses claims until the model check passes; `worker-install` doesn't load the worker until `WORKER_API_TOKEN` is set | Reporting uses one attempt either way (an unreported job's lease would expire too) and gets the job retried sooner; pausing stops a down Ollama from burning every queued job's attempts. A worker without a token would only restart in a loop |
+| 42 | On the Mac, Bamboo's own settings file wins over the process env; `bamboo-tools` never reads `AGENT_API_TOKEN` from the env (its env fallback is `BAMBOO_AGENT_API_TOKEN`) | Command automations inherit the gateway env, where `AGENT_API_TOKEN` is PandaBase's: with the env winning, `bamboo-tools replies` sent PandaBase's token and got 401 (fixed after M5). Same rule for `worker.env`, so both Mac-side loaders behave alike |
 
 ## Appendix A — Synthetic fixtures
 

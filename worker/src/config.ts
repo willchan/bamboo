@@ -1,5 +1,5 @@
 // The worker's settings (DESIGN §8.1): read from the environment, which `loadEnvFile` fills from
-// `~/.config/bamboo/worker.env` (ops/worker.env.example documents every variable).
+// `~/.config/bamboo/worker.env`, the file winning (ops/worker.env.example documents every variable).
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -37,9 +37,10 @@ export interface EnvFileStatus {
 }
 
 /**
- * Copy the file's variables into `env` without overriding ones already set (like Node's
- * `--env-file`: the process environment wins). A missing file is not an error here; `readConfig`
- * reports what's missing.
+ * Copy the file's variables into `env`, overriding ones already set: Bamboo's own file wins, as
+ * for bamboo-tools (DESIGN §8.3), so a generic name inherited from another app's env (PandaBase
+ * shares this Mac) can't replace Bamboo's value. The environment only fills variables the file
+ * doesn't name. A missing file is not an error here; `readConfig` reports what's missing.
  */
 export function loadEnvFile(path: string, env: Env = process.env): EnvFileStatus {
   let text: string;
@@ -52,10 +53,8 @@ export function loadEnvFile(path: string, env: Env = process.env): EnvFileStatus
   }
   const keys: string[] = [];
   for (const [k, v] of Object.entries(parseEnv(text))) {
-    if (env[k] === undefined || env[k] === "") {
-      env[k] = v;
-      keys.push(k);
-    }
+    env[k] = v;
+    keys.push(k);
   }
   return { path, loaded: true, keys, tooOpen: (mode & 0o077) !== 0 };
 }

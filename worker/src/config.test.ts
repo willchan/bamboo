@@ -57,7 +57,7 @@ describe("env file", () => {
     expect(envFilePath({ BAMBOO_WORKER_ENV: "/tmp/w.env" }, "/h")).toBe("/tmp/w.env");
   });
 
-  it("loads without overriding the environment and flags a file others can read", () => {
+  it("lets the file win over the environment and flags a file others can read", () => {
     const dir = mkdtempSync(join(tmpdir(), "bamboo-env-"));
     const path = join(dir, "worker.env");
     writeFileSync(
@@ -65,12 +65,20 @@ describe("env file", () => {
       `# comment\nBAMBOO_API_URL=https://bamboo.test\nWORKER_API_TOKEN=${SECRET}\nOLLAMA_TEXT_MODEL=\n`,
     );
     chmodSync(path, 0o600);
-    const env: Record<string, string | undefined> = { BAMBOO_API_URL: "https://override.test" };
+    // Same rule as bamboo-tools (DESIGN §8.3): a value inherited from another app's env (say,
+    // PandaBase's under the same generic name) never beats Bamboo's own file.
+    const env: Record<string, string | undefined> = {
+      BAMBOO_API_URL: "https://override.test",
+      WORKER_API_TOKEN: "pandabase-token",
+      OLLAMA_URL: "http://127.0.0.1:11434",
+    };
     const s = loadEnvFile(path, env);
     expect(s).toMatchObject({ loaded: true, tooOpen: false });
-    expect(s.keys.sort()).toEqual(["OLLAMA_TEXT_MODEL", "WORKER_API_TOKEN"]);
-    expect(env.BAMBOO_API_URL).toBe("https://override.test");
+    expect(s.keys.sort()).toEqual(["BAMBOO_API_URL", "OLLAMA_TEXT_MODEL", "WORKER_API_TOKEN"]);
+    expect(env.BAMBOO_API_URL).toBe("https://bamboo.test");
     expect(env.WORKER_API_TOKEN).toBe(SECRET);
+    // A variable the file doesn't name still comes from the environment.
+    expect(env.OLLAMA_URL).toBe("http://127.0.0.1:11434");
     // An empty value in the file means "use the default".
     expect(readConfig(env).model).toBe("qwen3.5:9b");
 
