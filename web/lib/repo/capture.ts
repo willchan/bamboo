@@ -217,7 +217,12 @@ export async function maybeFinishImport(db: Db, importId: string, now: number): 
   const nextUp = (await listQueue(db, now))
     .filter((p) => p.lastAskedImportId === importId)
     .slice(0, config.imports.nextUpCount)
-    .map((p) => ({ hanzi: p.hanzi, english: p.english }));
+    .map((p) => ({
+      hanzi: p.hanzi,
+      english: p.english,
+      pinyin: p.pinyin,
+      pinyinOverride: p.pinyinOverride,
+    }));
   const summary = importSummary({
     kind: imp.kind,
     turnsNew: imp.turnsNew,

@@ -99,6 +99,11 @@ export const config = {
     replyMaxChars: 12_000,
     /** "Next up: …" in an import's summary names this many of its queued phrases. */
     nextUpCount: 3,
+    /**
+     * Discord's message limit. A summary that would pass it names fewer Next-up phrases (each
+     * with its pinyin) rather than dropping pinyin.
+     */
+    discordMaxChars: 2000,
     /** The Imports page lists this many recent imports. */
     recentCount: 20,
   },

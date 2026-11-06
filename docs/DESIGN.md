@@ -497,15 +497,22 @@ and an unquoted value is cut at ` #` (a comment), which had left it as "Bamboo i
 
 **Results**: an OpenClaw *command automation* (no model call) runs `bamboo-tools replies` every 5
 minutes. It replies to each finished import's message with the engine's `summary`, e.g. "✅ 9 new
-questions → 14 phrases queued. Next up: 高压锅 pressure cooker, 泡打粉 baking powder, …". For
+questions → 14 phrases queued. Next up: 高压锅 gāo yā guō (pressure cooker), 泡打粉 pào dǎ fěn
+(baking powder), …". For
 link imports it appends "🔗 This share link is public; you can delete it in Gemini → Settings →
 Public links." It then marks the import notified, and prints `NO_REPLY` when idle. This is the
 same mechanism as PandaBase's `jobs replies`.
 
 The engine builds the summary when the import finishes (`importSummary` in
 `web/lib/domain/imports.ts`): "✅ {N} new questions → {M} phrases queued." (or "no new phrases"),
-then "Next up: hanzi (english), …" for up to `imports.nextUpCount` (3) of this import's phrases in
-queue order; then, on their own lines, "🔁 {K} phrases you'd asked about before are back in
+then "Next up: hanzi pinyin (english), …" for up to `imports.nextUpCount` (3) of this import's
+phrases in queue order. The pinyin is the phrase's stored, computed pinyin with Will's overrides
+applied (§4.2), the same reading the PWA shows, as tone-marked syllables separated by spaces
+(`pinyinText`'s form); a frame's slot stays `…` in both the hanzi and the pinyin
+(`阿姨，您是说…吗？ ā yí nín shì shuō … ma (Do you mean …?)`). Every hanzi Bamboo posts to
+Discord comes with its pinyin; the other replies (failures, Nothing new, the reminder) have no
+hanzi. If the summary would pass Discord's 2,000-character limit (`imports.discordMaxChars`),
+Next up names fewer phrases, down to none, rather than dropping pinyin (§10 #48). Then, on their own lines, "🔁 {K} phrases you'd asked about before are back in
 rotation." when it asked again, "⚠️ {F} questions couldn't be processed; Retry failed on the
 Imports page." when jobs failed, and the public-link line for links. Retry failed reopens an
 import but doesn't reply in Discord a second time once it has been notified.
@@ -1000,6 +1007,7 @@ bamboo/
 | 45 | `worker.env` wins over the process env for the keys it lists | Its keys are generic (`WORKER_API_TOKEN`, `OLLAMA_URL`, `OLLAMA_TEXT_MODEL`): a shell or job that inherited another app's value would otherwise send the wrong token or talk to the wrong Ollama, the same failure #42 fixed for `bamboo-tools` by prefixing. Renaming the worker's keys would break every existing `worker.env`; making the file authoritative doesn't |
 | 46 | On a 401, `bamboo-tools` names its token's source (file and key, or env var), never the value | A 401 from a working setup almost always means the wrong token was picked up (#42); naming the source makes that a one-line diagnosis in OpenClaw's logs without ever printing a secret |
 | 47 | The reminder learns from practice days (first finished round per household day), not every round | "Another round" or an abandoned round would otherwise pull the median; the reminder is about when the day's first round usually happens |
+| 48 | Discord replies show pinyin next to every hanzi, from the phrase's stored pinyin plus overrides; a long summary trims Next up, never the pinyin | New phrases use characters Will can't read yet, so hanzi with English alone isn't readable. Reusing the stored, computed reading (never an LLM's) keeps Discord and the PWA identical, overrides included. Fewer named phrases loses little (the queue is in the PWA); hanzi without pinyin would defeat the point |
 
 ## Appendix A — Synthetic fixtures
 

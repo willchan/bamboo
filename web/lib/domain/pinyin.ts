@@ -144,6 +144,22 @@ export function repinyin(
   };
 }
 
+/** A frame's slot as written (`…`, `⋯` or `...`), one or more characters of it. */
+const SLOT_CHAR = /^[…⋯.]$/u;
+
+/**
+ * Pinyin for Discord replies: `pinyinText`'s spaced syllables, but a frame's slot stays `…`
+ * (`阿姨，您是说…吗？` → `ā yí nín shì shuō … ma`). Other punctuation is dropped.
+ */
+export function replyPinyin(pairs: PinyinPairs): string {
+  const out: string[] = [];
+  for (const [c, s] of pairs) {
+    if (s !== null) out.push(s);
+    else if (SLOT_CHAR.test(c) && out.at(-1) !== "…") out.push("…");
+  }
+  return out.join(" ");
+}
+
 /** Plain-text pinyin (`ā yí`) for search, lists and accessibility labels. */
 export function pinyinText(pairs: PinyinPairs): string {
   return pairs

@@ -119,7 +119,9 @@ The behavior:
 
 - OpenClaw's **bamboo** skill acknowledges in one line and hands the conversation to Bamboo. When
   processing finishes (minutes, on the Mac's local model), it replies:
-  "✅ 9 new questions → 14 phrases queued. Next up: 高压锅 (pressure cooker), …". After a link
+  "✅ 9 new questions → 14 phrases queued. Next up: 高压锅 gāo yā guō (pressure cooker), …". Any
+  Mandarin in a Bamboo reply comes with its pinyin (the same reading the app shows, including his
+  corrections), because new words use characters he can't read yet. After a link
   import, the reply also reminds him that the link is public and can be deleted in Gemini
   (Settings → Public links). When nothing in it is new, the acknowledgement itself says
   "✅ Nothing new since last time." (with the same reminder for a link), and no second reply

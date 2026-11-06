@@ -655,7 +655,7 @@ describe("extract results", () => {
     const row = await importRow(import_id);
     expect(row).toMatchObject({ status: "done", phrasesNew: 3, jobsFailed: 0, finishedAt: T0 });
     expect(row.summary).toBe(
-      "✅ 3 new questions → 3 phrases queued. Next up: 高压锅 (pressure cooker), 泡打粉 (baking powder), 面粉 (flour).\n" +
+      "✅ 3 new questions → 3 phrases queued. Next up: 高压锅 gāo yā guō (pressure cooker), 泡打粉 pào dǎ fěn (baking powder), 面粉 miàn fěn (flour).\n" +
         "🔗 This share link is public; you can delete it in Gemini → Settings → Public links.",
     );
     const [finished] = await db.select().from(event).where(eq(event.type, "import_finished"));
