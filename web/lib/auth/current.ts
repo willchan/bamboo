@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { auth } from "@/auth";
 import { DEV_USER, devBypassEnabled } from "./allowlist";
 
@@ -17,8 +18,13 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   return email ? { email, name: session.user?.name ?? null, dev: false } : null;
 }
 
-/** For pages: the signed-in user, or a redirect to /sign-in. */
+/**
+ * For pages and server actions: the signed-in user, or a redirect to /sign-in. Calling it makes a
+ * page render per request (`connection()`), never at build time, even under the dev bypass, which
+ * reads no cookies: every page that calls it reads the database.
+ */
 export async function requireUser(): Promise<CurrentUser> {
+  await connection();
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
   return user;

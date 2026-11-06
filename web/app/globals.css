@@ -47,3 +47,27 @@ body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
     env(safe-area-inset-left);
 }
+
+/* Hanzi with ruby pinyin (DESIGN §6): pinyin sits above each character, readable at phone width. */
+.hanzi {
+  font-family:
+    "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", ui-sans-serif, system-ui, sans-serif;
+}
+
+ruby.ruby-cell {
+  ruby-position: over;
+  ruby-align: center;
+  padding-inline: 0.06em;
+}
+
+ruby.ruby-cell rt {
+  font-size: max(0.38em, 0.75rem);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  color: var(--muted);
+  letter-spacing: 0;
+  line-height: 1.2;
+}

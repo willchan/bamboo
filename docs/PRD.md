@@ -96,7 +96,10 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 
 - A PWA installed on the iPhone home screen. **Today** shows what's due and a **Start** button.
 - A **round** is ~10 cards: due cards first, with up to 3 new cards a day mixed in. After a round:
-  "✓ Done for today" if nothing else is due, or "Another round?" (optional).
+  "✓ Done for today" (one round is the daily goal), plus an optional "Another round (N due)" if
+  more is waiting.
+- Phrases are added and edited on a **Phrases** page; **Up next** shows the ranked queue with
+  Move to top and Remove.
 - Grades: Again / Hard / Good / Easy (FSRS). Big buttons, one hand.
 - The **first time** a new card appears, two more buttons:
   - **Not useful**: the phrase is dropped, and the drop teaches the ranking.

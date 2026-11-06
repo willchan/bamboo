@@ -10,3 +10,5 @@ private/
 spikes/
 # M0 share-link fixtures mirror real markup and an exact expected parse: never reformat them.
 agent/tools/tests/fixtures/share-*
+playwright-report/
+test-results/

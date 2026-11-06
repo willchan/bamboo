@@ -74,7 +74,7 @@ genuinely useful** (share a conversation, get a deck).
 |---|---|---|
 | M0 Share-link spike | merged | [#3](https://github.com/willchan/bamboo/pull/3) |
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
-| M2 Phrases, rounds & review | todo | |
+| M2 Phrases, rounds & review | in review | |
 | M3 Capture: engine | todo | |
 | M4 Worker | todo | |
 | M5 Discord intake | todo | |
@@ -312,6 +312,62 @@ is readable at phone width in light and dark mode; a round is ~10 cards.
 **Out of scope:** imports, turns, jobs, Discord, reminder, stats.
 
 **Notes:**
+
+*Versions chosen (checked 2026-11-05):* ts-fsrs **6.0.0**, pinyin-pro **3.29.5**, zod **4.6.7**,
+ulid **3.0.2**, @playwright/test **1.64.1** (1.65.0 was released the same day; not taken),
+@vitest/coverage-v8 **5.1.0**, tsx **4.23.15** in `/web` (for the seed script). All exact.
+
+*Acceptance (local, macOS, Node 24.22.2):* lint, typecheck, test, `web build` and `test:e2e` all
+pass. Coverage on `web/lib/domain`: 99.6% statements, 94.5% branches, 98.9% functions, 99.5%
+lines (`pnpm test` in `/web` fails below 90% on any of them).
+
+*Deviations / choices:*
+- **ts-fsrs 6 is a rewrite.** 6.0.0 (2026-10-28) replaces the `fsrs()` facade with an async
+  `DefaultScheduler` that defaults to FSRS-7 and drops `Card.elapsed_days`. M2 uses FSRS-7 (no
+  history to migrate) with `allowModelOverride: false`, since FSRS-7 otherwise skips the 1m/10m
+  learning steps. The `card` columns follow the v6 card: `stability_fast`, `schedule_status`, and
+  `scheduled_days` as real; no `elapsed_days`. DESIGN §2.1, §4.3 and §10 #22.
+- **Pinyin context rules.** pinyin-pro 3.29.5 reads 跑得快/我得走 as `dé` and 长高 as `cháng`
+  under every segmentation mode, so `pinyin.ts` adds a small rule table for 得 (de/děi) and 长
+  (zhǎng). 行 is right out of the box. DESIGN §4.2 and §10 #23.
+- **`normalizeText` skips NFKC on Chinese punctuation** (`，！？：；（）～…`): NFKC turns `…` into
+  `...` and `，` into `,`, which would mangle stored, displayed hanzi and the frame slot.
+  DESIGN §4.1.
+- **Schema additions beyond DESIGN §2.1** (all in migration `0001_phrases_cards_rounds`):
+  `phrase.pinned_at` (newest pin first), `card.suspended_at` (the editor's card-type toggle
+  suspends instead of deleting, §10 #24), `review_log.state_before` and `review_log.round_id`,
+  `round.card_ids`. `phrase.source_turn_id` has no FK yet: M3 adds the `turn` table (it can add
+  the constraint only by rebuilding the table, so it may leave it as a plain column).
+- **Rounds** (DESIGN §4.4 now spells these out): due cards take priority and new cards fill the
+  remaining slots; one card per phrase per round; learning steps due within 20 min count as due
+  (`learnAheadMinutes`); Again's re-insertion is judged at 15 s per remaining card
+  (`secondsPerCard`), client-side. A phrase becomes `active` when its first card is graded.
+- **Done for today** shows after any finished round, with "Another round (N due)" when more is
+  waiting, instead of withholding "Done" until nothing is due. PRD §5.2 and DESIGN §10 #25.
+- **The seed lives in `web/scripts/seed.ts`**, not `/db` as DESIGN §9 had it, because it uses the
+  engine's pinyin, scoring and FSRS code. Root `pnpm db:seed` runs it; it refuses any non-`file:`
+  database. 15 synthetic phrases, 6 active with past reviews and due now.
+- **e2e** runs `next dev` on port 3100 against a fresh `db/e2e.db` (deleted and migrated by the
+  web-server command), Chromium at 390×844 with touch. It doesn't use the seed: the flow needs an
+  otherwise empty database. CI now also runs `pnpm db:seed`, installs Chromium and runs
+  `test:e2e` after the build, uploading the Playwright report on failure.
+- `requireUser()` now calls `connection()`, so every signed-in page renders per request even
+  under `DEV_AUTH_BYPASS` (which reads no cookies and would otherwise let pages prerender, and
+  query the database, at build time). Small edit to M1's `web/lib/auth/current.ts`.
+- The Today page moved into the `app/(main)/` route group (shared bottom tab bar).
+- Examples' pinyin is computed at read time, not stored.
+
+*For M3+:*
+- Domain code: `web/lib/domain/{day,fsrs,phrase,pinyin,queue,session,state}.ts`. `queue.ts` has
+  `baseScore`, `effectiveScore`, `orderQueue`, `isLong`; M3 adds validation, dedupe, revival and
+  expiry there. `session.ts` has `askedAgainCards()` for the asked-again rule; M3 applies it with
+  `gradeCard`-style writes and `source: 'asked_again'`.
+- DB access is in `web/lib/repo/` (`phrases.ts`, `review.ts`); `phraseRows()` builds a phrase and
+  its cards (use it for imported phrases with `initialCardTypes(kind, turnKind)`). Multi-write
+  operations use `runBatch()` (a libSQL batch is one transaction).
+- Events written so far: `phrase_introduced`, `phrase_dropped` (with `via`), `already_know`,
+  `review`, `round_finished`.
+- Server actions are in `web/app/actions.ts`; each calls `requireUser()`.
 
 ---
 

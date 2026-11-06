@@ -8,6 +8,13 @@
       "when": 1793920335554,
       "tag": "0000_setting",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793922794406,
+      "tag": "0001_phrases_cards_rounds",
+      "breakpoints": true
     }
   ]
 }
