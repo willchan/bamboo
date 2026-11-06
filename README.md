@@ -102,8 +102,8 @@ It installs dependencies, links `~/.local/bin/bamboo-tools`, creates
 `~/.config/bamboo/bamboo.config.json` and `~/.config/bamboo/agent.env` (only if missing), and
 adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). Then:
 
-1. Put the production `AGENT_API_TOKEN` in `~/.config/bamboo/agent.env` with an editor (not on
-   a command line), and run `make agent-install` again: it adds the `bamboo-replies` and
+1. Put the production `AGENT_API_TOKEN` in `~/.config/bamboo/agent.env` as
+   `BAMBOO_AGENT_API_TOKEN=…` with an editor (not on a command line), and run `make agent-install` again: it adds the `bamboo-replies` and
    `bamboo-nudge` command automations.
 2. If it warns that `#bamboo` isn't enabled for the bot, run the `openclaw config set …` line it
    prints, with the same Discord user id as `#pandabase`'s entry.

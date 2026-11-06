@@ -97,7 +97,7 @@ describe("agent/install.sh", () => {
     const envFile = join(home, ".config/bamboo/agent.env");
     expect(statSync(envFile).mode & 0o777).toBe(0o600);
     expect(readFileSync(envFile, "utf8")).toMatch(/^BAMBOO_API_URL=https:\/\/bamboo\.test$/mu);
-    expect(readFileSync(envFile, "utf8")).toMatch(/^AGENT_API_TOKEN=$/mu);
+    expect(readFileSync(envFile, "utf8")).toMatch(/^BAMBOO_AGENT_API_TOKEN=$/mu);
     expect(first.out).toContain("skipped the automations");
     expect(automations()).toEqual([]);
 
@@ -108,12 +108,33 @@ describe("agent/install.sh", () => {
     expect(backups()).toHaveLength(1);
   });
 
+  // Bug: agent.env used the unprefixed AGENT_API_TOKEN, which the gateway env (PandaBase's) won
+  // over. An existing file is renamed in place, keeping the value and the mode.
+  it("renames an older agent.env's AGENT_API_TOKEN to BAMBOO_AGENT_API_TOKEN", () => {
+    const envFile = join(home, ".config/bamboo/agent.env");
+    mkdirSync(join(home, ".config/bamboo"), { recursive: true });
+    writeFileSync(envFile, `BAMBOO_API_URL=https://bamboo.test\nAGENT_API_TOKEN=${TOKEN}\n`, {
+      mode: 0o600,
+    });
+    const r = install();
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).not.toContain(TOKEN);
+    const text = readFileSync(envFile, "utf8");
+    expect(text).toMatch(new RegExp(`^BAMBOO_AGENT_API_TOKEN=${TOKEN}$`, "mu"));
+    expect(text).not.toMatch(/^AGENT_API_TOKEN=/mu);
+    expect(statSync(envFile).mode & 0o777).toBe(0o600);
+    expect(r.out).not.toContain("skipped the automations: BAMBOO_AGENT_API_TOKEN");
+  });
+
   it("adds the two command automations once the token is in, then updates them in place", () => {
     install();
     const envFile = join(home, ".config/bamboo/agent.env");
     writeFileSync(
       envFile,
-      readFileSync(envFile, "utf8").replace("AGENT_API_TOKEN=", `AGENT_API_TOKEN=${TOKEN}`),
+      readFileSync(envFile, "utf8").replace(
+        "BAMBOO_AGENT_API_TOKEN=",
+        `BAMBOO_AGENT_API_TOKEN=${TOKEN}`,
+      ),
     );
     const r = install();
     expect(r.code, r.out).toBe(0);

@@ -22,7 +22,7 @@ export const USAGE = `usage: bamboo-tools <command> [options]
   nudge
       Today's review reminder, or NO_REPLY.
 
-Settings: ~/.config/bamboo/agent.env (BAMBOO_API_URL, AGENT_API_TOKEN) and
+Settings: ~/.config/bamboo/agent.env (BAMBOO_API_URL, BAMBOO_AGENT_API_TOKEN) and
 ~/.config/bamboo/bamboo.config.json (BAMBOO_CONFIG); see agent/bamboo.config.example.json.`;
 
 /** Every command the skill or an automation may name (checked by the skill test). */
@@ -130,7 +130,7 @@ function failure(code: keyof typeof FAILURE_REPLIES, message: string, exit = 1):
 
 function api(settings: Settings, deps: Deps): Api | string {
   if (!settings.apiUrl) return "BAMBOO_API_URL is not set (~/.config/bamboo/agent.env)";
-  if (!settings.token) return "AGENT_API_TOKEN is not set (~/.config/bamboo/agent.env)";
+  if (!settings.token) return "BAMBOO_AGENT_API_TOKEN is not set (~/.config/bamboo/agent.env)";
   return new Api({
     baseUrl: settings.apiUrl,
     token: settings.token,

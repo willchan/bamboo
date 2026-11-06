@@ -1,8 +1,9 @@
 // Where bamboo-tools finds its settings on the Mac (DESIGN §8.1, §8.3). It runs as the
-// `openclaw-agent` user, invoked by OpenClaw, whose gateway env belongs to PandaBase (its own
-// AGENT_API_TOKEN lives there). So Bamboo keeps its own files, read here, never the gateway's:
+// `openclaw-agent` user, invoked by OpenClaw, which passes its own env file to every app's tools.
+// So Bamboo keeps its own files, read here, never the gateway's, and every key it reads carries
+// the BAMBOO_ prefix: an unprefixed name could be another app's (PandaBase's AGENT_API_TOKEN):
 //
-//   ~/.config/bamboo/agent.env            BAMBOO_API_URL, AGENT_API_TOKEN (mode 600)
+//   ~/.config/bamboo/agent.env            BAMBOO_API_URL, BAMBOO_AGENT_API_TOKEN (mode 600)
 //   ~/.config/bamboo/bamboo.config.json   Discord ids (from agent/bamboo.config.example.json)
 //
 // Variables already in the process environment win over the file.
@@ -70,7 +71,7 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
   }
   return {
     apiUrl: get("BAMBOO_API_URL")?.replace(/\/+$/u, "") ?? null,
-    token: get("AGENT_API_TOKEN"),
+    token: get("BAMBOO_AGENT_API_TOKEN"),
     configPath,
     config,
   };
