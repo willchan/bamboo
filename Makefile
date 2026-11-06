@@ -28,11 +28,11 @@ db-migrate:
 
 # --- Mac mini (DESIGN §8.3) ---------------------------------------------------------------------
 
-worker-install: # stub (M4): install and load ops/launchd/com.bamboo.worker.plist
-	@echo "worker-install: not implemented yet (M4)"; exit 1
+worker-install: # as openclaw-agent, in its checkout; idempotent, DRY_RUN=1 prints (ops/scripts/)
+	ops/scripts/worker-install.sh
 
-worker-logs: # stub (M4): tail ~/Library/Logs/bamboo/
-	@echo "worker-logs: not implemented yet (M4)"; exit 1
+worker-logs: # launchd state, last heartbeat, tail -F ~/Library/Logs/bamboo/worker.log (FOLLOW=0)
+	ops/scripts/worker-logs.sh
 
 # Run as the OpenClaw gateway's user (openclaw-agent on the Mac mini), from its Bamboo checkout:
 # bamboo-tools on PATH, ~/.config/bamboo, skills.load.extraDirs (backed up first) and the command
@@ -40,5 +40,5 @@ worker-logs: # stub (M4): tail ~/Library/Logs/bamboo/
 agent-install:
 	agent/install.sh
 
-mac-update: # stub (M4): git pull --ff-only, pnpm install --frozen-lockfile, launchctl kickstart
-	@echo "mac-update: not implemented yet (M4)"; exit 1
+mac-update: # git pull --ff-only, pnpm install --frozen-lockfile, worker-install (reload/kickstart)
+	ops/scripts/mac-update.sh

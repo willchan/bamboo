@@ -1,0 +1,76 @@
+{
+  "_comment": "Ollama 0.40 responses in their recorded shape (POST /api/chat with stream: false; GET /api/tags), with synthetic content for fixture turn fx-decode-1. chat_* differ only in message.content.",
+  "tags": {
+    "models": [
+      {
+        "name": "qwen3.5:4b",
+        "model": "qwen3.5:4b",
+        "modified_at": "2026-11-03T22:05:23.053415102-08:00",
+        "size": 3973305013,
+        "digest": "7f3251fa6878a78a606bcb3c074283306e5ad2ea411a7774a9dd98a4bc7f2d13",
+        "details": { "format": "safetensors", "quantization_level": "nvfp4", "runner": "mlx" },
+        "capabilities": ["completion", "vision", "thinking", "tools"]
+      },
+      {
+        "name": "qwen3.5:9b",
+        "model": "qwen3.5:9b",
+        "modified_at": "2026-11-03T22:05:23.053268101-08:00",
+        "size": 7639229431,
+        "digest": "d63f830f28d515fefea546f213fca7a75e9dd5176ef51a6deabc952d1c99a911",
+        "details": { "format": "safetensors", "quantization_level": "", "runner": "mlx" },
+        "capabilities": ["completion", "vision", "tools", "thinking"]
+      }
+    ]
+  },
+  "chat_valid": {
+    "model": "qwen3.5:9b",
+    "created_at": "2026-11-06T04:11:59.935035Z",
+    "message": {
+      "role": "assistant",
+      "content": "{\"turn_kind\":\"decode\",\"items\":[{\"kind\":\"term\",\"hanzi\":\"高压锅\",\"english\":\"pressure cooker\",\"addressee\":\"yuesao\",\"heard_as\":\"gaoyaguo\",\"example\":{\"hanzi\":\"用高压锅煮汤，二十分钟就好了。\",\"english\":\"Cook the soup in the pressure cooker, it's done in twenty minutes.\"},\"usefulness\":4,\"tags\":[\"cooking\",\"household\"]}]}"
+    },
+    "done": true,
+    "done_reason": "stop",
+    "total_duration": 2604115125,
+    "load_duration": 2333791,
+    "prompt_eval_count": 1012,
+    "prompt_eval_cached_count": 0,
+    "prompt_eval_duration": 869513458,
+    "eval_count": 96,
+    "eval_duration": 1709999291
+  },
+  "chat_invalid_english_too_long": {
+    "model": "qwen3.5:9b",
+    "created_at": "2026-11-06T04:12:03.112203Z",
+    "message": {
+      "role": "assistant",
+      "content": "{\"turn_kind\":\"decode\",\"items\":[{\"kind\":\"term\",\"hanzi\":\"高压锅\",\"english\":\"pressure cooker, a sealed pot that cooks food quickly under high steam pressure; the yuesao wants to use it to cook soup because it takes only about twenty minutes\",\"addressee\":\"yuesao\",\"heard_as\":\"gaoyaguo\",\"example\":null,\"usefulness\":9,\"tags\":[\"cooking\"]}]}"
+    },
+    "done": true,
+    "done_reason": "stop",
+    "total_duration": 3104115125,
+    "load_duration": 2133791,
+    "prompt_eval_count": 1012,
+    "prompt_eval_cached_count": 0,
+    "prompt_eval_duration": 869513458,
+    "eval_count": 120,
+    "eval_duration": 2209999291
+  },
+  "chat_not_json": {
+    "model": "qwen3.5:9b",
+    "created_at": "2026-11-06T04:12:05.002203Z",
+    "message": {
+      "role": "assistant",
+      "content": "{\"turn_kind\":\"decode\",\"items\":[{\"kind\":\"term\",\"hanzi\":\"高压"
+    },
+    "done": true,
+    "done_reason": "length",
+    "total_duration": 9104115125,
+    "load_duration": 2133791,
+    "prompt_eval_count": 8000,
+    "prompt_eval_cached_count": 0,
+    "prompt_eval_duration": 869513458,
+    "eval_count": 192,
+    "eval_duration": 8209999291
+  }
+}
