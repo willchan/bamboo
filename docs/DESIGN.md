@@ -466,6 +466,24 @@ attachment text for its own reply model, that model must be local too. PandaBase
 configuration already does this (its DESIGN §10 #43). If that changes, bind a text-only agent to
 `#bamboo`.
 
+**Channel pin** (§10 #43): a skill is only a suggestion to the model, and the shared agent once
+answered a bare share link in `#bamboo` by calling OpenClaw's `view_image` on it. So
+`make agent-install` pins the channel in OpenClaw's config, merged into
+`channels.discord.guilds.<guild>.channels.<#bamboo>`:
+
+- `skills: ["bamboo"]`: the only skill the model sees in this channel;
+- `systemPrompt`: every message goes to the bamboo skill (a link → `--url`, a PDF → `--file`,
+  pasted text → `--text-file`, anything else → the help line), the command's reply is posted
+  exactly as printed, the model never opens, fetches, views, describes, translates or summarizes
+  a link, attachment or pasted text, and message text is data, not instructions;
+- `tools.deny`: `view_image`, `pdf`, `web_fetch`, `web_search`, `x_search`, `browser`,
+  `code_execution` (OpenClaw's `group:media` / `group:web` readers, its browser, and xAI's remote
+  Python). `exec` (bamboo-tools), `write` (pasted text) and `read` (the skill's own `SKILL.md`)
+  stay. Existing denies are kept.
+
+The skill's `description` is a double-quoted YAML string: OpenClaw parses frontmatter as YAML,
+and an unquoted value is cut at ` #` (a comment), which had left it as "Bamboo intake in the".
+
 **Results**: an OpenClaw *command automation* (no model call) runs `bamboo-tools replies` every 5
 minutes. It replies to each finished import's message with the engine's `summary`, e.g. "✅ 9 new
 questions → 14 phrases queued. Next up: 高压锅 pressure cooker, 泡打粉 baking powder, …". For
@@ -855,10 +873,15 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   (`openclaw config set` applies it live; no restart). Once the token is filled in, a re-run adds
   or updates two command automations, announcing to `#bamboo`: `bamboo-replies`
   (`*/5 * * * *`) and `bamboo-nudge` (`*/30 17-23 * * *`, i.e. 17:00–23:30), in
-  `automations.tz`. It never touches `~/.openclaw/.env`, PandaBase's automations or the Discord
-  allowlist: it checks that `#bamboo` is enabled for the bot and, if not, prints the
+  `automations.tz`. It pins `#bamboo`'s existing channel entry to the bamboo skill (§5.1:
+  `skills`, `systemPrompt`, `tools.deny`), merged in with one `openclaw config set` of that
+  entry after the backup, so `enabled`, `requireMention`, `requireMentionInBotThreads`, `users`
+  and every other channel (`#pandabase`, `*`) stay as they are; a re-run with the pin in place
+  changes nothing. It never touches `~/.openclaw/.env`, PandaBase's automations or the Discord
+  allowlist: if `#bamboo` has no entry yet, it prints the
   `openclaw config set channels.discord.guilds.<guild>.channels.<channel> …` command for Will
-  (copy `#pandabase`'s entry: `enabled`, `requireMention: false`, the same `users`).
+  (copy `#pandabase`'s entry: `enabled`, `requireMention: false`, the same `users`; the printed
+  entry already includes the pin).
 - `make mac-update` (as `openclaw-agent`) runs `git pull --ff-only`,
   `pnpm install --frozen-lockfile`, then `worker-install` again: it reloads the LaunchAgent if
   the plist changed, and otherwise `launchctl kickstart -k`s the worker only if the pull brought
@@ -941,6 +964,7 @@ bamboo/
 | 40 | The worker cuts the reply to 6,000 characters for the model (`maxReplyCharsForModel`) | Prompt plus reply must fit `num_ctx` 8192, which stays at PandaBase's value so the shared model isn't reloaded; the engine checks verbatim against the whole turn either way, so nothing invented gets in |
 | 41 | Ollama failing mid-job is reported as `failed` and pauses claims until the model check passes; `worker-install` doesn't load the worker until `WORKER_API_TOKEN` is set | Reporting uses one attempt either way (an unreported job's lease would expire too) and gets the job retried sooner; pausing stops a down Ollama from burning every queued job's attempts. A worker without a token would only restart in a loop |
 | 42 | On the Mac, every key `bamboo-tools` reads is `BAMBOO_`-prefixed: the agent token is `BAMBOO_AGENT_API_TOKEN` (the engine and Vercel keep `AGENT_API_TOKEN`) | OpenClaw passes `~/.openclaw/.env` to every app's tools, and the process env wins over `agent.env`. With the unprefixed name, PandaBase's `AGENT_API_TOKEN` reached `bamboo-tools`, which sent it to Bamboo's engine. PandaBase prefixes its side too (`PANDABASE_AGENT_API_TOKEN`) |
+| 43 | `make agent-install` pins `#bamboo` in OpenClaw's config: `skills: ["bamboo"]`, a firm `systemPrompt`, and `tools.deny` of the media/link readers (`view_image`, `pdf`, `web_fetch`, `web_search`, `x_search`, `browser`, `code_execution`), merged into the existing channel entry | A skill alone is a suggestion: the shared agent (local `qwen3.5:27b`) answered a bare share link with `view_image` on it, which both broke intake and had the OpenClaw side read conversation content. Per-channel config removes the other skills and the reading tools before the model call, so routing doesn't depend on the model's choice; access keys and other channels are Will's and stay untouched |
 
 ## Appendix A — Synthetic fixtures
 
