@@ -93,8 +93,9 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `turn_kind` | text null | kind of the source turn (for ranking) |
 | `base_score` | real | §4.6; recomputed on change |
 | `pinned` | bool | hand-added or "move to top" → front of the queue |
+| `pinned_at` | int null | when `pinned` was set; orders pins newest first |
 | `source` | `'manual' \| 'import'` | |
-| `source_turn_id` | text null | fk `turn` |
+| `source_turn_id` | text null | fk `turn` (column from M2; the constraint arrives with the table in M3) |
 | `asked_count` | int default 1 | +1 each time an import shows he asked again |
 | `last_asked_at` | int | creation time initially |
 | `flags` | json `string[]` | e.g. `long`, `heard_as_dropped`, `example_dropped` |
@@ -108,16 +109,20 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `id` | text pk | |
 | `phrase_id` | text fk | |
 | `type` | `'say' \| 'listen'` | §4.8 |
-| FSRS state | | the ts-fsrs `Card` fields as columns: `due`, `stability`, `difficulty`, `elapsed_days`, `scheduled_days`, `learning_steps`, `reps`, `lapses`, `state`, `last_review` |
+| FSRS state | | the ts-fsrs 6 scheduler card (FSRS-7, §4.3) as columns: `due`, `stability`, `stability_fast`, `difficulty`, `scheduled_days` (real: FSRS-7 days are fractional), `learning_steps` (the scheduler's `learningStep`), `reps`, `lapses`, `state` (0 New, 1 Learning, 2 Review, 3 Relearning), `schedule_status`, `last_review`. ts-fsrs 6 dropped `elapsed_days` |
 | `buried_until` | int null | sibling burying (§4.4) |
+| `suspended_at` | int null | set when Will turns the card type off in the editor; suspended cards are never scheduled, and turning the type back on resumes the same card with its history |
 | `created_at` | int | |
 
 **`review_log`**: append-only. `id`, `card_id`, `rating` (1–4), `source`
-(`'session' | 'already_know' | 'asked_again'`), `reviewed_at`, `duration_ms` null, `fsrs_log`
-json (the ts-fsrs `ReviewLog`).
+(`'session' | 'already_know' | 'asked_again'`), `state_before` (the card's FSRS state before
+this review: "new cards introduced today" counts `state_before = 0`), `round_id` null (fk
+`round`; a reload resumes the round without the cards already graded in it), `reviewed_at`,
+`duration_ms` null, `fsrs_log` json (the ts-fsrs review log, dates as ms).
 
-**`round`**: `id`, `started_at`, `finished_at` null, `cards` int. Used for the daily goal, stats
-and the reminder time (§4.9).
+**`round`**: `id`, `started_at`, `finished_at` null, `cards` int (reviews done in it),
+`card_ids` json (the round as built). Used for the daily goal, stats and the reminder time
+(§4.9).
 
 ### 2.2 Imports and turns
 
@@ -211,7 +216,10 @@ PDF text from Gemini has two kinds of damage, both seen in a real export:
 
 `normalizeText(s)`:
 
-1. NFKC. This maps the Kangxi Radicals block (U+2F00–2FD5) and most of U+2E80–2EFF.
+1. NFKC. This maps the Kangxi Radicals block (U+2F00–2FD5), most of U+2E80–2EFF, and
+   full-width letters and digits. It is **not** applied to the full-width Chinese punctuation
+   `，！？：；（）～` and to `…`, which NFKC would fold to ASCII (`…` → `...`): stored hanzi is
+   displayed, and the frame slot must stay `…`.
 2. Apply an explicit map for the CJK Radicals Supplement characters that NFKC leaves alone. Seen so
    far: `⻄→西 ⻋→车 ⻓→长 ⻛→风 ⻥→鱼 ⻧→麦`. Extend the table as needed; any other character
    left in U+2E80–2FDF is kept and reported in the import's telemetry.
@@ -226,39 +234,62 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
 
 - `pinyin-pro` with tone marks, output aligned per character: `[char, syllable | null]`, with
   `null` for non-hanzi. Tone sandhi is shown only for 一/不.
-- Computed for the phrase **and** each example. Recomputed whenever hanzi changes. If an override
-  exists and the new hanzi differs, the override is dropped and the UI says so.
+- pinyin-pro 3.29 reads some everyday polyphones wrongly out of context (跑得很快 → dé, 我得走
+  → dé, 长高 → cháng). A small table of **context rules** in `pinyin.ts` corrects the common
+  cases from the neighbouring characters: structural 得 before a degree/manner word → `de`; modal
+  得 after a subject or adverb (我/你/们/还/就…) before a verb → `děi`; 长 before 大/高/胖/牙/得…
+  → `zhǎng`. Words that keep `dé` (得到, 获得, 值得, 不得不) are excluded. Will's overrides fix the
+  rest. Extend the table when a misreading turns up.
+- Computed for the phrase (stored) **and** each example (computed at read time, not stored).
+  Recomputed whenever hanzi changes. If an override exists and the new hanzi differs, the
+  override is dropped and the UI says so. Overrides store only the changed syllables (`null`
+  elsewhere); the editor accepts tone marks or numbers (`dei3` → `děi`, `de5` → `de`).
 - Display (§6): ruby text above each hanzi, using the override where present.
 - Gemini's own pinyin is **never stored**. Its errors are the reason this module exists.
 
 ### 4.3 Scheduling (FSRS)
 
-`ts-fsrs` (6.x). Parameters live in `config.fsrs`:
-`request_retention: 0.85`, `maximum_interval: 365`, `enable_fuzz: true`,
-`enable_short_term: true`, `learning_steps: ['1m', '10m']`, `relearning_steps: ['10m']`.
-Check the parameter names against the installed version.
+`ts-fsrs` 6.0, whose new async `DefaultScheduler` defaults to the **FSRS-7** model (fractional
+days, a second `stability_fast` memory field). Bamboo starts with no review history, so it uses
+FSRS-7 rather than pinning FSRS-6. `web/lib/domain/fsrs.ts` wraps it (convert columns ↔ scheduler
+card, grade, preview the four intervals). Parameters live in `config.fsrs`, with ts-fsrs 6's
+camelCase names: `version: 'FSRS-7'`, `desiredRetention: 0.85`, `maximumInterval: 365`,
+`enableFuzz: true`, `enableShortTerm: true`, `learningSteps: ['1m', '10m']`,
+`relearningSteps: ['10m']`, and `allowModelOverride: false`: with it on, FSRS-7 may skip the
+learning steps (a Good after Again jumped to ~2 h), which breaks Again-within-a-round. Fuzz is
+seeded by card id + reps, so it is deterministic per card.
 
-**Day boundary**: 04:00 in `HOUSEHOLD_TZ` (default `America/Los_Angeles`). Bedtime practice
-after midnight still counts for the previous day.
+**Day boundary**: 04:00 in `HOUSEHOLD_TZ` (default `America/Los_Angeles`), DST-safe
+(`web/lib/domain/day.ts`). Bedtime practice after midnight still counts for the previous day.
+"Due today" means due before the next 04:00.
 
 ### 4.4 Rounds (`web/lib/domain/session.ts`)
 
 A **round** is up to `config.session.roundSize` (10) cards. `buildRound(now, state)` returns its
 cards, in this order:
 
-1. learning/relearning cards whose step is due;
+1. learning/relearning cards whose step is due, counting steps due within
+   `config.session.learnAheadMinutes` (20, Anki's "learn ahead");
 2. review cards due today, most overdue first;
-3. **new cards**, interleaved roughly one per 3 cards. New cards are limited by
-   `config.session.newPerDay` (3) minus those already introduced today. They come from the queue
-   (§4.6): the top phrase's cards, one phrase at a time.
+3. **new cards**, interleaved one per `config.session.newEvery` (3) cards (d d N d d N …; extras
+   go at the end). New cards are limited by `config.session.newPerDay` (3) minus those already
+   introduced today. Due cards take priority: new cards only fill the slots the due cards leave.
+   They come first from `active` phrases whose second card is still New, then from the queue
+   (§4.6): the top phrase's first card (Listen before Say), one phrase at a time.
 
-**Siblings**: once one card of a phrase has been shown today, the other is buried until tomorrow.
+A round never holds two cards of one phrase. The round's card ids are stored on `round`, so a
+reload resumes it without the cards already graded.
+
+**Siblings**: once one card of a phrase has been shown today, the other is buried until tomorrow
+(`buried_until` = the next 04:00); cards mid-learning keep their steps.
 **Again** within a round re-inserts the card after its learning step if that falls inside the
-round; otherwise it waits for the next round or day.
+round, judged as `config.session.secondsPerCard` (15 s) per remaining card: a 1-minute step comes
+back after 4 more cards if at least 4 remain; otherwise it waits for the next round or day. The
+same rule applies to any grade whose next step is that short.
 
-**After a round**: if nothing is due and the new cap is used up (or the queue is empty), show
-"✓ Done for today". Otherwise offer "Another round (N due)". The daily goal is met by one finished
-round, or by having nothing to do.
+**After a round**: the daily goal is met by one finished round, or by having nothing to do, and
+the screen says "✓ Done for today". If something is still waiting (due cards, or new cards under
+the cap), it also offers "Another round (N due)".
 
 **First sight of a new card** shows, besides the grades:
 
@@ -267,7 +298,8 @@ round, or by having nothing to do.
   `newPerDay`.
 - **Already know** → grade **Easy** with `source: 'already_know'`.
 
-A phrase becomes `active` (`introduced_at`) when its first card is shown.
+A phrase becomes `active` (`introduced_at`) when its first card is graded (Not useful drops it
+instead), logging `phrase_introduced` with its queue rank at that moment.
 
 **Asked again** (§4.6) on an `active` phrase: apply **Again** with `source: 'asked_again'` to every
 card that has been reviewed, at most once per phrase per import.
@@ -337,7 +369,9 @@ phrases come back if asked about again (§4.6). Nothing depends on Will acting.
 
 - `term` from a `decode` turn → `listen`.
 - Any other term, frame or sentence → `say`.
-- The phrase editor has a toggle for the second card type.
+- The phrase editor has a toggle for each card type (at least one stays on). Turning a type off
+  sets the card's `suspended_at` instead of deleting it, so its review history survives; turning
+  it back on resumes it.
 - Manual phrases are created `queued` with `pinned = true`.
 
 ### 4.9 Reminder (`web/lib/domain/nudge.ts`)
@@ -558,9 +592,14 @@ job finishes, it sets the import to `done`, builds its summary, and logs `import
 Mobile-first; tested at a 390×844 viewport. Dark mode follows the system, since this is used at
 night.
 
-- **Today** (`/`): "1 round · N due · M new", **Start**, or "✓ Done for today"; a line for the
-  worker's status if jobs are waiting and the worker is offline.
-- **Review** (`/review`): one card at a time.
+Today, Up next and Phrases share a bottom tab bar (`app/(main)/`); Review is full-screen.
+
+- **Today** (`/`): "1 round · N due · M new", **Start**, or "✓ Done for today" (plus "Another
+  round (N due)" when more is waiting, §4.4); a line for the worker's status if jobs are waiting
+  and the worker is offline (M3+).
+- **Review** (`/review/[id]`): one card at a time. **Start** is a server action that builds the
+  round, stores it and opens `/review/<round id>`; reloading resumes it. Grading, Not useful and
+  finishing are server actions; Again's re-insertion (§4.4) happens in the client.
   - *Say*: the front shows the English intent and an addressee chip ("→ 阿姨"). Tap to reveal the
     hanzi with ruby pinyin; audio plays; for terms, the example sentence (with pinyin) and its
     English appear below.
@@ -570,8 +609,10 @@ night.
     first back also shows **Not useful** and **Already know**.
 - **Up next** (`/queue`): the ranked queue; each row shows hanzi, English, "heard: …",
   "asked ×N"; **Move to top** / **Remove**.
-- **Phrases** (`/phrases`): search and filter by kind or tag; add, edit (examples, pinyin
-  overrides, card types); drop.
+- **Phrases** (`/phrases`, `/phrases/new`, `/phrases/[id]`): search (hanzi, pinyin, English,
+  heard-as) and filter by kind, tag or status; add, edit (examples for terms, pinyin overrides,
+  card types); drop, and restore a dropped phrase. After adding, the editor opens so Will can
+  check the computed pinyin (per-character override inputs appear once the hanzi is saved).
 - **Imports** (`/imports`): recent imports with status and counts, failed jobs (Retry), and a
   paste box for a single Gemini answer.
 - **Stats** (`/stats`): PRD §6 measures (§7).
@@ -579,7 +620,9 @@ night.
 **Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN`, preferring an
 "Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.6 for slow replay. Speak the hanzi,
 with `…` replaced by a short pause; examples have their own play button. iOS needs a user gesture
-before the first utterance; the Start tap counts. If no `zh-CN` voice is found, show a one-time
+before the first utterance; the Start tap counts (it speaks a silent utterance to unlock speech,
+and the round opens by client-side navigation, so the unlock carries over). Cantonese (`zh-HK`)
+voices are never picked; `zh-TW` is a fallback. If no `zh-CN` voice is found, show a one-time
 hint: *Settings → Accessibility → Spoken Content → Voices → Chinese*.
 
 **PWA**: `manifest.webmanifest` (standalone, icons, theme color). There's no service worker in
@@ -676,8 +719,9 @@ in docs, PRs or commit messages (counts only). Test fixtures are synthetic (Appe
 bamboo/
   CLAUDE.md  README.md  Makefile  package.json  pnpm-workspace.yaml  tsconfig.base.json
   docs/       PRD.md DESIGN.md PLAN.md ROADMAP.md
-  web/        Next.js app — app/, components/, lib/domain/ (pure), lib/repo/ (DB), lib/config.ts
-  db/         @bamboo/db — src/schema/*, migrations/, scripts (seed)
+  web/        Next.js app — app/, components/, lib/domain/ (pure), lib/repo/ (DB), lib/config.ts,
+              scripts/seed.ts (`pnpm db:seed`), e2e/ (Playwright)
+  db/         @bamboo/db — src/schema/*, migrations/, migrate script
   shared/     @bamboo/shared — src/contracts/*, text.ts, turns.ts, segment.ts, config.ts;
               tests/fixtures/ (synthetic PDF text)
   worker/     @bamboo/worker — src/ (claim loop, ollama client), prompts/
@@ -713,6 +757,10 @@ bamboo/
 | 19 | `DEV_AUTH_BYPASS` is refused on every Vercel deployment, not just production; previews have no Google sign-in | Previews run unreviewed PR code on a guessable URL, so a stray env var must never open one; a per-preview redirect URI isn't possible with Google, and M1–M6 need no signed-in preview |
 | 20 | Read share links through Gemini's share RPC over plain HTTPS, not headless Chromium (M0) | The page HTML has no conversation; the RPC returns it whole (prompts verbatim, checklist data the DOM hides) in ~1 s with no browser on the Mac; both are undocumented, and the PDF path covers breakage |
 | 21 | Image-only prompts are keyed on the reply (§4.5) | Found in M0: an empty prompt would collide with every other empty prompt; the reply is the only stable text the turn has |
+| 22 | FSRS-7 through ts-fsrs 6's `DefaultScheduler`, with `allowModelOverride: false` | No history to migrate, so start on the library's current model; the explicit 1m/10m learning steps keep Again-within-a-round predictable. The model is in `config.fsrs.version`, and `review_log.fsrs_log` keeps what a later replay needs |
+| 23 | pinyin-pro plus a small table of context rules (得, 长) | pinyin-pro alone misreads the most common household polyphones; a rule table is cheap, tested, and Will's overrides remain the final word |
+| 24 | Turning a card type off suspends the card | Deleting it would drop its review history; suspending keeps `review_log` append-only and makes the toggle reversible |
+| 25 | A finished round meets the daily goal even if more is due; "Another round" stays optional | The daily unit is one round (PRD §3.4); showing "✓ Done" with an optional extra matches the habit model |
 
 ## Appendix A — Synthetic fixtures
 

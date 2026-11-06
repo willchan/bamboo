@@ -61,11 +61,12 @@ Read only the sections your task needs.
 ```
 pnpm install
 pnpm dev                                   # web on localhost:3000 (DEV_AUTH_BYPASS=1 for local sign-in)
-pnpm lint && pnpm typecheck && pnpm test   # what CI runs, plus: pnpm --filter web build
-pnpm --filter web test:e2e                 # Playwright, phone viewport (M2+)
+pnpm lint && pnpm typecheck && pnpm test   # what CI runs (web test enforces ≥ 90% coverage on lib/domain), plus: pnpm --filter web build
+pnpm --filter web test:e2e                 # Playwright, phone viewport; own server on :3100 and fresh db/e2e.db
+pnpm --filter web exec playwright install chromium   # once, before the first e2e run
 pnpm db:generate                           # after editing db/src/schema/*: new migration (commit it)
 pnpm db:migrate                            # apply migrations to TURSO_DATABASE_URL (default file:db/dev.db)
-pnpm db:seed                               # synthetic dev phrases (M2+)
+pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse on the Mac (M5+)
 make worker-install / worker-logs / agent-install / mac-update   # Mac mini (M4+)
 ```

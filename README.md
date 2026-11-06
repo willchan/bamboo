@@ -14,8 +14,11 @@ Node 24 and pnpm (the version is pinned in `package.json`; `corepack enable` pic
 ```
 pnpm install
 pnpm db:migrate                 # creates db/dev.db
+pnpm db:seed                    # optional: 15 synthetic phrases, some due now
 DEV_AUTH_BYPASS=1 pnpm dev      # http://localhost:3000, signed in as a fixed dev user
 pnpm lint && pnpm typecheck && pnpm test && pnpm --filter web build   # what CI runs
+pnpm --filter web exec playwright install chromium   # once
+pnpm --filter web test:e2e      # Playwright at a phone viewport (own server and db/e2e.db)
 ```
 
 `.env.example` lists every variable. For real Google sign-in locally, copy its web block to

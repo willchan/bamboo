@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
     "@bamboo/db": "workspace:*",
@@ -18,18 +20,25 @@
     "drizzle-orm": "0.45.4",
     "next": "16.4.5",
     "next-auth": "5.0.0-beta.32",
+    "pinyin-pro": "3.29.5",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "ts-fsrs": "6.0.0",
+    "ulid": "3.0.2",
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "1.64.1",
     "@tailwindcss/postcss": "4.3.4",
     "@types/node": "^24.19.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "5.1.0",
     "eslint": "9.39.5",
     "eslint-config-next": "16.4.5",
     "eslint-config-prettier": "10.1.8",
     "tailwindcss": "4.3.4",
+    "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vitest": "5.1.0"
   }
