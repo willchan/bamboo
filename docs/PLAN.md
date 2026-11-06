@@ -76,7 +76,7 @@ genuinely useful** (share a conversation, get a deck).
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | merged | [#5](https://github.com/willchan/bamboo/pull/5) |
 | M3 Capture: engine | merged | [#6](https://github.com/willchan/bamboo/pull/6) |
-| M4 Worker | in review | |
+| M4 Worker | in review | [#9](https://github.com/willchan/bamboo/pull/9) |
 | M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
 | M6 Reminder & stats | todo | |
 
