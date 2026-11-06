@@ -75,7 +75,7 @@ genuinely useful** (share a conversation, get a deck).
 | M0 Share-link spike | merged | [#3](https://github.com/willchan/bamboo/pull/3) |
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | merged | [#5](https://github.com/willchan/bamboo/pull/5) |
-| M3 Capture: engine | in review | |
+| M3 Capture: engine | in review | [#6](https://github.com/willchan/bamboo/pull/6) |
 | M4 Worker | todo | |
 | M5 Discord intake | todo | |
 | M6 Reminder & stats | todo | |
