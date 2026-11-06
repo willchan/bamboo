@@ -76,9 +76,9 @@ genuinely useful** (share a conversation, get a deck).
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | merged | [#5](https://github.com/willchan/bamboo/pull/5) |
 | M3 Capture: engine | merged | [#6](https://github.com/willchan/bamboo/pull/6) |
-| M4 Worker | in review | [#9](https://github.com/willchan/bamboo/pull/9) |
+| M4 Worker | merged | [#9](https://github.com/willchan/bamboo/pull/9) |
 | M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
-| M6 Reminder & stats | todo | |
+| M6 Reminder & stats | in review | [#13](https://github.com/willchan/bamboo/pull/13) |
 
 ---
 
@@ -806,3 +806,76 @@ clamp; the 04:00 day boundary); stats queries on fixture data.
 - `pnpm smoke https://bamboo-panda.vercel.app` passes.
 
 **Notes:**
+
+*What's here:*
+- `web/lib/domain/nudge.ts` (pure: `eveningMinutes`, `practiceStarts`, `nudgeTime`, `nudgeText`,
+  `decideNudge`) and `web/lib/repo/nudge.ts` (`takeNudge`, `evaluateNudge`, `getNudgeTime`,
+  the `nudge_enabled` setting). `GET /api/agent/nudge` answers `NudgeResponse` unchanged
+  (`{text: string | null}`). Tunables in `config.nudge` and `config.stats`.
+- `/stats` (fifth tab) with `web/lib/domain/stats.ts` (pure measures) and
+  `web/lib/repo/stats.ts` (queries); the reminder switch on Today (server action
+  `setNudgeAction`).
+- Tests: `web/lib/domain/nudge.test.ts`, `stats.test.ts`; `web/lib/repo/m6.test.ts` (the route
+  and the Stats queries on synthetic fixture data, in-memory DB); `web/e2e/stats.spec.ts`;
+  `web/lib/vercel-config.test.ts`. No migration: `setting`, `round` and `event` already had
+  everything.
+
+*Deviations / choices:*
+- **Vercel Schedules: migrated.** Checked Vercel's docs (Schedules overview, *Migrating from Cron
+  Jobs to Schedules*, Concepts, Configuration reference; 2026-10/11). A static schedule in
+  `web/vercel.json` (`"schedules": {"daily": {"schedule": "17 11 * * *", "path":
+  "/api/cron/daily", "requestMethod": "GET"}}`) keeps the route, the UTC time and the
+  `CRON_SECRET` bearer check (Vercel still sends it, plus `user-agent: vercel-cron/1.0`); `crons`
+  is removed in the same change (both would run the job twice). Caveats, recorded in DESIGN §8.2
+  and §10 #44: Schedules are **beta**; runs start within a jitter window (1 min on Pro, always
+  15 min on Hobby, which is still tighter than a legacy Hobby cron's "any time in the hour");
+  failed path runs aren't retried; a run may very rarely be delivered twice (the job is
+  idempotent). Static schedules are inactive on preview branches. The schedule name `daily` must
+  stay stable (renaming creates a new schedule). Not done: a private `function` target (needs
+  `@vercel/schedules` and an experimental trigger; not worth it for one idempotent job behind a
+  secret). It now shows under the project's **Schedules** page, not *Observability → Cron Jobs*.
+- **Practice days, not rounds.** DESIGN §4.9's "at least 5 rounds in the last 14 days" counts the
+  first finished round of each household day before today, so "Another round" or an abandoned
+  round doesn't pull the median (§10 #47). Today's rounds don't count. Times are measured inside
+  the 04:00 day (00:30 → 24:30), then clamped to 18:00–23:00.
+- **Text**: `📚 1 round · ~{min} min · {due} due · {new} new → {APP_URL}`: DESIGN's text plus the
+  new count, zero counts left out, minutes from round size × `secondsPerCard` (10 cards → ~3).
+  `APP_URL` falls back to the request origin.
+- **Once a day, race-safe**: sending is a conditional upsert of `nudge_last_sent_day` (only one of
+  two overlapping polls wins), then a `nudge_sent {local_time, nudge_at}` event.
+- **`bamboo-tools nudge` no longer treats 404 as NO_REPLY** (M5's stopgap): the route exists now,
+  and a 404 would more likely mean a wrong `BAMBOO_API_URL`. Errors exit 1 with nothing on stdout,
+  so the automation posts nothing either way.
+- **Stats definitions** (DESIGN §7): rolling 7-day weeks of household days ending today; true
+  retention = Review-state `session` grades above Again; Not useful = `not_useful` drops over
+  (those + introduced), split by kind and usefulness; extraction drop rate =
+  `dropped_not_verbatim / items` from `extraction` events (PRD §6 now says that's how
+  "extraction quality" is measured).
+- **Extra scope (Will approved; from a closed PR):**
+  1. On a 401, `bamboo-tools` (every command) says where its token came from:
+     `token from BAMBOO_AGENT_API_TOKEN in <agent.env path>` or `token from environment variable
+     BAMBOO_AGENT_API_TOKEN`; tests assert the value never appears in stdout or stderr. DESIGN
+     §8.1, §10 #46.
+  2. **`worker.env` now wins over the process env** for the keys it lists (`loadEnvFile`), so an
+     inherited generic `WORKER_API_TOKEN` / `OLLAMA_URL` / `OLLAMA_TEXT_MODEL` can't override
+     Bamboo's file; an empty value in the file means "default", and keys the file omits still
+     come from the env. Regression test committed first, failing (`worker.env wins over inherited
+     generic variables…`), then the fix. DESIGN §8.1, §10 #45.
+- `pnpm smoke` now has 15 checks (`GET /api/agent/nudge` added to `MACHINE_ROUTES`).
+- The status table's M4 row said *in review*; it's merged (#9), corrected here.
+
+*Manual steps for Will (after merge):*
+1. `pnpm smoke https://bamboo-panda.vercel.app`: all 15 checks pass.
+2. Vercel → the project's **Schedules** page: `daily` is listed and active (`17 11 * * *`, UTC).
+   Click *Run Schedule* once: the run returns 200 with counts (401/503 = `CRON_SECRET` missing).
+   The *Cron Jobs* tab should be empty. If the deploy shows no schedule (beta not enabled for
+   the account, say), revert `web/vercel.json` to the `crons` line in DESIGN §8.2.
+3. In the evening (from 21:00 LA, or after enough practice days, just before the usual time) on a
+   day with a round waiting and none done: one reminder in `#bamboo`. On a day with a round
+   already done: none. The switch on Today shows the time and turns it off.
+4. On the phone: the Stats tab renders (it's mostly empty until there's history).
+
+*For the orchestrator (on the Mac, as `openclaw-agent`):* `make mac-update` in `~/Code/bamboo`
+(pulls; restarts the worker, which now reads `worker.env` over its env; `bamboo-tools` is a
+symlink into the checkout, so the new 401 message and nudge handling take effect at once). No
+config change, no new automation: `bamboo-nudge` already runs `bamboo-tools nudge`.

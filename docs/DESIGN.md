@@ -12,7 +12,7 @@
    Google sign-in      │        Auth.js v5 (Google, allowlist of one)                     │
                        │        domain logic: web/lib/domain (pure, tested)               │
                        │        Drizzle ORM ───────────────────────▶ Turso (libSQL)       │
-                       │        Vercel Cron: /api/cron/daily                              │
+                       │        Vercel Schedule "daily": /api/cron/daily                  │
                        └───────────────▲──────────────────────────────▲──────────────────┘
                                        │ HTTPS (bearer) AGENT token   │ HTTPS (bearer) WORKER token
   ┌────────────────────────── Mac mini (M6, 32GB) — outbound only ────┼──────────────────┐
@@ -185,7 +185,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 - **Machines**: bearer tokens, compared in constant time.
   - `AGENT_API_TOKEN`: `/api/imports*` and `/api/agent/*` (`bamboo-tools`).
   - `WORKER_API_TOKEN`: `/api/jobs/*` and `/api/worker/*`.
-  - `CRON_SECRET`: `/api/cron/*` (Vercel Cron sends it as a bearer).
+  - `CRON_SECRET`: `/api/cron/*` (Vercel Schedules send it as a bearer, as Cron Jobs did).
 
   A token opens only its own routes: the agent token gets 401 on `/api/jobs/*`, the worker token
   gets 401 on `/api/imports*`, and so on. A route whose token isn't configured on the server
@@ -201,11 +201,11 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/imports` | agent | `{kind, origin, source_ref?, conversation_title?, discord_channel_id?, discord_message_id?, turns_total, turns: [{user_text, reply_text, position}], more?}` (≤ 2 MB, else 413; the CLI chunks, passing `import_id` on later calls and `more: true` on every call but the last) → `{import_id, turns_new, turns_added}`. `turns_new` is the import's running total, `turns_added` this call's. The engine recomputes each `turn_key`, inserts new turns, and queues one `extract_turn` per new turn, in one transaction. Header `Idempotency-Key: discord:<message id>` on every call: a repeated first call returns the same import. A chunk with new turns for an import whose last chunk already arrived → 409 `import_closed`; an unknown `import_id` → 404 |
 | `GET /api/agent/notifications` | agent | `{notifications: [{import_id, kind, discord_channel_id, discord_message_id, summary}]}`: finished imports with a Discord message and no `notified_at` |
 | `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
-| `GET /api/agent/nudge` | agent | `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent |
+| `GET /api/agent/nudge` | agent | `NudgeResponse` `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent (a conditional upsert of `nudge_last_sent_day`, so of two overlapping polls only one gets the text) and logs `nudge_sent` |
 | `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt) |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
-| `GET /api/cron/daily` | cron | expire stale queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. Scheduled in `web/vercel.json` at 11:17 UTC |
+| `GET /api/cron/daily` | cron | expire stale queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
 
 Errors from every machine route are `{error, message?, issues?}` with `error` one of
 `invalid_body` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
@@ -425,7 +425,18 @@ command automation. It returns text only when **all** of these hold:
 
 `nudge_time` is the median start time of rounds in the last 14 days minus 15 min, once there are at
 least 5 such rounds, clamped to 18:00–23:00. Otherwise it is `config.nudge.defaultLocalTime`
-(21:00). The text: `📚 1 round · ~3 min · {due} due → {APP_URL}`.
+(21:00). "Rounds" here are **practice days**: the first *finished* round of each household day
+before today, so an evening with three rounds counts once and an abandoned round not at all.
+Times are measured within the 04:00 household day, so a round at 00:30 is 24:30, not 00:30 (and
+pulls the time later, up to the 23:00 clamp). "Once a day" is per household day
+(`nudge_last_sent_day` holds its `dayKey`).
+
+The text: `📚 1 round · ~{min} min · {due} due · {new} new → {APP_URL}`, where `~{min}` is the
+round's cards × `session.secondsPerCard`, rounded up (10 cards → ~3 min), and a zero count is left
+out. `APP_URL` falls back to the request's origin. The tunables are `config.nudge`.
+
+The **reminder toggle** on Today (a switch: "Evening reminder · around 20:45", or "off") sets
+`nudge_enabled` (`"1"`/`"0"`; missing = on) with a server action.
 
 ## 5. Capture pipeline
 
@@ -753,7 +764,8 @@ full-screen.
 - **Imports** (`/imports`): recent imports with status and counts, failed jobs (Retry), and a
   paste box for a single Gemini answer (it must contain Chinese; the result line says whether
   it was new or already imported).
-- **Stats** (`/stats`): PRD §6 measures (§7).
+- **Stats** (`/stats`, the fifth tab): PRD §6 measures (§7), each with its target and ✓/✗.
+- Today also shows the **reminder toggle** (§4.9).
 
 **Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN`, preferring an
 "Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.6 for slow replay. Speak the hanzi,
@@ -781,16 +793,23 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 - `phrase_revived {phrase_id}`
 - `review {card_type, rating, source}`
 - `round_finished {cards, ms}`
-- `nudge_sent {local_time}`
+- `nudge_sent {local_time, nudge_at}` (`HH:MM`, household time)
 - `worker_heartbeat {...}`
 
-The Stats page shows, for the last 4 weeks:
+The Stats page shows, for the last 4 weeks (`config.stats`; pure measures in
+`web/lib/domain/stats.ts`, queries in `web/lib/repo/stats.ts`):
 
-- days with a finished round per week;
-- true retention on review-state cards;
-- asked-again count on active phrases;
-- the "Not useful" rate among introduced phrases (also split by kind and by usefulness);
-- the extraction drop rate;
+- days with a finished round, per week: four rolling 7-day weeks of household days ending today,
+  so "this week" is always whole (target ≥ 5);
+- true retention: of `review_log` rows with `state_before` = Review and `source` = `session`
+  (not learning steps, Already know, or the automatic Again from asking again), the share graded
+  above Again (target ≥ 80%);
+- asked-again count on active phrases (`asked_again` events with `status: 'active'`);
+- the "Not useful" rate among phrases seen for the first time: `phrase_dropped` with
+  `via: 'not_useful'` over those plus `phrase_introduced` (a Not useful phrase is never
+  introduced), also split by kind and by usefulness (`manual` for hand-added) (target < 15%);
+- the extraction drop rate: `dropped_not_verbatim` over `items` from `extraction` events
+  (target < 5%);
 - queue size;
 - the last worker heartbeat.
 
@@ -811,8 +830,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `HOUSEHOLD_TZ` | web | default `America/Los_Angeles` |
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
-| `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1) |
-| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path) and the process env wins over the file |
+| `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1). On a 401, `bamboo-tools` names where its token came from (`BAMBOO_AGENT_API_TOKEN in <agent.env path>`, or `environment variable BAMBOO_AGENT_API_TOKEN`), never the value (§10 #46) |
+| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env for every key it lists (§10 #45): its keys are generic, so an inherited `WORKER_API_TOKEN` or `OLLAMA_URL` can't override Bamboo's. A key the file leaves out still comes from the env |
 
 ### 8.2 Deploy
 
@@ -826,6 +845,18 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   `db:migrate` fails the build if `TURSO_DATABASE_URL` is missing or local, or
   `TURSO_AUTH_TOKEN` is missing, so a misconfigured environment never deploys. Migrations must be **expand → contract**:
   add freely; drop or rename only in a later PR once no deployed code uses the column.
+- **The daily job** is a Vercel **Schedule** (M6; Cron Jobs are legacy): `schedules.daily` in
+  `web/vercel.json`, `17 11 * * *` in UTC (no `timezone`, so it stays 11:17 UTC, about 04:00 in Los
+  Angeles), a `path` target `/api/cron/daily` with `requestMethod: "GET"` (Schedules POST by
+  default). Vercel still sends `Authorization: Bearer <CRON_SECRET>` and `user-agent:
+  vercel-cron/1.0`, so the route's check is unchanged. Runs start within a jitter window (1 min on
+  Pro, 15 min on Hobby; legacy Hobby crons could run any time in the hour), aren't retried on an
+  error, and may very rarely be delivered twice; the job is idempotent. Static schedules are
+  active in production only (inactive on preview branches). It's under the project's
+  **Schedules** page in the dashboard, with per-run history and *Run Schedule*. Schedules are in
+  beta: if Vercel changes the format, the fallback is the old
+  `"crons": [{"path": "/api/cron/daily", "schedule": "17 11 * * *"}]` (never both: the job would run
+  twice; `web/lib/vercel-config.test.ts` checks).
 
 ### 8.3 Mac mini
 
@@ -965,6 +996,10 @@ bamboo/
 | 41 | Ollama failing mid-job is reported as `failed` and pauses claims until the model check passes; `worker-install` doesn't load the worker until `WORKER_API_TOKEN` is set | Reporting uses one attempt either way (an unreported job's lease would expire too) and gets the job retried sooner; pausing stops a down Ollama from burning every queued job's attempts. A worker without a token would only restart in a loop |
 | 42 | On the Mac, every key `bamboo-tools` reads is `BAMBOO_`-prefixed: the agent token is `BAMBOO_AGENT_API_TOKEN` (the engine and Vercel keep `AGENT_API_TOKEN`) | OpenClaw passes `~/.openclaw/.env` to every app's tools, and the process env wins over `agent.env`. With the unprefixed name, PandaBase's `AGENT_API_TOKEN` reached `bamboo-tools`, which sent it to Bamboo's engine. PandaBase prefixes its side too (`PANDABASE_AGENT_API_TOKEN`) |
 | 43 | `make agent-install` pins `#bamboo` in OpenClaw's config: `skills: ["bamboo"]`, a firm `systemPrompt`, and `tools.deny` of the media/link readers (`view_image`, `pdf`, `web_fetch`, `web_search`, `x_search`, `browser`, `code_execution`), merged into the existing channel entry | A skill alone is a suggestion: the shared agent (local `qwen3.5:27b`) answered a bare share link with `view_image` on it, which both broke intake and had the OpenClaw side read conversation content. Per-channel config removes the other skills and the reading tools before the model call, so routing doesn't depend on the model's choice; access keys and other channels are Will's and stay untouched |
+| 44 | The daily job moved from Cron Jobs to Vercel Schedules (static, `path` target, `GET`, UTC) | Vercel marks Cron Jobs legacy and will migrate them; a static schedule keeps the route, its `CRON_SECRET` bearer check and its 11:17 UTC time (within a 1–15 min jitter window), and adds per-run history and *Run Schedule*. A private `function` target would drop the public URL but needs `@vercel/schedules` and an experimental trigger; not worth it for one idempotent job behind a secret |
+| 45 | `worker.env` wins over the process env for the keys it lists | Its keys are generic (`WORKER_API_TOKEN`, `OLLAMA_URL`, `OLLAMA_TEXT_MODEL`): a shell or job that inherited another app's value would otherwise send the wrong token or talk to the wrong Ollama, the same failure #42 fixed for `bamboo-tools` by prefixing. Renaming the worker's keys would break every existing `worker.env`; making the file authoritative doesn't |
+| 46 | On a 401, `bamboo-tools` names its token's source (file and key, or env var), never the value | A 401 from a working setup almost always means the wrong token was picked up (#42); naming the source makes that a one-line diagnosis in OpenClaw's logs without ever printing a secret |
+| 47 | The reminder learns from practice days (first finished round per household day), not every round | "Another round" or an abandoned round would otherwise pull the median; the reminder is about when the day's first round usually happens |
 
 ## Appendix A — Synthetic fixtures
 

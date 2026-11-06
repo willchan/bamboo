@@ -6,7 +6,8 @@
 //   ~/.config/bamboo/agent.env            BAMBOO_API_URL, BAMBOO_AGENT_API_TOKEN (mode 600)
 //   ~/.config/bamboo/bamboo.config.json   Discord ids (from agent/bamboo.config.example.json)
 //
-// Variables already in the process environment win over the file.
+// Variables already in the process environment win over the file. On a 401 the CLI names which
+// one the token came from (`tokenSource`), never its value.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,11 @@ export type ToolsConfig = z.infer<typeof ToolsConfig>;
 export interface Settings {
   apiUrl: string | null;
   token: string | null;
+  /**
+   * Where `token` came from, for error messages: "BAMBOO_AGENT_API_TOKEN in <agent.env path>" or
+   * "environment variable BAMBOO_AGENT_API_TOKEN". Never the value.
+   */
+  tokenSource: string | null;
   configPath: string;
   /** null when the file is missing; throws when it's present but invalid. */
   config: ToolsConfig | null;
@@ -69,9 +75,16 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
       throw new Error(`${configPath}: ${parsed.error.issues.map((i) => i.message).join("; ")}`);
     config = parsed.data;
   }
+  const TOKEN = "BAMBOO_AGENT_API_TOKEN";
+  const tokenSource = env[TOKEN]
+    ? `environment variable ${TOKEN}`
+    : fileVars[TOKEN]
+      ? `${TOKEN} in ${envFile}`
+      : null;
   return {
     apiUrl: get("BAMBOO_API_URL")?.replace(/\/+$/u, "") ?? null,
-    token: get("BAMBOO_AGENT_API_TOKEN"),
+    token: get(TOKEN),
+    tokenSource,
     configPath,
     config,
   };

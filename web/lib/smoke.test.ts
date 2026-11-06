@@ -3,6 +3,7 @@
 import { createTestDb, type Db } from "@bamboo/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as notificationsGET } from "@/app/api/agent/notifications/route";
+import { GET as nudgeGET } from "@/app/api/agent/nudge/route";
 import { GET as cronGET } from "@/app/api/cron/daily/route";
 import { POST as notifiedPOST } from "@/app/api/imports/[id]/notified/route";
 import { POST as knownPOST } from "@/app/api/imports/known/route";
@@ -21,6 +22,7 @@ const handlers: Record<string, (req: Request) => Promise<Response>> = {
   "/api/imports/smoke-check/notified": (req) =>
     notifiedPOST(req, { params: Promise.resolve({ id: "smoke-check" }) }),
   "/api/agent/notifications": notificationsGET,
+  "/api/agent/nudge": nudgeGET,
   "/api/jobs/claim": claimPOST,
   "/api/jobs/complete": completePOST,
   "/api/worker/heartbeat": heartbeatPOST,

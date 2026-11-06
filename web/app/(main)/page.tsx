@@ -10,6 +10,8 @@ import { serverClock } from "@/lib/repo/clock";
 import { getDb } from "@/lib/repo/db";
 import { getToday } from "@/lib/repo/review";
 import { getWorkerStatus } from "@/lib/repo/capture";
+import { getNudgeTime, isNudgeEnabled } from "@/lib/repo/nudge";
+import { setNudgeAction } from "@/app/actions";
 
 export const metadata: Metadata = { title: "Today" };
 
@@ -28,9 +30,11 @@ const lastSeen = (ms: number, timeZone: string) =>
 export default async function TodayPage() {
   const user = await requireUser();
   const clock = serverClock();
-  const [{ status, queueSize }, worker] = await Promise.all([
+  const [{ status, queueSize }, worker, nudgeOn, nudgeAt] = await Promise.all([
     getToday(getDb(), clock),
     getWorkerStatus(getDb(), clock.now),
+    isNudgeEnabled(getDb()),
+    getNudgeTime(getDb(), clock),
   ]);
 
   return (
@@ -81,6 +85,32 @@ export default async function TodayPage() {
           </p>
         ) : null}
         <VoiceHint />
+        <form action={setNudgeAction} className="flex justify-center">
+          <input type="hidden" name="enabled" value={nudgeOn ? "0" : "1"} />
+          <button
+            type="submit"
+            role="switch"
+            aria-checked={nudgeOn}
+            data-testid="nudge-toggle"
+            className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted"
+          >
+            <span
+              aria-hidden
+              className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${
+                nudgeOn ? "bg-primary" : "bg-border"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 size-5 rounded-full bg-background shadow transition-all ${
+                  nudgeOn ? "left-[1.125rem]" : "left-0.5"
+                }`}
+              />
+            </span>
+            <span className="text-left">
+              Evening reminder{nudgeOn ? ` · around ${nudgeAt}` : " · off"}
+            </span>
+          </button>
+        </form>
       </main>
 
       <footer className="flex items-center justify-between gap-3 border-t border-border pt-4 text-sm text-muted">

@@ -150,8 +150,10 @@ The behavior:
 ### 5.4 Daily reminder
 
 - One message in `#bamboo`, in the evening, if a round is due and not yet done:
-  "📚 1 round · ~3 min → link". The default time is 21:00; after two weeks it moves to just before
-  his usual practice time. There's nothing on days with nothing to do, and never a follow-up.
+  "📚 1 round · ~3 min · 7 due · 2 new → link". The default time is 21:00; once he has practised on
+  5 of the last 14 days it moves to 15 minutes before his usual practice time (between 18:00 and
+  23:00). There's nothing on days with nothing to do, and never a follow-up. A switch on Today
+  turns it off and on and shows today's time.
 
 ## 6. Success measures
 
@@ -163,6 +165,11 @@ Reviewed monthly from the Stats page:
 - **Ranking quality**: "Not useful" on < 15% of introduced phrases.
 - **Extraction quality**: invented or garbled items < 5% of introduced phrases (hanzi not found in
   the source, wrong meaning).
+
+The Stats page (its own tab) shows each of these for the last 4 weeks, next to its target. It
+measures extraction quality as the share of the model's items dropped because their hanzi weren't
+in the source; a wrong meaning that slips through shows up as "Not useful". It also shows the
+queue size and when the Mac worker was last seen.
 
 ## 7. Non-goals (MVP)
 

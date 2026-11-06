@@ -15,6 +15,7 @@ export const MACHINE_ROUTES: readonly [method: "GET" | "POST", path: string][] =
   ["POST", "/api/imports"],
   ["POST", "/api/imports/smoke-check/notified"],
   ["GET", "/api/agent/notifications"],
+  ["GET", "/api/agent/nudge"],
   ["POST", "/api/jobs/claim"],
   ["POST", "/api/jobs/complete"],
   ["POST", "/api/worker/heartbeat"],

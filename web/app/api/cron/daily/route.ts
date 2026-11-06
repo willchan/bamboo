@@ -1,4 +1,5 @@
-// GET /api/cron/daily (Vercel Cron, CRON_SECRET bearer): expiry, lease requeue, event pruning.
+// GET /api/cron/daily (the Vercel Schedule "daily" in web/vercel.json, CRON_SECRET bearer): expiry,
+// lease requeue, event pruning. Idempotent: Schedules may, rarely, deliver a run twice.
 import { checkBearer } from "@/lib/api/http";
 import { runDaily } from "@/lib/repo/capture";
 import { getDb } from "@/lib/repo/db";
