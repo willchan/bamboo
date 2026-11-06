@@ -282,6 +282,11 @@ collapse into one. That is rare and harmless.
 
 Text imports: `turn_key = sha256(hanziKey(user_text ?? '') + '\n' + hanziKey(reply_text))`.
 
+**Empty prompts.** When `hanziKey(user_text)` is empty (an image-only prompt in a share link or
+PDF), the turn is keyed like a text import, on the reply. Otherwise every image-only turn would
+share one key and all but the first would be dropped as known. M0 found one such turn in 86 in
+Will's real conversation. The rule lives in `turnKey()`, so the CLI and the engine agree.
+
 The CLI computes keys to ask `/api/imports/known`; the engine recomputes them and is the
 authority.
 
@@ -707,6 +712,7 @@ bamboo/
 | 18 | Single user, no `member` table | One learner; add a user column if a second learner is real |
 | 19 | `DEV_AUTH_BYPASS` is refused on every Vercel deployment, not just production; previews have no Google sign-in | Previews run unreviewed PR code on a guessable URL, so a stray env var must never open one; a per-preview redirect URI isn't possible with Google, and M1–M6 need no signed-in preview |
 | 20 | Read share links through Gemini's share RPC over plain HTTPS, not headless Chromium (M0) | The page HTML has no conversation; the RPC returns it whole (prompts verbatim, checklist data the DOM hides) in ~1 s with no browser on the Mac; both are undocumented, and the PDF path covers breakage |
+| 21 | Image-only prompts are keyed on the reply (§4.5) | Found in M0: an empty prompt would collide with every other empty prompt; the reply is the only stable text the turn has |
 
 ## Appendix A — Synthetic fixtures
 
