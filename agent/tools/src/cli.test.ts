@@ -331,12 +331,53 @@ describe("bamboo-tools nudge", () => {
     expect((await run(["nudge"], deps())).out).toBe("🎋 A round is waiting (10 cards).");
   });
 
-  it("stays quiet until M6 deploys the route", async () => {
+  it("reports a 404 as an error now that the route exists", async () => {
     engine.nudgeStatus = 404;
     const r = await run(["nudge"], deps());
-    expect(r).toMatchObject({ code: 0, out: NO_REPLY });
-    engine.nudgeStatus = 401;
-    expect((await run(["nudge"], deps())).code).toBe(1);
+    expect(r.code).toBe(1);
+    expect(r.out).toBe("");
+    expect(r.err).toContain("404");
+  });
+});
+
+// A 401 names where the token came from (file and key, or env var), never the token itself.
+describe("401: where the token came from", () => {
+  const WRONG = "wrong-token-value-9f8e7d";
+  const envFile = () => join(home, ".config", "bamboo", "agent.env");
+
+  for (const argv of [
+    ["nudge"],
+    ["replies"],
+    ["import", "--url", "https://share.gemini.google/x", "--channel-id", CHANNEL, "--message-id", "1"],
+  ]) {
+    it(`${argv[0]}: names agent.env and the key`, async () => {
+      writeFileSync(
+        envFile(),
+        `BAMBOO_API_URL=https://bamboo.test\nBAMBOO_AGENT_API_TOKEN=${WRONG}\n`,
+      );
+      const d = deps();
+      d.env = { HOME: home };
+      const r = await run(argv, d);
+      expect(r.code).toBe(1);
+      const all = `${r.out}\n${r.err ?? ""}`;
+      expect(r.err).toContain("401");
+      expect(r.err).toContain(`BAMBOO_AGENT_API_TOKEN in ${envFile()}`);
+      expect(all).not.toContain(WRONG);
+    });
+
+    it(`${argv[0]}: names the environment variable`, async () => {
+      const r = await run(argv, deps({ BAMBOO_AGENT_API_TOKEN: WRONG }));
+      expect(r.code).toBe(1);
+      const all = `${r.out}\n${r.err ?? ""}`;
+      expect(r.err).toContain("environment variable BAMBOO_AGENT_API_TOKEN");
+      expect(all).not.toContain(WRONG);
+    });
+  }
+
+  it("never names the source for other errors", async () => {
+    engine.nudgeStatus = 500;
+    const r = await run(["nudge"], deps());
+    expect(r.err).not.toContain("token from");
   });
 });
 

@@ -134,6 +134,7 @@ function api(settings: Settings, deps: Deps): Api | string {
   return new Api({
     baseUrl: settings.apiUrl,
     token: settings.token,
+    tokenSource: settings.tokenSource,
     fetch: deps.fetch,
     retryDelayMs: deps.retryDelayMs,
   });
@@ -249,14 +250,8 @@ async function cmdNudge(args: readonly string[], deps: Deps): Promise<CliResult>
   parse("nudge", args);
   const client = api(loadSettings(deps.env), deps);
   if (typeof client === "string") return { code: 1, out: "", err: `bamboo-tools: ${client}` };
-  try {
-    return { code: 0, out: (await client.nudge()) ?? NO_REPLY };
-  } catch (e) {
-    // The route arrives with M6; until it's deployed, stay quiet rather than post errors.
-    if (e instanceof ApiCallError && e.status === 404)
-      return { code: 0, out: NO_REPLY, err: "bamboo-tools: nudge route not deployed (404)" };
-    throw e;
-  }
+  // On an error the automation gets exit 1 and nothing on stdout, so nothing is posted.
+  return { code: 0, out: (await client.nudge()) ?? NO_REPLY };
 }
 
 export async function run(argv: readonly string[], deps: Deps = defaultDeps): Promise<CliResult> {

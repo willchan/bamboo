@@ -25,6 +25,11 @@ export type ToolsConfig = z.infer<typeof ToolsConfig>;
 export interface Settings {
   apiUrl: string | null;
   token: string | null;
+  /**
+   * Where `token` came from, for error messages: "BAMBOO_AGENT_API_TOKEN in <agent.env path>" or
+   * "environment variable BAMBOO_AGENT_API_TOKEN". Never the value.
+   */
+  tokenSource: string | null;
   configPath: string;
   /** null when the file is missing; throws when it's present but invalid. */
   config: ToolsConfig | null;
@@ -69,9 +74,16 @@ export function loadSettings(env: NodeJS.ProcessEnv = process.env): Settings {
       throw new Error(`${configPath}: ${parsed.error.issues.map((i) => i.message).join("; ")}`);
     config = parsed.data;
   }
+  const TOKEN = "BAMBOO_AGENT_API_TOKEN";
+  const tokenSource = env[TOKEN]
+    ? `environment variable ${TOKEN}`
+    : fileVars[TOKEN]
+      ? `${TOKEN} in ${envFile}`
+      : null;
   return {
     apiUrl: get("BAMBOO_API_URL")?.replace(/\/+$/u, "") ?? null,
-    token: get("BAMBOO_AGENT_API_TOKEN"),
+    token: get(TOKEN),
+    tokenSource,
     configPath,
     config,
   };

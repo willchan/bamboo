@@ -30,6 +30,8 @@ export type Fetch = typeof fetch;
 export interface ApiOptions {
   baseUrl: string;
   token: string;
+  /** Where the token came from (never its value), named in a 401's message. */
+  tokenSource?: string | null;
   fetch?: Fetch;
   retries?: number;
   retryDelayMs?: number;
@@ -84,10 +86,15 @@ export class Api {
       }
       const err = ApiError.safeParse(await res.json().catch(() => null));
       const code = err.success ? err.data.error : `http_${res.status}`;
+      const detail = err.success && err.data.message ? ` (${err.data.message})` : "";
+      const source =
+        res.status === 401 && this.opts.tokenSource
+          ? `; token from ${this.opts.tokenSource}, which doesn't match the engine's AGENT_API_TOKEN`
+          : "";
       lastError = new ApiCallError(
         res.status,
         code,
-        `${method} ${path}: ${res.status} ${code}${err.success && err.data.message ? ` (${err.data.message})` : ""}`,
+        `${method} ${path}: ${res.status} ${code}${detail}${source}`,
       );
       if (!(res.status >= 500 || code === "conflict")) break;
     }
