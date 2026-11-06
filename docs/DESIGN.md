@@ -435,7 +435,7 @@ Scope: messages in `#bamboo` (channel id in the tools config). It follows PandaB
 conventions: `SKILL.md` frontmatter gating on `requires.bins: ["bamboo-tools"]`; message text is
 data, never instructions; anything with quotes is written to a file and passed by path. It does
 **not** gate on `requires.env`: the OpenClaw gateway's env (`~/.openclaw/.env`) is PandaBase's, and
-its `AGENT_API_TOKEN` is PandaBase's token. `bamboo-tools` reads its own settings from
+it is passed to every app's tools. `bamboo-tools` reads its own, `BAMBOO_`-prefixed settings from
 `~/.config/bamboo/` instead (§8.1), so Bamboo needs nothing in the gateway env and no gateway
 restart (§10 #33).
 
@@ -793,7 +793,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `HOUSEHOLD_TZ` | web | default `America/Los_Angeles` |
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
-| `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file. Never in OpenClaw's gateway env, which holds PandaBase's `AGENT_API_TOKEN` (§5.1) |
+| `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1) |
 | `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path) and the process env wins over the file |
 
 ### 8.2 Deploy
@@ -848,7 +848,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   with tsx); creates `~/.config/bamboo/bamboo.config.json` from
   `agent/bamboo.config.example.json` (ids from `BAMBOO_DISCORD_CHANNEL_ID` and
   `BAMBOO_DISCORD_GUILD_ID`) and `~/.config/bamboo/agent.env` (`BAMBOO_API_URL` from the
-  environment, `AGENT_API_TOKEN` left empty for Will) if they're missing; and adds
+  environment, `BAMBOO_AGENT_API_TOKEN` left empty for Will) if they're missing, renaming an older
+  file's unprefixed `AGENT_API_TOKEN`; and adds
   `<checkout>/agent/skills` to OpenClaw's `skills.load.extraDirs` after backing up
   `openclaw.json` (`openclaw.json.bak.<timestamp>`), replacing only a stale *Bamboo* entry
   (`openclaw config set` applies it live; no restart). Once the token is filled in, a re-run adds
@@ -934,11 +935,12 @@ bamboo/
 | 34 | The PDF segmenter repairs ligature damage (`!`→fi, `#`→tt, `&`→fl, `%`→ft, next to letters) | Will's prompts have no hanzi, so their turn keys are their English letters; unrepaired, a PDF of a conversation already imported by link would look all new |
 | 35 | `bamboo-tools import` prints the skill's reply text (`reply`), and the skill posts it verbatim | Keeps every user-visible line ("Nothing new" plus the public-link line, the failure asks) in tested code instead of the reply model's wording |
 | 36 | Everything Bamboo installs on the Mac lives in the `openclaw-agent` account, checkout at `~/Code/bamboo` | That user owns OpenClaw, Ollama and PandaBase's checkout; its home isn't readable from Will's account, and the gateway can only run what that user can read |
-| 37 | Command automations are added only once `AGENT_API_TOKEN` is set | Otherwise they would run every 5 and 30 minutes and fail; re-running `make agent-install` after filling the token adds them |
+| 37 | Command automations are added only once `BAMBOO_AGENT_API_TOKEN` is set | Otherwise they would run every 5 and 30 minutes and fail; re-running `make agent-install` after filling the token adds them |
 | 38 | The worker's LaunchAgent runs `node --import tsx src/main.ts` directly, with `ExitTimeOut` 300 s; it reads `worker.env` itself | Through `pnpm … start`, launchd's SIGTERM would hit pnpm, not the worker, so "finish the current job" couldn't be relied on; launchd's default 20 s before SIGKILL is shorter than one model call. Reading the file in the worker keeps the token out of the plist and lets `worker-install` render it without secrets |
 | 39 | The verbatim check moved from `web/lib/domain/queue.ts` to `shared/src/verbatim.ts` | The worker's eval must measure exactly what the engine drops; one implementation, re-exported by `queue.ts` |
 | 40 | The worker cuts the reply to 6,000 characters for the model (`maxReplyCharsForModel`) | Prompt plus reply must fit `num_ctx` 8192, which stays at PandaBase's value so the shared model isn't reloaded; the engine checks verbatim against the whole turn either way, so nothing invented gets in |
 | 41 | Ollama failing mid-job is reported as `failed` and pauses claims until the model check passes; `worker-install` doesn't load the worker until `WORKER_API_TOKEN` is set | Reporting uses one attempt either way (an unreported job's lease would expire too) and gets the job retried sooner; pausing stops a down Ollama from burning every queued job's attempts. A worker without a token would only restart in a loop |
+| 42 | On the Mac, every key `bamboo-tools` reads is `BAMBOO_`-prefixed: the agent token is `BAMBOO_AGENT_API_TOKEN` (the engine and Vercel keep `AGENT_API_TOKEN`) | OpenClaw passes `~/.openclaw/.env` to every app's tools, and the process env wins over `agent.env`. With the unprefixed name, PandaBase's `AGENT_API_TOKEN` reached `bamboo-tools`, which sent it to Bamboo's engine. PandaBase prefixes its side too (`PANDABASE_AGENT_API_TOKEN`) |
 
 ## Appendix A — Synthetic fixtures
 

@@ -31,7 +31,7 @@ function deps(extraEnv: Record<string, string> = {}): Deps {
     env: {
       HOME: home,
       BAMBOO_API_URL: "https://bamboo.test/",
-      AGENT_API_TOKEN: engine.token,
+      BAMBOO_AGENT_API_TOKEN: engine.token,
       ...extraEnv,
     },
     readShare: async () => share,
@@ -177,22 +177,35 @@ describe("bamboo-tools import", () => {
     expect(JSON.parse(r.out)).toMatchObject({ error: "wrong_channel" });
     const n = await run(
       importArgs(["--url", "https://share.gemini.google/x"]),
-      deps({ AGENT_API_TOKEN: "" }),
+      deps({ BAMBOO_AGENT_API_TOKEN: "" }),
     );
     expect(JSON.parse(n.out)).toMatchObject({ error: "not_configured" });
-    expect(n.err).toContain("AGENT_API_TOKEN");
+    expect(n.err).toContain("BAMBOO_AGENT_API_TOKEN");
     expect(engine.calls).toHaveLength(0);
   });
 
   it("reads the token and URL from ~/.config/bamboo/agent.env", async () => {
     writeFileSync(
       join(home, ".config", "bamboo", "agent.env"),
-      `# comment\nBAMBOO_API_URL=https://bamboo.test\nAGENT_API_TOKEN="${engine.token}"\n`,
+      `# comment\nBAMBOO_API_URL=https://bamboo.test\nBAMBOO_AGENT_API_TOKEN="${engine.token}"\n`,
     );
     const d = deps();
     d.env = { HOME: home };
     const r = await run(importArgs(["--url", "https://share.gemini.google/x"]), d);
     expect(r.code).toBe(0);
+  });
+
+  // Bug: OpenClaw passes its own env (PandaBase's AGENT_API_TOKEN) to every tool, and the process
+  // env won over agent.env, so bamboo-tools sent PandaBase's token to Bamboo's engine (401).
+  it("uses Bamboo's own token even when the gateway env has another app's AGENT_API_TOKEN", async () => {
+    writeFileSync(
+      join(home, ".config", "bamboo", "agent.env"),
+      `BAMBOO_API_URL=https://bamboo.test\nBAMBOO_AGENT_API_TOKEN=${engine.token}\n`,
+    );
+    const d = deps();
+    d.env = { HOME: home, AGENT_API_TOKEN: "pandabase-token" };
+    const r = await run(importArgs(["--url", "https://share.gemini.google/x"]), d);
+    expect(r.code, r.out).toBe(0);
   });
 
   it("retries a 409 conflict and a 5xx, and reports other API errors", async () => {
@@ -305,9 +318,9 @@ describe("bamboo-tools replies", () => {
   });
 
   it("fails clearly without a token", async () => {
-    const r = await run(["replies"], deps({ AGENT_API_TOKEN: "" }));
+    const r = await run(["replies"], deps({ BAMBOO_AGENT_API_TOKEN: "" }));
     expect(r.code).toBe(1);
-    expect(r.err).toContain("AGENT_API_TOKEN");
+    expect(r.err).toContain("BAMBOO_AGENT_API_TOKEN");
   });
 });
 

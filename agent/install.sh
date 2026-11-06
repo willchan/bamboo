@@ -10,11 +10,12 @@
 #     be on the gateway's PATH; PandaBase's pandabase-tools lives there too);
 #  3. create ~/.config/bamboo/bamboo.config.json (from agent/bamboo.config.example.json; ids from
 #     BAMBOO_DISCORD_CHANNEL_ID / BAMBOO_DISCORD_GUILD_ID) and ~/.config/bamboo/agent.env
-#     (BAMBOO_API_URL from the environment, AGENT_API_TOKEN left empty for Will) if missing;
+#     (BAMBOO_API_URL from the environment, BAMBOO_AGENT_API_TOKEN left empty for Will) if
+#     missing, and renames an older file's unprefixed AGENT_API_TOKEN to BAMBOO_AGENT_API_TOKEN;
 #  4. add <checkout>/agent/skills to OpenClaw's skills.load.extraDirs (replacing a stale Bamboo
 #     checkout's entry, never anyone else's);
 #  5. check that the #bamboo channel is enabled for the bot (prints the command if not);
-#  6. once AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
+#  6. once BAMBOO_AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
 #     and bamboo-nudge (no model call), announcing to #bamboo;
 #  7. openclaw skills check.
 #
@@ -109,9 +110,22 @@ else
       "# bamboo-tools settings (DESIGN §8.1). Mode 600; never commit or paste it." \
       "BAMBOO_API_URL=${BAMBOO_API_URL:-}" \
       "# The engine's AGENT_API_TOKEN (Vercel → Settings → Environment Variables, Production)." \
-      "AGENT_API_TOKEN=" >"$AGENT_ENV"
+      "BAMBOO_AGENT_API_TOKEN=" >"$AGENT_ENV"
   )
-  info "created $AGENT_ENV (AGENT_API_TOKEN is empty: fill it in, then re-run make agent-install)"
+  info "created $AGENT_ENV (BAMBOO_AGENT_API_TOKEN is empty: fill it in, then re-run make agent-install)"
+fi
+# Older files used the unprefixed AGENT_API_TOKEN, a name other apps' tools share (DESIGN §10 #42).
+if [ -f "$AGENT_ENV" ] && grep -q '^AGENT_API_TOKEN=' "$AGENT_ENV" \
+  && ! grep -q '^BAMBOO_AGENT_API_TOKEN=' "$AGENT_ENV"; then
+  if [ "$DRY_RUN" = 1 ]; then
+    info "[dry-run] would rename AGENT_API_TOKEN to BAMBOO_AGENT_API_TOKEN in $AGENT_ENV"
+  else
+    tmp="$(mktemp "$AGENT_ENV.XXXXXX")"
+    sed 's/^AGENT_API_TOKEN=/BAMBOO_AGENT_API_TOKEN=/' "$AGENT_ENV" >"$tmp"
+    chmod 600 "$tmp"
+    mv "$tmp" "$AGENT_ENV"
+    info "renamed AGENT_API_TOKEN to BAMBOO_AGENT_API_TOKEN in $AGENT_ENV"
+  fi
 fi
 [ "$DRY_RUN" = 1 ] || [ ! -f "$AGENT_ENV" ] || chmod 600 "$AGENT_ENV"
 
@@ -171,8 +185,8 @@ if [ -n "$channel_id" ] && [ -n "$guild_id" ]; then
 fi
 
 # 6. Command automations (no model call), once the token is there.
-if ! grep -Eq '^AGENT_API_TOKEN=.+' "$AGENT_ENV" 2>/dev/null; then
-  warn "skipped the automations: AGENT_API_TOKEN is empty in $AGENT_ENV (fill it in, then re-run)"
+if ! grep -Eq '^BAMBOO_AGENT_API_TOKEN=.+' "$AGENT_ENV" 2>/dev/null; then
+  warn "skipped the automations: BAMBOO_AGENT_API_TOKEN is empty in $AGENT_ENV (fill it in, then re-run)"
 elif [ -z "$channel_id" ]; then
   warn "skipped the automations: no discord.channel_id in $CONFIG"
 else

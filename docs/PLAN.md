@@ -693,6 +693,11 @@ idempotency, backup, additive extraDirs, automations, no token in any output or 
   the name, and new gateway env needs a gateway restart. `bamboo-tools` reads `agent.env`
   (`BAMBOO_API_URL`, `AGENT_API_TOKEN`, mode 600) and `bamboo.config.json` (Discord ids) from
   `~/.config/bamboo/`; the process env wins. DESIGN §5.1, §8.1, §10 #33.
+- **Prefixed token (follow-up PR, 2026-11-06).** Because the process env wins and OpenClaw
+  passes its gateway env to every tool, `bamboo-tools` actually read PandaBase's
+  `AGENT_API_TOKEN` instead of `agent.env`'s. The key is now `BAMBOO_AGENT_API_TOKEN`;
+  `make agent-install` renames an older file's line in place (DESIGN §10 #42). PandaBase prefixes
+  its side too (`PANDABASE_AGENT_API_TOKEN`).
 - **`import` prints the reply.** Its JSON has a `reply` field the skill posts verbatim: "📥 Got
   it…", "✅ Nothing new since last time." (plus the public-link line for links), or a failure
   line (`share_parse_failed` asks for the PDF; `pdftotext_missing` / `pdf_unreadable` ask for the
