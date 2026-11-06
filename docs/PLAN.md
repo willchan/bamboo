@@ -458,6 +458,13 @@ as expected, because the routes don't exist there yet.
 - **Summary wording** (`importSummary`): "✅ N new questions → M phrases queued. Next up: hanzi
   (english), …" with up to 3 of this import's queued phrases in queue order; extra lines for
   asked-again phrases, failed questions and the public-link reminder (links only). DESIGN §5.1.
+- **Pinyin in Discord replies (post-merge change, 2026-11-06).** Will can't read new words' hanzi,
+  so Next up now reads `hanzi pinyin (english)`, e.g. `高压锅 gāo yā guō (pressure cooker)`: the
+  phrase's stored pinyin with his overrides (`displayPinyin`), spaced like `pinyinText`, a frame's
+  `…` kept (`replyPinyin`). A summary over Discord's 2,000 characters
+  (`imports.discordMaxChars`) names fewer phrases instead of dropping pinyin. No other
+  Bamboo-generated Discord text (failure replies, Nothing new, the link note, the M6 reminder)
+  contains hanzi, so nothing else changed. DESIGN §5.1, §10 #48.
 - `newId()` now uses ULID's monotonic factory (small edit to M2's `web/lib/repo/db.ts`), so jobs
   created in one batch claim in turn order. `fsrsColumns` is now exported from M2's
   `web/lib/repo/review.ts` (for the asked-again Again review).

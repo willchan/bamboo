@@ -1,7 +1,8 @@
 // Import summaries (DESIGN §5.1 *Results*) and the worker's status line on Today (DESIGN §6).
-import type { ImportKind } from "@bamboo/db";
+import type { ImportKind, PinyinPairs } from "@bamboo/db";
 import { NOTHING_NEW, PUBLIC_LINK_NOTE } from "@bamboo/shared";
 import { config } from "../config";
+import { displayPinyin, replyPinyin } from "./pinyin";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
@@ -17,14 +18,38 @@ export interface SummaryInput {
   phrasesAgain: number;
   jobsFailed: number;
   /** The import's phrases at the top of the queue, in queue order. */
-  nextUp: readonly { hanzi: string; english: string }[];
+  nextUp: readonly NextUpPhrase[];
 }
 
+/** A phrase as stored: its computed pinyin and Will's override, shown as the PWA shows them. */
+export interface NextUpPhrase {
+  hanzi: string;
+  english: string;
+  pinyin: PinyinPairs;
+  pinyinOverride: PinyinPairs | null;
+}
+
+/** `高压锅 gāo yā guō (pressure cooker)`: every hanzi in a reply comes with its pinyin. */
+export const nextUpLabel = (p: NextUpPhrase) =>
+  `${p.hanzi} ${replyPinyin(displayPinyin(p.pinyin, p.pinyinOverride))} (${p.english})`;
+
 /**
- * The ready-to-post Discord reply: "✅ 9 new questions → 14 phrases queued. Next up: 高压锅
- * (pressure cooker), …", plus asked-again and failure lines, and the public-link reminder.
+ * The ready-to-post Discord reply: "✅ 9 new questions → 14 phrases queued. Next up: 高压锅 gāo yā
+ * guō (pressure cooker), …", plus asked-again and failure lines, and the public-link reminder.
+ * If it would pass Discord's message limit, Next up names fewer phrases (never without pinyin).
  */
-export function importSummary(s: SummaryInput): string {
+export function importSummary(
+  s: SummaryInput,
+  maxChars: number = config.imports.discordMaxChars,
+): string {
+  for (let n = s.nextUp.length; n > 0; n--) {
+    const text = summaryText(s, s.nextUp.slice(0, n));
+    if (text.length <= maxChars) return text;
+  }
+  return summaryText(s, []);
+}
+
+function summaryText(s: SummaryInput, nextUp: readonly NextUpPhrase[]): string {
   const head =
     s.turnsNew === 0
       ? NOTHING_NEW
@@ -32,8 +57,8 @@ export function importSummary(s: SummaryInput): string {
           s.phrasesNew === 0 ? "no new phrases" : `${plural(s.phrasesNew, "phrase")} queued`
         }.`;
   const lines = [head];
-  if (s.nextUp.length > 0) {
-    lines[0] += ` Next up: ${s.nextUp.map((p) => `${p.hanzi} (${p.english})`).join(", ")}.`;
+  if (nextUp.length > 0) {
+    lines[0] += ` Next up: ${nextUp.map(nextUpLabel).join(", ")}.`;
   }
   if (s.phrasesAgain > 0) {
     lines.push(

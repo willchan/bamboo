@@ -5,6 +5,7 @@ import {
   normalizeSyllable,
   overrideFromEdits,
   pinyinText,
+  replyPinyin,
   repinyin,
 } from "./pinyin";
 
@@ -133,5 +134,15 @@ describe("overrides", () => {
     expect(changed.overrideDropped).toBe(true);
     expect(repinyin({ hanzi: "我", pinyinOverride: null }, "你").overrideDropped).toBe(false);
     expect(repinyin(null, "你").pinyin).toEqual([["你", "nǐ"]]);
+  });
+});
+
+describe("replyPinyin", () => {
+  it("spaces syllables like pinyinText and keeps a frame's slot as …", () => {
+    expect(replyPinyin(computePinyin("高压锅"))).toBe("gāo yā guō");
+    expect(replyPinyin(computePinyin("阿姨，您是说…吗？"))).toBe("ā yí nín shì shuō … ma");
+    expect(replyPinyin(computePinyin("您是说...吗"))).toBe("nín shì shuō … ma");
+    expect(replyPinyin(computePinyin("…⋯是什么"))).toBe("… shì shén me");
+    expect(replyPinyin([])).toBe("");
   });
 });
