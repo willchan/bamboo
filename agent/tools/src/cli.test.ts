@@ -348,7 +348,15 @@ describe("401: where the token came from", () => {
   for (const argv of [
     ["nudge"],
     ["replies"],
-    ["import", "--url", "https://share.gemini.google/x", "--channel-id", CHANNEL, "--message-id", "1"],
+    [
+      "import",
+      "--url",
+      "https://share.gemini.google/x",
+      "--channel-id",
+      CHANNEL,
+      "--message-id",
+      "1",
+    ],
   ]) {
     it(`${argv[0]}: names agent.env and the key`, async () => {
       writeFileSync(

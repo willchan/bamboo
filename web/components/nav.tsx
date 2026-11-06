@@ -8,6 +8,7 @@ const TABS = [
   { href: "/queue", label: "Up next" },
   { href: "/phrases", label: "Phrases" },
   { href: "/imports", label: "Imports" },
+  { href: "/stats", label: "Stats" },
 ] as const;
 
 export function Nav() {

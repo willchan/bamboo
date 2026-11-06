@@ -23,6 +23,15 @@ export interface RankConfig {
   weeklyDecay: number;
 }
 
+export interface NudgeConfig {
+  defaultLocalTime: number;
+  minRounds: number;
+  lookbackDays: number;
+  leadMinutes: number;
+  earliestLocalTime: number;
+  latestLocalTime: number;
+}
+
 export const config = {
   /** ts-fsrs 6 `DefaultScheduler` options (DESIGN §4.3). FSRS-7, the library default model. */
   fsrs: {
@@ -92,6 +101,29 @@ export const config = {
     nextUpCount: 3,
     /** The Imports page lists this many recent imports. */
     recentCount: 20,
+  },
+
+  /** The evening reminder in `#bamboo` (DESIGN §4.9). Times are local minutes after midnight. */
+  nudge: {
+    /** Until there's enough history: 21:00. */
+    defaultLocalTime: 21 * 60,
+    /** The adaptive time needs at least this many practice days in the lookback window. */
+    minRounds: 5,
+    lookbackDays: 14,
+    /** Remind this long before the median start time. */
+    leadMinutes: 15,
+    earliestLocalTime: 18 * 60,
+    latestLocalTime: 23 * 60,
+  } as NudgeConfig,
+
+  /** The Stats page (DESIGN §7). */
+  stats: {
+    weeks: 4,
+    /** PRD §6 targets, shown next to each measure. */
+    habitDaysPerWeek: 5,
+    retentionTarget: 0.8,
+    notUsefulMax: 0.15,
+    extractionDropMax: 0.05,
   },
 
   /** Telemetry retention (DESIGN §3.2 cron). */

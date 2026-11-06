@@ -68,9 +68,13 @@ Vercel deploys `main` to production and every PR to a preview (DESIGN §8.2). Th
 
    Never set `DEV_AUTH_BYPASS` on Vercel (the app ignores it there anyway).
 5. Redeploy production (*Deployments → … → Redeploy*) so it picks up the variables.
-6. **Cron**: `web/vercel.json` schedules `GET /api/cron/daily` once a day (11:17 UTC, around
-   04:00 in Los Angeles). Vercel sends `CRON_SECRET` as its bearer token. Check it under
-   *Observability → Cron Jobs* after the first production deploy that includes it.
+6. **Daily job**: `web/vercel.json` declares a Vercel **Schedule** named `daily` that calls
+   `GET /api/cron/daily` once a day (11:17 UTC, around 04:00 in Los Angeles, within Vercel's jitter
+   window). Vercel sends `CRON_SECRET` as its bearer token. After the first production deploy
+   that includes it, open the project's **Schedules** page: `daily` is listed and active; select it
+   and click *Run Schedule* to check that it returns 200 with counts (a 401/503 means
+   `CRON_SECRET` is missing). The *Cron Jobs* tab there (formerly *Observability → Cron Jobs*)
+   should be empty: Bamboo no longer uses legacy Cron Jobs.
 
 ## After each deploy
 

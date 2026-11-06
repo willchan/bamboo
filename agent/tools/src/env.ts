@@ -6,7 +6,8 @@
 //   ~/.config/bamboo/agent.env            BAMBOO_API_URL, BAMBOO_AGENT_API_TOKEN (mode 600)
 //   ~/.config/bamboo/bamboo.config.json   Discord ids (from agent/bamboo.config.example.json)
 //
-// Variables already in the process environment win over the file.
+// Variables already in the process environment win over the file. On a 401 the CLI names which
+// one the token came from (`tokenSource`), never its value.
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";

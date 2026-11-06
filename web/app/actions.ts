@@ -10,6 +10,7 @@ import { hasHanzi } from "@bamboo/shared";
 import { importPastedText, retryFailedJobs } from "@/lib/repo/capture";
 import { serverClock } from "@/lib/repo/clock";
 import { getDb } from "@/lib/repo/db";
+import { setNudgeEnabled } from "@/lib/repo/nudge";
 import {
   createManualPhrase,
   dropPhrase,
@@ -150,4 +151,13 @@ export async function pinPhraseAction(fd: FormData): Promise<void> {
   await requireUser();
   await pinPhrase(getDb(), String(fd.get("id") ?? ""), Date.now());
   revalidatePath("/queue");
+}
+
+// --- Reminder -------------------------------------------------------------------------------
+
+/** Today's reminder toggle (DESIGN §4.9): `enabled` is "1" or "0". */
+export async function setNudgeAction(fd: FormData): Promise<void> {
+  await requireUser();
+  await setNudgeEnabled(getDb(), fd.get("enabled") === "1");
+  revalidatePath("/");
 }
