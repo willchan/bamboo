@@ -78,7 +78,7 @@ genuinely useful** (share a conversation, get a deck).
 | M3 Capture: engine | merged | [#6](https://github.com/willchan/bamboo/pull/6) |
 | M4 Worker | merged | [#9](https://github.com/willchan/bamboo/pull/9) |
 | M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
-| M6 Reminder & stats | in review | |
+| M6 Reminder & stats | in review | [#13](https://github.com/willchan/bamboo/pull/13) |
 
 ---
 
