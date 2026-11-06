@@ -1,6 +1,5 @@
 // Limits both sides of the API must agree on (CLAUDE.md: tunables live in config). The engine
 // enforces them; the Mac side (bamboo-tools, worker) sizes its requests by them.
-
 export const sharedConfig = {
   imports: {
     /** `POST /api/imports/known` accepts at most this many keys per call. */
@@ -14,4 +13,60 @@ export const sharedConfig = {
     /** `english` is at most this long. */
     maxEnglishChars: 120,
   },
+  /** PDF-text segmentation (DESIGN §5.2 *PDF*), on `pdftotext -layout` output. */
+  segment: {
+    /** A user line is indented at least this much (Will's bubbles are right-aligned). */
+    userIndentMin: 20,
+    /** The first line after a user block is a reply line, indented less than this. */
+    replyIndentMax: 8,
+    /**
+     * Whole lines (after `normalizeText`) that are page furniture, not conversation. Tested
+     * against the trimmed line.
+     */
+    boilerplate: [
+      /^Sign in$/u,
+      /^Gemini may display inaccurate info/u,
+      /^Google Privacy Policy/u,
+      /Privacy Policy\s*(?:Opens in a new window)?$/u,
+      /^Your privacy (?:&|and) Gemini Apps/u,
+      /^Answering .*standard$/u,
+      /^Created with .*Published/u,
+      /^https?:\/\/(?:gemini\.google\.com\/share|g\.co\/gemini\/share|share\.gemini\.google)\//u,
+      /^Source: /u,
+    ] as readonly RegExp[],
+    /** The suggestion-chip block header; it and its chips are dropped. */
+    exploreHeader: /^Explore related\b/u,
+    /** The chip block ends at a run of this many blank lines (or a page break). */
+    exploreGapBlankLines: 2,
+    /**
+     * Gemini's PDF font maps English ligatures to stray symbols (`Simpli!ed`, `bo#le`, `&akes`,
+     * `o%en`). Will's prompts usually have no hanzi, so their turn keys are their letters: a
+     * damaged prompt would key differently from the same prompt read from a share link. Repaired
+     * only next to letters (DESIGN §5.2).
+     */
+    ligatures: { "!": "fi", "#": "tt", "&": "fl", "%": "ft" } as Readonly<Record<string, string>>,
+  },
+  /** bamboo-tools on the Mac (DESIGN §5.1, §5.2). */
+  tools: {
+    /** Per HTTP request (share page, RPC, engine API). */
+    requestTimeoutMs: 30_000,
+    /** Engine calls retry network errors, 5xx and 409 `conflict` this many times. */
+    apiRetries: 2,
+    /** Pause before a retry, times the attempt number. */
+    apiRetryDelayMs: 1_000,
+    /** Share links redirect once (share.gemini.google → gemini.google.com); allow a few. */
+    maxRedirects: 5,
+    /** Google sends more header bytes than Node's 16 KB default (M0 Notes). */
+    maxHeaderBytes: 256 * 1024,
+    /** `segment` prints this many prompts from each end, cut to `previewChars`. */
+    previewPrompts: 5,
+    previewChars: 60,
+  },
 } as const;
+
+/** The reminder appended to link-import replies (DESIGN §5.1); share links stay public. */
+export const PUBLIC_LINK_NOTE =
+  "🔗 This share link is public; you can delete it in Gemini → Settings → Public links.";
+
+/** The skill's immediate reply when an import has no new turns (the engine never sends one). */
+export const NOTHING_NEW = "✅ Nothing new since last time.";

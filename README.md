@@ -32,6 +32,7 @@ pnpm --filter web test:e2e      # Playwright at a phone viewport (own server and
 | `shared/` | `@bamboo/shared`: contracts and normalization shared by web and the Mac side |
 | `worker/` | `@bamboo/worker`: runs extraction jobs on the Mac's local Ollama (M4) |
 | `agent/tools/` | `@bamboo/tools`: the `bamboo-tools` CLI for the OpenClaw skill (M5) |
+| `agent/skills/bamboo/` | The OpenClaw skill for `#bamboo` (M5) |
 
 ## Deploy (one-time setup)
 
@@ -69,7 +70,7 @@ Vercel deploys `main` to production and every PR to a preview (DESIGN §8.2). Th
 5. Redeploy production (*Deployments → … → Redeploy*) so it picks up the variables.
 6. **Cron**: `web/vercel.json` schedules `GET /api/cron/daily` once a day (11:17 UTC, around
    04:00 in Los Angeles). Vercel sends `CRON_SECRET` as its bearer token. Check it under
-   *Settings → Cron Jobs* after the first production deploy that includes it.
+   *Observability → Cron Jobs* after the first production deploy that includes it.
 
 ## After each deploy
 
@@ -84,3 +85,30 @@ visitors to `/sign-in`; the manifest is standalone and its icons load; Google is
 with this host's callback, and the sign-in POST redirects to `accounts.google.com` with a Google
 client id and that callback; and every machine route (`/api/imports*`, `/api/agent/*`,
 `/api/jobs/*`, `/api/worker/*`, `/api/cron/*`) answers 401 with no token and with a wrong one.
+
+## Mac mini: Discord intake (once)
+
+OpenClaw, Ollama and PandaBase's agent run as the `openclaw-agent` user, and Bamboo's Mac side
+does too (DESIGN §8.3). From your own account, `ssh agent`, then:
+
+```
+git clone https://github.com/willchan/bamboo.git ~/Code/bamboo && cd ~/Code/bamboo
+BAMBOO_API_URL=https://<production domain> \
+BAMBOO_DISCORD_CHANNEL_ID=<#bamboo channel id> BAMBOO_DISCORD_GUILD_ID=<server id> \
+  make agent-install            # add DRY_RUN=1 first to see what it would change
+```
+
+It installs dependencies, links `~/.local/bin/bamboo-tools`, creates
+`~/.config/bamboo/bamboo.config.json` and `~/.config/bamboo/agent.env` (only if missing), and
+adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). Then:
+
+1. Put the production `AGENT_API_TOKEN` in `~/.config/bamboo/agent.env` with an editor (not on
+   a command line), and run `make agent-install` again: it adds the `bamboo-replies` and
+   `bamboo-nudge` command automations.
+2. If it warns that `#bamboo` isn't enabled for the bot, run the `openclaw config set …` line it
+   prints, with the same Discord user id as `#pandabase`'s entry.
+3. `bamboo-tools segment --url <a share link>`: a dry run that prints the title and turn count.
+
+PDF imports need poppler's `pdftotext` (`brew install poppler`) in `/opt/homebrew/bin`. New
+OpenClaw sessions pick the skill up. After later merges: `git pull --ff-only && make
+agent-install` in `~/Code/bamboo`.

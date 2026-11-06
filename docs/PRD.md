@@ -121,7 +121,9 @@ The behavior:
   processing finishes (minutes, on the Mac's local model), it replies:
   "✅ 9 new questions → 14 phrases queued. Next up: 高压锅 (pressure cooker), …". After a link
   import, the reply also reminds him that the link is public and can be deleted in Gemini
-  (Settings → Public links).
+  (Settings → Public links). When nothing in it is new, the acknowledgement itself says
+  "✅ Nothing new since last time." (with the same reminder for a link), and no second reply
+  follows. If a link can't be read, it asks for the PDF; if a PDF can't be read, for the link.
 - He shares a **whole conversation** whenever convenient, as often as he likes, from any number of
   conversations. Bamboo processes only questions it hasn't seen before. The first share is the
   backlog and becomes his starter material. The conversation's title ("Yuesao…", "Toddler…") is
