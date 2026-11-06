@@ -57,7 +57,7 @@ describe("env file", () => {
     expect(envFilePath({ BAMBOO_WORKER_ENV: "/tmp/w.env" }, "/h")).toBe("/tmp/w.env");
   });
 
-  it("loads without overriding the environment and flags a file others can read", () => {
+  it("loads the file over the process environment and flags a file others can read", () => {
     const dir = mkdtempSync(join(tmpdir(), "bamboo-env-"));
     const path = join(dir, "worker.env");
     writeFileSync(
@@ -65,18 +65,49 @@ describe("env file", () => {
       `# comment\nBAMBOO_API_URL=https://bamboo.test\nWORKER_API_TOKEN=${SECRET}\nOLLAMA_TEXT_MODEL=\n`,
     );
     chmodSync(path, 0o600);
-    const env: Record<string, string | undefined> = { BAMBOO_API_URL: "https://override.test" };
+    const env: Record<string, string | undefined> = { POLL_INTERVAL_SECONDS: "30" };
     const s = loadEnvFile(path, env);
     expect(s).toMatchObject({ loaded: true, tooOpen: false });
-    expect(s.keys.sort()).toEqual(["OLLAMA_TEXT_MODEL", "WORKER_API_TOKEN"]);
-    expect(env.BAMBOO_API_URL).toBe("https://override.test");
+    expect(s.keys.sort()).toEqual(["BAMBOO_API_URL", "OLLAMA_TEXT_MODEL", "WORKER_API_TOKEN"]);
     expect(env.WORKER_API_TOKEN).toBe(SECRET);
+    // A key the file doesn't list still comes from the environment.
+    expect(env.POLL_INTERVAL_SECONDS).toBe("30");
     // An empty value in the file means "use the default".
     expect(readConfig(env).model).toBe("qwen3.5:9b");
 
     chmodSync(path, 0o644);
     expect(loadEnvFile(path, {}).tooOpen).toBe(true);
     expect(loadEnvFile(join(dir, "missing.env"), {})).toMatchObject({ loaded: false, keys: [] });
+  });
+
+  // Regression (DESIGN §10 #44): a shell or launchd job that inherits another app's generic
+  // WORKER_API_TOKEN, OLLAMA_URL or model must not override Bamboo's own file.
+  it("worker.env wins over inherited generic variables, including an empty value", () => {
+    const dir = mkdtempSync(join(tmpdir(), "bamboo-env-"));
+    const path = join(dir, "worker.env");
+    writeFileSync(
+      path,
+      [
+        "BAMBOO_API_URL=https://bamboo.test",
+        `WORKER_API_TOKEN=${SECRET}`,
+        "OLLAMA_URL=http://localhost:11434",
+        "OLLAMA_TEXT_MODEL=",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(path, 0o600);
+    const env: Record<string, string | undefined> = {
+      WORKER_API_TOKEN: "other-apps-token",
+      OLLAMA_URL: "http://other-host:11434",
+      OLLAMA_TEXT_MODEL: "other-model",
+    };
+    loadEnvFile(path, env);
+    expect(readConfig(env)).toMatchObject({
+      apiUrl: "https://bamboo.test",
+      token: SECRET,
+      ollamaUrl: "http://localhost:11434",
+      model: "qwen3.5:9b",
+    });
   });
 
   it("the example file parses and has every variable the worker reads", () => {
