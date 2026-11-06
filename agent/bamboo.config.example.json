@@ -1,0 +1,12 @@
+{
+  "_comment": "bamboo-tools config (DESIGN §5.1, §8.3). `make agent-install` copies this to ~/.config/bamboo/bamboo.config.json in the openclaw-agent account (only if missing; BAMBOO_DISCORD_CHANNEL_ID and BAMBOO_DISCORD_GUILD_ID fill the ids). The token and API URL go in ~/.config/bamboo/agent.env, never here. Keep real ids out of the repo.",
+  "discord": {
+    "guild_id": "000000000000000000",
+    "channel_id": "000000000000000000"
+  },
+  "automations": {
+    "tz": "America/Los_Angeles",
+    "replies_cron": "*/5 * * * *",
+    "nudge_cron": "*/30 17-23 * * *"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "_note": "Synthetic. The exact expected segmentation of gemini-export.txt (pdftotext -layout output of an invented conversation; DESIGN Appendix A). Reviewed by hand, not just regenerated.",
+  "title": "Kitchen and Errands Mandarin",
+  "turns": [
+    {
+      "user_text": "How do I ask the nanny to start the rice cooker at five, before we drive home?",
+      "reply_text": "Here is a polite, natural way to ask (请 = please).\n\nIn Chinese, you can say:\n\n请你五点开电饭煲。我们开车回家。\nQǐng nǐ wǔ diǎn kāi diànfànbāo. Wǒmen kāichē huíjiā.\n\nKey terms\n• 五点 (wǔ diǎn): five o'clock\n• 电饭煲 (diànfànbāo): rice cooker\n\nQuick reference\n\nEnglish Chinese Note\nRice cooker 电饭煲 Common everywhere;\nalso 电锅 in Taiwan\nFive o'clock 五点 Also 五点钟"
+    },
+    {
+      "user_text": "She said something like \"gao ya guo\" and pointed at the bottle on the stove. What is it?",
+      "reply_text": "She most likely said 高压锅 (gāoyāguō), a pressure cooker.\n\nTo check you understood:\n\n你是说高压锅吗？\nNǐ shì shuō gāoyāguō ma?\n\nIn Cantonese, people often just call it 煲 (bou1)."
+    },
+    {
+      "user_text": "How do I tell the yuesao the soup is too salty and she can add some water? Simplified please.",
+      "reply_text": "Simplified version:\n\n汤有点咸，加点水吧。\nTāng yǒudiǎn xián, jiā diǎn shuǐ ba.\n\nSay it gently:\n阿姨，汤有一点咸。下个月少放盐，她母亲也喜欢。"
+    },
+    {
+      "user_text": "Which store near us sells rice flakes?",
+      "reply_text": "Most Asian supermarkets carry them, often near the oats.\n\nIf you ask a clerk: 西瓜在哪儿？ works for any item."
+    },
+    {
+      "user_text": "Thanks! And how do I say \"that's enough\"?",
+      "reply_text": "Just say:\n\n够了。\n\nIt works for food, water and toys."
+    }
+  ]
+}

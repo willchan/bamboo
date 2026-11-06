@@ -75,9 +75,9 @@ genuinely useful** (share a conversation, get a deck).
 | M0 Share-link spike | merged | [#3](https://github.com/willchan/bamboo/pull/3) |
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | merged | [#5](https://github.com/willchan/bamboo/pull/5) |
-| M3 Capture: engine | in review | [#6](https://github.com/willchan/bamboo/pull/6) |
+| M3 Capture: engine | merged | [#6](https://github.com/willchan/bamboo/pull/6) |
 | M4 Worker | todo | |
-| M5 Discord intake | todo | |
+| M5 Discord intake | in review | [#8](https://github.com/willchan/bamboo/pull/8) |
 | M6 Reminder & stats | todo | |
 
 ---
@@ -502,7 +502,7 @@ as expected, because the routes don't exist there yet.
 
 *Manual steps for Will (after merge):*
 - `pnpm smoke https://bamboo-panda.vercel.app`: all 14 checks should pass once this is deployed.
-- Vercel → *Settings → Cron Jobs*: `/api/cron/daily` is listed, daily at 11:17 UTC; after its
+- Vercel → *Observability → Cron Jobs* (corrected in M5): `/api/cron/daily` is listed, daily at 11:17 UTC; after its
   first run, its log shows a 200 with counts (a 401/503 means `CRON_SECRET` is missing).
 
 ---
@@ -590,6 +590,96 @@ Report counts only in the PR.
 **Out of scope:** the reminder decision logic and stats (M6).
 
 **Notes:**
+
+*Versions:* no new third-party package. `@bamboo/tools` now depends on `zod` **4.6.7** (as
+`/web` and `/shared`) and moves `tsx` **4.23.15** from dev to runtime dependencies (the
+`bamboo-tools` wrapper runs the CLI with it). poppler (`pdftotext`) 26.10.0 from Homebrew (installed by Will mid-session; used only on synthetic PDFs).
+
+*Acceptance (local, macOS, Node 24.22.2):* `pnpm lint`, `pnpm typecheck`, `pnpm test` pass
+(shared 29, tools 44 tests; web 140 still at ≥ 90% coverage), and `pnpm --filter web build`.
+`bamboo-tools segment --url <Will's link>`, run from Will's account (read-only; counts only):
+**88 turns, 1 with no prompt text** (image-only), a 28-character title, no unknown components,
+~1.5 s. That matches M0's re-shared link B. `make agent-install` was **not** run on the live
+gateway (see below); it's tested against a fake `openclaw` in a temp HOME instead (`DRY_RUN`,
+idempotency, backup, additive extraDirs, automations, no token in any output or call).
+
+*Deviations / choices:*
+- **Two macOS users.** OpenClaw, Ollama and PandaBase's agent checkout run as `openclaw-agent`
+  (home mode 750), not as Will. Everything Bamboo installs belongs in that account, checkout
+  at `~/Code/bamboo` (PandaBase's convention there; DESIGN said `~/src/bamboo`). The milestone
+  session runs as Will, so it couldn't and didn't run `make agent-install` for real: Will runs it
+  as `openclaw-agent` (manual steps). DESIGN §8.3, §10 #36. **For M4:** the worker's
+  LaunchAgent, `~/.config/bamboo/worker.env` and logs belong in that account too, and
+  `make worker-install` / `mac-update` run there.
+- **No `requires.env` in the skill; settings in `~/.config/bamboo/`.** The gateway env
+  (`~/.openclaw/.env`) already holds PandaBase's `AGENT_API_TOKEN`; Bamboo's token can't share
+  the name, and new gateway env needs a gateway restart. `bamboo-tools` reads `agent.env`
+  (`BAMBOO_API_URL`, `AGENT_API_TOKEN`, mode 600) and `bamboo.config.json` (Discord ids) from
+  `~/.config/bamboo/`; the process env wins. DESIGN §5.1, §8.1, §10 #33.
+- **`import` prints the reply.** Its JSON has a `reply` field the skill posts verbatim: "📥 Got
+  it…", "✅ Nothing new since last time." (plus the public-link line for links), or a failure
+  line (`share_parse_failed` asks for the PDF; `pdftotext_missing` / `pdf_unreadable` ask for the
+  link). `NOTHING_NEW` and `PUBLIC_LINK_NOTE` moved to `@bamboo/shared/config.ts` so the engine's
+  summary and the CLI share one string (small edit to M3's `web/lib/domain/imports.ts`, which
+  re-exports `PUBLIC_LINK_NOTE`). An import with nothing new is still POSTed (empty `turns`), so
+  it's recorded and a retried command reports the import's running `turns_new`. DESIGN §5.1,
+  §10 #35.
+- **Ligature repair in the PDF segmenter** (`!`→fi, `#`→tt, `&`→fl, `%`→ft, next to letters).
+  Will's prompts have no hanzi, so their keys are English letters, and DESIGN §4.1's "leave
+  ligatures alone" would make a PDF of a linked conversation look all new. The map is inferred
+  from DESIGN's four examples; the manual real-PDF check confirms it. DESIGN §5.2, §10 #34.
+- **Segmentation details** DESIGN didn't pin down: the "Explore related" block ends at 2+ blank
+  lines or a page break; a duplicate line is collapsed only when adjacent or across a page break
+  (`\f`), and the page gap goes with it so a prompt split by a break stays one block; a prompt
+  may continue across a page break; prompt lines are joined with spaces. **Image-only turns in a
+  PDF**: unverified (no real PDF yet). Most likely the bubble has no text, so the reply merges into
+  the previous turn; that keeps "PDF after link → nothing new" true, while "link after PDF" would
+  report the image-only turn as 1 new. Check with the real PDF.
+- **Replies in Discord** follow PandaBase's `jobs replies`: one notification →
+  `[[reply_to:<message id>]] <summary>`; several → each summary with a link to its message
+  (needs `discord.guild_id`). Marked notified before printing, as PandaBase does.
+- **`nudge` treats a 404 as `NO_REPLY`** until M6 deploys `GET /api/agent/nudge`, so the
+  automation stays quiet instead of posting errors. **For M6:** keep the response
+  `NudgeResponse`; the automation (`bamboo-nudge`, `*/30 17-23 * * *` in the config's tz) is
+  already installed.
+- **`make agent-install`** is `agent/install.sh` (bash 3.2-safe, `DRY_RUN=1`). It runs
+  `pnpm install --frozen-lockfile`, links `~/.local/bin/bamboo-tools` →
+  `agent/tools/bin/bamboo-tools`, creates the two config files only if missing (ids from
+  `BAMBOO_DISCORD_CHANNEL_ID` / `BAMBOO_DISCORD_GUILD_ID`, URL from `BAMBOO_API_URL`, the token
+  left empty), and appends `<checkout>/agent/skills` to `skills.load.extraDirs` after backing up
+  `openclaw.json` (replacing only another *Bamboo* checkout's stale entry). The two command
+  automations are added only once the token is set (a re-run), and edited in place by name
+  after that (§10 #37). It never writes `~/.openclaw/.env`, never restarts the gateway, and
+  never edits the Discord allowlist: if `#bamboo` isn't enabled for the bot it prints the
+  `openclaw config set …` command instead.
+- **The `bamboo-tools` wrapper** (`agent/tools/bin/bamboo-tools`, `sh`) resolves its symlink,
+  puts `/opt/homebrew/bin` on PATH (node, pdftotext; command automations run `sh -lc`), and runs
+  `src/main.ts` with tsx.
+- **No Playwright on the Mac**, as M0 recommended; DESIGN §1, §1.2 and §8.3 no longer mention it.
+- The CLI refuses a `--channel-id` that isn't the configured `#bamboo` channel (`wrong_channel`).
+- Tests use an in-memory fake engine (`agent/tools/src/fake-engine.test-util.ts`) with M3's
+  semantics; no web route is exercised from `/agent/tools`. The real-`pdftotext` test generates a
+  tiny synthetic PDF and is skipped where poppler is missing (CI).
+- **README**: the deploy step's cron check said *Settings → Cron Jobs*; Vercel has it under
+  *Observability → Cron Jobs* (fixed, also in M3's manual steps above). New *Mac mini: Discord
+  intake* section.
+- During this session, the CLI calls made from Will's account (`openclaw config file`, `config
+  get`, `automations list`) created an unused `~/.openclaw/state/` in **Will's** account (not the
+  gateway's); it can be deleted. Read-only `ssh agent` probes (config get, automations list) ran
+  before the orchestrator said not to ssh; nothing was changed there.
+
+*Manual steps for Will (after merge; as `openclaw-agent` unless noted):*
+1. `ssh agent`, then `git clone https://github.com/willchan/bamboo.git ~/Code/bamboo`.
+2. `cd ~/Code/bamboo && BAMBOO_API_URL=https://bamboo-panda.vercel.app
+   BAMBOO_DISCORD_CHANNEL_ID=<#bamboo id> BAMBOO_DISCORD_GUILD_ID=<server id> make agent-install`
+   (try `DRY_RUN=1` first). It reports the `openclaw.json` backup path.
+3. Put `AGENT_API_TOKEN` (production) in `~/.config/bamboo/agent.env`, then run
+   `make agent-install` again to add the two automations.
+4. If it warns that `#bamboo` isn't enabled for the bot, run the printed `openclaw config set
+   channels.discord.guilds.<server>.channels.<#bamboo> …` with `#pandabase`'s user id.
+5. `bamboo-tools segment --url <link>`: the title and a turn count.
+6. End to end (needs M4's worker): the four checks in *Acceptance* above, including the PDF
+   ones (export the PDF, share it to `#bamboo`; it should be "Nothing new" after the link).
 
 ---
 

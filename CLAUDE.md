@@ -67,7 +67,7 @@ pnpm --filter web exec playwright install chromium   # once, before the first e2
 pnpm db:generate                           # after editing db/src/schema/*: new migration (commit it)
 pnpm db:migrate                            # apply migrations to TURSO_DATABASE_URL (default file:db/dev.db)
 pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
-bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse on the Mac (M5+)
+bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
 pnpm smoke <url>                           # after each deploy: public, read-only checks of a deployment (no secrets)
-make worker-install / worker-logs / agent-install / mac-update   # Mac mini (M4+)
+make worker-install / worker-logs / agent-install / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
 ```

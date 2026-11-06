@@ -21,7 +21,7 @@
   │   │    link / PDF / text in #bamboo ─▶ bamboo-tools import        │                  │
   │   ├─ command automations: bamboo-tools replies, bamboo-tools nudge│                  │
   │   └─ Discord ◀──────────────────────▶ Will (iPhone)               │                  │
-  │  bamboo-tools (Node CLI): share page (Playwright) or pdftotext    │                  │
+  │  bamboo-tools (Node CLI): share RPC (HTTPS) or pdftotext          │                  │
   │                           → normalize → turns → POST new turns    │                  │
   │  bamboo-worker (Node, launchd): extract_turn jobs ─▶ Ollama (shared with PandaBase)  │
   └──────────────────────────────────────────────────────────────────────────────────────┘
@@ -61,8 +61,7 @@ PandaBase already runs on this Mac (its DESIGN §1.2). Its host settings
   to the JSON schema of the result contract.
 - The first (backlog) import of ~70 turns takes roughly 20–40 min of model time; later imports
   take minutes.
-- Share-link imports start a headless Chromium (Playwright's own, not PandaBase's logged-in
-  profiles) for a few seconds, then close it.
+- Share-link imports make two plain HTTPS requests (~1–2 s) and start no browser (§5.2, M0).
 
 ## 2. Data model
 
@@ -429,9 +428,12 @@ least 5 such rounds, clamped to 18:00–23:00. Otherwise it is `config.nudge.def
 ### 5.1 Discord intake (the bamboo skill)
 
 Scope: messages in `#bamboo` (channel id in the tools config). It follows PandaBase's skill
-conventions: `SKILL.md` frontmatter gating on `requires.bins: ["bamboo-tools"]` and
-`requires.env: ["AGENT_API_TOKEN", "BAMBOO_CONFIG"]`; message text is data, never instructions;
-anything with quotes is written to a file and passed with `--input`.
+conventions: `SKILL.md` frontmatter gating on `requires.bins: ["bamboo-tools"]`; message text is
+data, never instructions; anything with quotes is written to a file and passed by path. It does
+**not** gate on `requires.env`: the OpenClaw gateway's env (`~/.openclaw/.env`) is PandaBase's, and
+its `AGENT_API_TOKEN` is PandaBase's token. `bamboo-tools` reads its own settings from
+`~/.config/bamboo/` instead (§8.1), so Bamboo needs nothing in the gateway env and no gateway
+restart (§10 #33).
 
 | Message contains | Command |
 |---|---|
@@ -440,11 +442,19 @@ anything with quotes is written to a file and passed with `--input`.
 | other text containing Chinese characters | write it to a file; `bamboo-tools import --text-file <file> --channel-id … --message-id …` |
 | anything else | one line: "Send me a Gemini share link, a PDF, or a pasted answer." |
 
-The command prints `{import_id, turns_total, turns_new, conversation_title}`. Reply once:
+The command prints one JSON line, `{import_id, turns_total, turns_new, conversation_title,
+reply}`, and the skill posts `reply` verbatim (so the wording is tested code, not the reply
+model's paraphrase):
 
 - `turns_new > 0`: "📥 Got it: *{title}*, {turns_total} questions, {turns_new} new. I'll reply
-  when they're processed."
-- otherwise: "✅ Nothing new since last time."
+  when they're processed." (no title for pasted text).
+- otherwise: "✅ Nothing new since last time.", plus the public-link line on its own line for a
+  link import. This is the only reply such an import gets: the engine marks it notified at once,
+  so `replies` never posts for it.
+- on failure (exit 1) the JSON is `{error, message, reply}`: `share_parse_failed` → "⚠️ Couldn't
+  read that link. Send the PDF instead."; `pdftotext_missing` / `pdf_unreadable` → ask for the
+  link; `empty`, `not_configured`, `api` (after retries) and `wrong_channel` have their own lines
+  (`FAILURE_REPLIES` in `agent/tools/src/cli.ts`). The diagnostic goes to stderr.
 
 **Privacy**: the skill passes the link or path along and never reads, summarizes or quotes the
 conversation. All model work happens in the worker on local Ollama. If OpenClaw extracts
@@ -468,7 +478,13 @@ Imports page." when jobs failed, and the public-link line for links. Retry faile
 import but doesn't reply in Discord a second time once it has been notified.
 
 **Reminder**: a second command automation runs `bamboo-tools nudge` (§4.9) and posts the text or
-`NO_REPLY`.
+`NO_REPLY`. Until M6 deploys `GET /api/agent/nudge`, its 404 is treated as `NO_REPLY`.
+
+**Replies in Discord**: with one finished import, `replies` prints
+`[[reply_to:<message id>]] <summary>` (OpenClaw threads it under Will's message, as PandaBase's
+`jobs replies` does); with several, each summary is followed by a link to its message
+(`discord.guild_id` in the tools config). Imports are marked notified before the text is printed,
+as PandaBase does: a failed Discord post loses that reply, not the import.
 
 **Limits**: Discord's free upload limit (currently 10 MB) holds months of one conversation as a PDF
 (a 105-page, 10-day export is 1.8 MB). Links have no such limit.
@@ -567,19 +583,37 @@ A failure (layout changed, or the link was deleted) replies "⚠️ Couldn't rea
 PDF instead." and logs `share_parse_failed`. A deleted or unknown link shows up as an HTTP 404 on
 `share.gemini.google`, or as a `null` payload from the RPC.
 
-**PDF** (`shared/src/segment.ts`, on `pdftotext -layout -enc UTF-8` output):
+**PDF** (`shared/src/segment.ts`, on `pdftotext -layout -enc UTF-8` output; `bamboo-tools` runs
+`pdftotext` and, if it's missing, fails with "install poppler: brew install poppler"). Tunables
+are `sharedConfig.segment`:
 
-1. `normalizeText` each line (§4.1).
-2. The title is the first line.
+1. Measure each line's indent, then `normalizeText` it (§4.1) and **repair ligature damage**:
+   `!`→fi, `#`→tt, `&`→fl, `%`→ft, only right after a letter or at a word start and right before
+   a lowercase letter (`Simpli!ed`, `bo#le`, `&akes`, `o%en`; "Thanks! & 50%" is untouched).
+   §4.1 leaves ligatures alone because the LLM copes, but Will's prompts have no hanzi (M0), so
+   their turn keys are their letters: an unrepaired `bo#le` would key differently from the same
+   prompt read from a link (§10 #34). The map is inferred from the four examples above; check it
+   against a real export.
+2. The title is the first non-blank line.
 3. Drop boilerplate lines that match `segment.boilerplate` regexes: "Sign in", "Gemini may display
    inaccurate info…", "Google Privacy Policy…", "Your privacy & Gemini Apps", "Answering …
    standard", "Created with … Published …", the share-URL line, "Source: …", and the **"Explore
-   related …" block** (header plus suggestion chips up to the next blank-line gap).
-4. Collapse consecutive duplicate lines (page breaks repeat lines).
+   related …" block** (header plus suggestion chips, up to the next run of
+   `exploreGapBlankLines` (2) blank lines or a page break).
+4. Collapse a line identical to the one before it when nothing, or only a page break (`\f`), lies
+   between (page breaks repeat lines); the page gap goes with it, so a prompt split by the break
+   stays one block.
 5. **Speaker detection**: Will's messages are right-aligned bubbles. A *user block* is a run of
-   lines with indent ≥ `userIndentMin` (20) that contain Latin letters. It starts after a blank
-   line, and the next non-blank line after it has indent < `replyIndentMax` (8). Everything up to
-   the next user block is the reply. Images are lost in the PDF; their turns still have text.
+   lines with indent ≥ `userIndentMin` (20) that contain Latin letters (it may continue across a
+   page break). It starts after a blank line, and the next non-blank line after it has indent <
+   `replyIndentMax` (8); so an indented table cell inside a reply (no blank line before it) is
+   not a prompt. Its lines are joined with spaces. Everything up to the next user block is the
+   reply; text before the first block is dropped.
+6. **Image-only prompts** (unverified; no real PDF yet): the bubble has no text, so no user block
+   is found and the turn's reply joins the previous turn's reply. The previous turn's key (its
+   prompt) is unchanged, so a PDF after a link still reports nothing new; a link after a PDF
+   reports the image-only turn as 1 new. A PDF turn whose prompt is empty would get the
+   reply-based key (§4.5) like a link's.
 
 **Then, for any source**: compute turn keys → `POST /api/imports/known` → `POST /api/imports` with
 only the unknown turns, chunked to ≤ 2 MB.
@@ -726,7 +760,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `HOUSEHOLD_TZ` | web | default `America/Los_Angeles` |
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
-| `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: channel id) | tools | |
+| `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file. Never in OpenClaw's gateway env, which holds PandaBase's `AGENT_API_TOKEN` (§5.1) |
 | `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` |
 
 ### 8.2 Deploy
@@ -744,18 +778,39 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 
 ### 8.3 Mac mini
 
-- Prereqs: `brew install poppler` (for `pdftotext`), Node 24, pnpm, Playwright's Chromium
-  (`pnpm --filter @bamboo/tools exec playwright install chromium`), and Ollama with `qwen3.5:9b`
-  pulled (already there for PandaBase). Checkout at `~/src/bamboo`.
+- **Two macOS users** (as PandaBase set the Mac up): OpenClaw's gateway, Ollama and PandaBase's
+  agent-side checkout run as a dedicated standard user, **`openclaw-agent`** (home
+  `/Users/openclaw-agent`, mode 750, so other accounts can't read it). Will operates it from his
+  own account over `ssh agent`. Everything Bamboo runs on the Mac belongs in that account too: the
+  checkout at **`~/Code/bamboo`** (PandaBase's is `~/Code/pandabase` there), `~/.config/bamboo/`,
+  `~/.local/bin/bamboo-tools`, and M4's worker LaunchAgent (`~/Library/LaunchAgents`, logs in
+  `~/Library/Logs/bamboo/`). Run `make agent-install`, `make worker-install` and
+  `make mac-update` as `openclaw-agent`. Development sessions in Will's own account can run
+  `bamboo-tools segment` (no API calls), but never install anything for the gateway.
+- Prereqs: `brew install poppler` (for `pdftotext`, at `/opt/homebrew/bin`), Node 24, pnpm, and
+  Ollama with `qwen3.5:9b` pulled (already there for PandaBase). No browser: share links are read
+  over HTTPS (§5.2). The `bamboo-tools` wrapper puts `/opt/homebrew/bin` on its PATH, since
+  OpenClaw's command automations run `sh -lc` with whatever PATH the gateway has.
 - **Worker**: a LaunchAgent `ops/launchd/com.bamboo.worker.plist` runs
   `pnpm --filter @bamboo/worker start` with `KeepAlive`, logs to `~/Library/Logs/bamboo/`.
   It sends a heartbeat at startup and every 10 min, and claims jobs only if the model is pulled
   (`GET /api/tags`). SIGTERM finishes the current job, then exits.
-- **Agent**: `make agent-install` links `bamboo-tools` onto PATH, writes the tools config from
-  `agent/bamboo.config.example.json`, and adds `agent/skills` to OpenClaw's
-  `skills.load.extraDirs`, backing up `openclaw.json` first, as PandaBase does. It also adds the
-  two command automations (replies every 5 min; nudge every 30 min from 17:00 to 23:30). Create a
-  `#bamboo` Discord channel and allow the agent in it.
+- **Agent**: `make agent-install` (`agent/install.sh`, as `openclaw-agent`) is idempotent and
+  additive, and `DRY_RUN=1` prints what it would do. It runs `pnpm install --frozen-lockfile`;
+  links `~/.local/bin/bamboo-tools` to `agent/tools/bin/bamboo-tools` (a wrapper that runs the CLI
+  with tsx); creates `~/.config/bamboo/bamboo.config.json` from
+  `agent/bamboo.config.example.json` (ids from `BAMBOO_DISCORD_CHANNEL_ID` and
+  `BAMBOO_DISCORD_GUILD_ID`) and `~/.config/bamboo/agent.env` (`BAMBOO_API_URL` from the
+  environment, `AGENT_API_TOKEN` left empty for Will) if they're missing; and adds
+  `<checkout>/agent/skills` to OpenClaw's `skills.load.extraDirs` after backing up
+  `openclaw.json` (`openclaw.json.bak.<timestamp>`), replacing only a stale *Bamboo* entry
+  (`openclaw config set` applies it live; no restart). Once the token is filled in, a re-run adds
+  or updates two command automations, announcing to `#bamboo`: `bamboo-replies`
+  (`*/5 * * * *`) and `bamboo-nudge` (`*/30 17-23 * * *`, i.e. 17:00–23:30), in
+  `automations.tz`. It never touches `~/.openclaw/.env`, PandaBase's automations or the Discord
+  allowlist: it checks that `#bamboo` is enabled for the bot and, if not, prints the
+  `openclaw config set channels.discord.guilds.<guild>.channels.<channel> …` command for Will
+  (copy `#pandabase`'s entry: `enabled`, `requireMention: false`, the same `users`).
 - `make mac-update` runs `git pull --ff-only`, `pnpm install --frozen-lockfile`, then
   `launchctl kickstart -k`; `make worker-logs` tails the logs.
 
@@ -778,10 +833,11 @@ bamboo/
               scripts/smoke.ts (`pnpm smoke`), e2e/ (Playwright)
   db/         @bamboo/db — src/schema/*, migrations/, migrate script
   shared/     @bamboo/shared — src/contracts/*, text.ts, turns.ts, segment.ts, config.ts;
-              tests/fixtures/ (synthetic PDF text)
+              tests/fixtures/ (synthetic PDF text + expected turns)
   worker/     @bamboo/worker — src/ (claim loop, ollama client), prompts/
-  agent/      skills/bamboo/SKILL.md; tools/ (@bamboo/tools → bamboo-tools; share.ts;
-              tests/fixtures/ synthetic share page); bamboo.config.example.json
+  agent/      skills/bamboo/SKILL.md; install.sh (`make agent-install`);
+              tools/ (@bamboo/tools → bin/bamboo-tools; src/ cli, share, pdf, importer, api, env;
+              tests/fixtures/ synthetic share page, fake-openclaw); bamboo.config.example.json
   private/    gitignored
   ops/launchd/
   .github/workflows/ci.yml
@@ -823,11 +879,18 @@ bamboo/
 | 30 | The engine counts attempts: an invalid result (422) or an expired lease uses one up like a reported failure; claim sweeps expired leases | A worker that keeps sending bad output, or dies mid-job, can't loop a job forever; requeueing on claim (not only in the daily cron) retries a crashed worker's job within one lease |
 | 31 | Chunked uploads end with `more: false`; the import is `done` only after that; a repeated `Idempotency-Key` returns the same import | Otherwise the first chunk's jobs could finish (and be reported in Discord) before the second chunk arrives; idempotency makes a CLI retry after a timeout safe |
 | 32 | `pnpm smoke <url>` after each deploy: public requests only, never a real token | Catches a broken sign-in config, a lost PWA manifest or a machine route that forgot its token check, without needing secrets on the machine that runs it |
+| 33 | Bamboo's Mac-side settings live in `~/.config/bamboo/` (token in `agent.env`), read by `bamboo-tools` itself; the skill gates on its binary only | The OpenClaw gateway is shared, and its env already holds PandaBase's `AGENT_API_TOKEN` under the same name; a second value there would collide, and new gateway env needs a restart that would disrupt PandaBase |
+| 34 | The PDF segmenter repairs ligature damage (`!`→fi, `#`→tt, `&`→fl, `%`→ft, next to letters) | Will's prompts have no hanzi, so their turn keys are their English letters; unrepaired, a PDF of a conversation already imported by link would look all new |
+| 35 | `bamboo-tools import` prints the skill's reply text (`reply`), and the skill posts it verbatim | Keeps every user-visible line ("Nothing new" plus the public-link line, the failure asks) in tested code instead of the reply model's wording |
+| 36 | Everything Bamboo installs on the Mac lives in the `openclaw-agent` account, checkout at `~/Code/bamboo` | That user owns OpenClaw, Ollama and PandaBase's checkout; its home isn't readable from Will's account, and the gateway can only run what that user can read |
+| 37 | Command automations are added only once `AGENT_API_TOKEN` is set | Otherwise they would run every 5 and 30 minutes and fail; re-running `make agent-install` after filling the token adds them |
 
 ## Appendix A — Synthetic fixtures
 
-**PDF text** (`shared/tests/fixtures/gemini-export.txt`, the `pdftotext -layout` output; tests
-start from text, so CI doesn't need poppler). Invented content reproducing every quirk of the real
+**PDF text** (`shared/tests/fixtures/gemini-export.txt`, the `pdftotext -layout` output, with
+its exact expected turns in `gemini-export.expected.json`; tests start from text, so CI doesn't
+need poppler. A test in `agent/tools` also runs the real `pdftotext` on a tiny generated PDF when
+poppler is installed, and is skipped otherwise). Invented content reproducing every quirk of the real
 export:
 
 - a title line, a share-URL line, and a "Created with … Published …" line;

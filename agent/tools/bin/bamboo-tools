@@ -1,0 +1,17 @@
+#!/bin/sh
+# bamboo-tools on PATH (`make agent-install` links ~/.local/bin/bamboo-tools here). OpenClaw runs
+# it as the openclaw-agent user, from the gateway or via `sh -lc` for command automations, whose
+# PATH may lack Homebrew: node and pdftotext live in /opt/homebrew/bin.
+set -eu
+case ":$PATH:" in
+  *:/opt/homebrew/bin:*) ;;
+  *) PATH="/opt/homebrew/bin:$PATH"; export PATH ;;
+esac
+self="$(realpath "$0")"
+tools="$(dirname "$(dirname "$self")")"
+tsx="$tools/node_modules/.bin/tsx"
+if [ ! -x "$tsx" ]; then
+  echo "bamboo-tools: dependencies missing; run 'make agent-install' in the Bamboo checkout" >&2
+  exit 1
+fi
+exec "$tsx" "$tools/src/main.ts" "$@"

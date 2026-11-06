@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# A fake `openclaw` CLI for agent/install.sh tests: the few commands it uses, against
+# $HOME/.openclaw/openclaw.json and $HOME/.openclaw/automations.json. Logs each call to
+# $HOME/openclaw-calls.log.
+set -euo pipefail
+dir="$HOME/.openclaw"
+cfg="$dir/openclaw.json"
+autos="$dir/automations.json"
+printf '%s\n' "$*" >>"$HOME/openclaw-calls.log"
+[ -f "$autos" ] || echo '[]' >"$autos"
+path_json() { jq -cn --arg p "$1" '$p | split(".")'; }
+
+case "$1 $2" in
+  "config file") jq -n --arg p "$cfg" '{path: $p}' ;;
+  "config get")
+    v="$(jq -c --argjson p "$(path_json "$3")" 'getpath($p)' "$cfg")"
+    if [ "$v" = null ]; then
+      echo '{"ok": false, "error": {"type": "cli_error", "message": "unset"}}'
+      exit 1
+    fi
+    printf '%s\n' "$v"
+    ;;
+  "config set")
+    tmp="$(mktemp)"
+    jq --argjson p "$(path_json "$3")" --argjson v "$4" 'setpath($p; $v)' "$cfg" >"$tmp"
+    mv "$tmp" "$cfg"
+    ;;
+  "automations list") cat "$autos" ;;
+  "automations add" | "automations edit")
+    shift 2
+    id=""
+    [ "$1" = "--name" ] || { id="$1"; shift; }
+    name="" cron="" command="" to=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) name="$2"; shift 2 ;;
+        --cron) cron="$2"; shift 2 ;;
+        --command) command="$2"; shift 2 ;;
+        --to) to="$2"; shift 2 ;;
+        --tz | --channel) shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    tmp="$(mktemp)"
+    if [ -z "$id" ]; then
+      jq --arg n "$name" --arg c "$cron" --arg x "$command" --arg t "$to" \
+        '. + [{id: ("id-" + (length | tostring)), name: $n, cron: $c, command: $x, to: $t}]' "$autos" >"$tmp"
+    else
+      jq --arg i "$id" --arg c "$cron" --arg x "$command" --arg t "$to" \
+        'map(if .id == $i then .cron = $c | .command = $x | .to = $t else . end)' "$autos" >"$tmp"
+    fi
+    mv "$tmp" "$autos"
+    echo '{"ok": true}'
+    ;;
+  "skills check") echo "skills ok" ;;
+  *)
+    echo "fake openclaw: unsupported: $*" >&2
+    exit 2
+    ;;
+esac

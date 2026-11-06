@@ -7,4 +7,5 @@ export const SHARED_PACKAGE = "@bamboo/shared";
 export * from "./text";
 export * from "./config";
 export * from "./turns";
+export * from "./segment";
 export * from "./contracts/index";

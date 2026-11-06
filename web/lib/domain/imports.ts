@@ -1,11 +1,12 @@
 // Import summaries (DESIGN §5.1 *Results*) and the worker's status line on Today (DESIGN §6).
 import type { ImportKind } from "@bamboo/db";
+import { NOTHING_NEW, PUBLIC_LINK_NOTE } from "@bamboo/shared";
 import { config } from "../config";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-export const PUBLIC_LINK_NOTE =
-  "🔗 This share link is public; you can delete it in Gemini → Settings → Public links.";
+// Shared with bamboo-tools, whose immediate "Nothing new" reply must match (M5).
+export { PUBLIC_LINK_NOTE };
 
 export interface SummaryInput {
   kind: ImportKind;
@@ -26,7 +27,7 @@ export interface SummaryInput {
 export function importSummary(s: SummaryInput): string {
   const head =
     s.turnsNew === 0
-      ? "✅ Nothing new since last time."
+      ? NOTHING_NEW
       : `✅ ${plural(s.turnsNew, "new question")} → ${
           s.phrasesNew === 0 ? "no new phrases" : `${plural(s.phrasesNew, "phrase")} queued`
         }.`;
