@@ -698,6 +698,17 @@ idempotency, backup, additive extraDirs, automations, no token in any output or 
   `AGENT_API_TOKEN` instead of `agent.env`'s. The key is now `BAMBOO_AGENT_API_TOKEN`;
   `make agent-install` renames an older file's line in place (DESIGN §10 #42). PandaBase prefixes
   its side too (`PANDABASE_AGENT_API_TOKEN`).
+- **`#bamboo` pinned to the skill (post-merge fix, 2026-11-05).** Live, the agent answered a bare
+  share link in `#bamboo` with OpenClaw's `view_image` (which failed) instead of the bamboo skill.
+  Two causes: nothing kept other tools and skills out of the channel, and the skill's unquoted
+  `description` was cut at ` #bamboo` by OpenClaw's YAML parser, leaving "Bamboo intake in the".
+  `make agent-install` now merges `skills: ["bamboo"]`, a firm `systemPrompt` and a `tools.deny`
+  of the media/link readers into `#bamboo`'s existing entry (access keys and other channels
+  untouched; the printed command for a missing entry includes them), and the description is a
+  double-quoted string naming the bare share-link forms. Regression tests in
+  `agent/tools/src/install.test.ts`. DESIGN §5.1, §8.3, §10 #43. **Will:** `git pull --ff-only &&
+  make agent-install` as `openclaw-agent`, then start a new session in `#bamboo` (`/new`) so the
+  agent picks up the pin and the new description.
 - **`import` prints the reply.** Its JSON has a `reply` field the skill posts verbatim: "📥 Got
   it…", "✅ Nothing new since last time." (plus the public-link line for links), or a failure
   line (`share_parse_failed` asks for the PDF; `pdftotext_missing` / `pdf_unreadable` ask for the
@@ -816,7 +827,7 @@ clamp; the 04:00 day boundary); stats queries on fixture data.
   "/api/cron/daily", "requestMethod": "GET"}}`) keeps the route, the UTC time and the
   `CRON_SECRET` bearer check (Vercel still sends it, plus `user-agent: vercel-cron/1.0`); `crons`
   is removed in the same change (both would run the job twice). Caveats, recorded in DESIGN §8.2
-  and §10 #43: Schedules are **beta**; runs start within a jitter window (1 min on Pro, always
+  and §10 #44: Schedules are **beta**; runs start within a jitter window (1 min on Pro, always
   15 min on Hobby, which is still tighter than a legacy Hobby cron's "any time in the hour");
   failed path runs aren't retried; a run may very rarely be delivered twice (the job is
   idempotent). Static schedules are inactive on preview branches. The schedule name `daily` must
@@ -825,7 +836,7 @@ clamp; the 04:00 day boundary); stats queries on fixture data.
   secret). It now shows under the project's **Schedules** page, not *Observability → Cron Jobs*.
 - **Practice days, not rounds.** DESIGN §4.9's "at least 5 rounds in the last 14 days" counts the
   first finished round of each household day before today, so "Another round" or an abandoned
-  round doesn't pull the median (§10 #46). Today's rounds don't count. Times are measured inside
+  round doesn't pull the median (§10 #47). Today's rounds don't count. Times are measured inside
   the 04:00 day (00:30 → 24:30), then clamped to 18:00–23:00.
 - **Text**: `📚 1 round · ~{min} min · {due} due · {new} new → {APP_URL}`: DESIGN's text plus the
   new count, zero counts left out, minutes from round size × `secondsPerCard` (10 cards → ~3).
@@ -844,12 +855,12 @@ clamp; the 04:00 day boundary); stats queries on fixture data.
   1. On a 401, `bamboo-tools` (every command) says where its token came from:
      `token from BAMBOO_AGENT_API_TOKEN in <agent.env path>` or `token from environment variable
      BAMBOO_AGENT_API_TOKEN`; tests assert the value never appears in stdout or stderr. DESIGN
-     §8.1, §10 #45.
+     §8.1, §10 #46.
   2. **`worker.env` now wins over the process env** for the keys it lists (`loadEnvFile`), so an
      inherited generic `WORKER_API_TOKEN` / `OLLAMA_URL` / `OLLAMA_TEXT_MODEL` can't override
      Bamboo's file; an empty value in the file means "default", and keys the file omits still
      come from the env. Regression test committed first, failing (`worker.env wins over inherited
-     generic variables…`), then the fix. DESIGN §8.1, §10 #44.
+     generic variables…`), then the fix. DESIGN §8.1, §10 #45.
 - `pnpm smoke` now has 15 checks (`GET /api/agent/nudge` added to `MACHINE_ROUTES`).
 - The status table's M4 row said *in review*; it's merged (#9), corrected here.
 

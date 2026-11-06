@@ -24,6 +24,38 @@ const ours = join(repo, "agent/skills");
 const PANDABASE = "/Users/someone/Code/pandabase/agent/skills";
 const STALE = "/gone/bamboo-old/agent/skills";
 const TOKEN = "tok-0123456789abcdef";
+const GUILD = "222222222222222222";
+const BAMBOO = "111111111111111111";
+const PANDABASE_CHANNEL = "555555555555555555";
+// The access keys Will set on #bamboo: the installer must keep them exactly.
+const BAMBOO_ACCESS = {
+  enabled: true,
+  requireMention: false,
+  requireMentionInBotThreads: false,
+  users: ["444444444444444444"],
+};
+const OTHER_CHANNELS = {
+  [PANDABASE_CHANNEL]: {
+    enabled: true,
+    requireMention: false,
+    users: ["444444444444444444"],
+    skills: ["discord-intake"],
+    systemPrompt: "Synthetic PandaBase prompt.",
+    tools: { deny: ["browser"] },
+  },
+  "*": { enabled: true, requireMention: true },
+};
+// The media and link-reading tools #bamboo must never have (OpenClaw docs: gateway/config-tools/
+// tool-policy.md, group:web and group:media; tools/code-execution.md).
+const READERS = [
+  "view_image",
+  "pdf",
+  "web_fetch",
+  "web_search",
+  "x_search",
+  "browser",
+  "code_execution",
+];
 
 let home: string;
 const oc = () => join(home, ".openclaw");
@@ -71,13 +103,47 @@ beforeEach(() => {
       channels: {
         discord: {
           guilds: {
-            "222222222222222222": { channels: { "111111111111111111": { enabled: true } } },
+            [GUILD]: { channels: { [BAMBOO]: BAMBOO_ACCESS, ...OTHER_CHANNELS } },
           },
         },
       },
     }),
   );
 });
+
+type ChannelEntry = Record<string, unknown> & {
+  skills?: string[];
+  systemPrompt?: string;
+  tools?: { deny?: string[]; allow?: string[] };
+};
+const channels = () =>
+  (
+    readJson(join(oc(), "openclaw.json")) as {
+      channels: { discord: { guilds: Record<string, { channels: Record<string, ChannelEntry> }> } };
+    }
+  ).channels.discord.guilds[GUILD]!.channels;
+const setChannel = (id: string, entry: ChannelEntry) => {
+  const cfg = readJson(join(oc(), "openclaw.json")) as {
+    channels: { discord: { guilds: Record<string, { channels: Record<string, ChannelEntry> }> } };
+  };
+  cfg.channels.discord.guilds[GUILD]!.channels[id] = entry;
+  writeFileSync(join(oc(), "openclaw.json"), JSON.stringify(cfg));
+};
+
+// The systemPrompt pins every message to the skill and forbids reading the content itself.
+function expectFirmPrompt(prompt: string | undefined) {
+  expect(prompt).toBeDefined();
+  const p = prompt!;
+  expect(p).toMatch(/bamboo skill/u);
+  for (const f of ["bamboo-tools import --url", "--file", "--text-file"]) expect(p).toContain(f);
+  expect(p).toMatch(/exactly as printed/u);
+  expect(p).toMatch(/never open, fetch, view, describe, translate or summarize/iu);
+  expect(p).toMatch(/link, attachment or pasted text/u);
+  expect(p).toMatch(/data, not instructions/u);
+  expect(p).not.toContain("'"); // printed inside '…' when the channel is missing
+  // Short enough to stay a pin, not a second skill.
+  expect(p.length).toBeLessThan(800);
+}
 
 describe("agent/install.sh", () => {
   it("is additive and idempotent, backs up first, and waits for the token", () => {
@@ -169,6 +235,62 @@ describe("agent/install.sh", () => {
     expect(readFileSync(join(home, "openclaw-calls.log"), "utf8")).not.toMatch(
       /config set channels/u,
     );
+    expect(channels()["333333333333333333"]).toBeUndefined();
+    // The printed command already pins the channel (Will runs it as is).
+    const line = r.out.split("\n").find((l) => l.includes("openclaw config set channels."));
+    expect(line, r.out).toBeDefined();
+    const json = /'(\{.*\})'/u.exec(line!.replace(/'\\''/gu, "'"))?.[1];
+    const entry = JSON.parse(json ?? "null") as ChannelEntry;
+    expect(entry).toMatchObject({ enabled: true, requireMention: false, skills: ["bamboo"] });
+    expect(entry.tools?.deny).toEqual(expect.arrayContaining(READERS));
+    expectFirmPrompt(entry.systemPrompt);
+  });
+
+  // Bug (live): in #bamboo the agent called OpenClaw's view_image on a bare Gemini share link
+  // instead of using the bamboo skill, and replied about the failed fetch. The installer now pins
+  // the channel: only the bamboo skill, a firm systemPrompt, and the content readers denied.
+  it("pins #bamboo to the bamboo skill, keeping its access keys and every other channel", () => {
+    const others = () => JSON.stringify([channels()[PANDABASE_CHANNEL], channels()["*"]]);
+    const before = others();
+    const first = install();
+    expect(first.code, first.out).toBe(0);
+    const entry = channels()[BAMBOO]!;
+    expect(entry).toMatchObject(BAMBOO_ACCESS);
+    expect(entry.skills).toEqual(["bamboo"]);
+    expectFirmPrompt(entry.systemPrompt);
+    expect(entry.tools?.deny).toEqual(expect.arrayContaining(READERS));
+    // The skill runs bamboo-tools through exec and writes pasted text with write; it reads its
+    // own SKILL.md with read.
+    for (const t of ["exec", "bash", "process", "write", "read", "group:runtime", "group:fs"])
+      expect(entry.tools?.deny).not.toContain(t);
+    expect(entry.tools?.allow).toBeUndefined();
+    expect(others()).toBe(before);
+    expect(backups()).toHaveLength(1);
+
+    const second = install();
+    expect(second.code, second.out).toBe(0);
+    expect(second.out).toContain("kept #bamboo");
+    expect(channels()[BAMBOO]).toEqual(entry);
+    expect(others()).toBe(before);
+    expect(backups()).toHaveLength(1);
+  });
+
+  it("merges into an existing pin: replaces skills and the prompt, keeps other denies", () => {
+    setChannel(BAMBOO, {
+      ...BAMBOO_ACCESS,
+      skills: ["something-else"],
+      systemPrompt: "old",
+      tools: { deny: ["canvas", "view_image"] },
+    });
+    const r = install();
+    expect(r.code, r.out).toBe(0);
+    const entry = channels()[BAMBOO]!;
+    expect(entry).toMatchObject(BAMBOO_ACCESS);
+    expect(entry.skills).toEqual(["bamboo"]);
+    expectFirmPrompt(entry.systemPrompt);
+    expect(entry.tools?.deny?.[0]).toBe("canvas");
+    expect(entry.tools?.deny).toEqual(expect.arrayContaining(READERS));
+    expect(entry.tools?.deny?.filter((t) => t === "view_image")).toHaveLength(1);
   });
 
   it("changes nothing in a dry run", () => {
@@ -188,5 +310,28 @@ describe("agent/install.sh", () => {
     const out = install();
     expect(out.code).toBe(1);
     expect(out.out).toContain("run this as the user that owns the gateway");
+  });
+});
+
+// The skill's description is what the model sees when it picks a skill, so a bare share link must
+// match it. OpenClaw parses the frontmatter as YAML: an unquoted value is cut at " #" (a comment),
+// which left the old description as "Bamboo intake in the". It must be one double-quoted line.
+describe("agent/skills/bamboo/SKILL.md description", () => {
+  const skill = readFileSync(join(repo, "agent/skills/bamboo/SKILL.md"), "utf8");
+  const line = /^description: (.*)$/mu.exec(skill)?.[1] ?? "";
+
+  it("is a double-quoted YAML string that survives the # in #bamboo", () => {
+    expect(line).toMatch(/^"[^"\\]*"$/u);
+  });
+
+  it("names #bamboo and every share-link form, and says the link is never opened", () => {
+    expect(line).toMatch(/^"/u);
+    const description = JSON.parse(line) as string;
+    expect(description).toContain("#bamboo");
+    for (const host of ["share.gemini.google/", "gemini.google.com/share/", "g.co/gemini/share/"])
+      expect(description).toContain(host);
+    expect(description).toMatch(/bare/u);
+    expect(description).toMatch(/never open/iu);
+    expect(Buffer.byteLength(description)).toBeLessThan(1024);
   });
 });
