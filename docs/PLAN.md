@@ -601,13 +601,25 @@ whether this is working.
 **Read:** PRD §5.4, §6; DESIGN §4.9, §6 (Stats), §7; M5 Notes.
 
 **Owns:** `web/lib/domain/nudge.ts`; `GET /api/agent/nudge`; the reminder toggle on Today; the
-`/stats` page and its queries.
+`/stats` page and its queries; moving the daily cron to Vercel Schedules (below).
+
+**Vercel Schedules.** Vercel now marks Cron Jobs (`crons` in `web/vercel.json`, which M3 added
+for `/api/cron/daily`) as legacy and deprecated in favour of *Schedules*. Check Vercel's current
+docs on Schedules and how to migrate, then move `/api/cron/daily` to Schedules, keeping its time
+(11:17 UTC) and its `CRON_SECRET` check, or whatever Schedules uses instead. If Schedules can't
+do that yet, keep the cron and record why in Notes. Update DESIGN §8 and the README's deploy
+section (the cron is under Observability in the Vercel dashboard), and add `GET /api/agent/nudge`
+to `pnpm smoke`'s machine-route list.
 
 **Tests:** the nudge decision (sent at most once a day; suppressed after a finished round or when
 there's nothing to do; the default 21:00 until 5 rounds exist; the median-minus-15 rule; the
 clamp; the 04:00 day boundary); stats queries on fixture data.
 
-**Acceptance:** the standard commands. Manual: a reminder arrives in `#bamboo` in the evening,
-and doesn't arrive on a day when a round is already done.
+**Acceptance:** the standard commands. Manual:
+- a reminder arrives in `#bamboo` in the evening, and doesn't arrive on a day when a round is
+  already done;
+- after merge, the daily job shows in Vercel (Schedules, or Observability → Cron Jobs if it stayed)
+  and its first run returns 200;
+- `pnpm smoke https://bamboo-panda.vercel.app` passes.
 
 **Notes:**
