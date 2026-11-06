@@ -1,0 +1,18 @@
+{
+  "name": "bamboo-spike-share-link",
+  "private": true,
+  "type": "module",
+  "description": "M0 throwaway spike: can a Gemini share link be read from the Mac? Not part of the pnpm workspace.",
+  "scripts": {
+    "setup": "PLAYWRIGHT_BROWSERS_PATH=0 playwright install chromium-headless-shell",
+    "read": "node read.mjs",
+    "fixtures": "node make-fixtures.mjs",
+    "check": "node check-fixtures.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "playwright": "1.65.0"
+  }
+}

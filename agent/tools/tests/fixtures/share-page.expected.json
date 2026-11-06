@@ -1,0 +1,22 @@
+{
+  "_note": "Synthetic. Expected parse of share-rpc.txt (exact) and share-page.html (title and prompts exact; reply hanzi equal). Replies are Gemini markdown with rich components flattened per DESIGN 5.2.",
+  "title": "Kitchen and Errands Mandarin",
+  "turns": [
+    {
+      "user": "How do I ask the nanny to start the rice cooker at five?",
+      "reply": "Here is a polite, natural way to ask (请 = please).\n\nThe short version\n\nSay this:\n请你五点开电饭煲。\nQǐng nǐ wǔ diǎn kāi diànfànbāo.\n\n*   **Key terms:** 五点 (*wǔ diǎn* = five o'clock) | 电饭煲 (*diànfànbāo* = rice cooker)\n\n### Quick reference\n\n| English | Chinese | Note |\n| :--- | :--- | :--- |\n| **Rice cooker** | 电饭煲 | *Common everywhere* |\n| **Five o'clock** | 五点 | *Also 五点钟* |"
+    },
+    {
+      "user": "She said something like \"gao ya guo\".\nWhat is that?",
+      "reply": "She most likely said **高压锅** (*gāoyāguō*), a pressure cooker.\n\nSaying it back\n\nTo check you understood:\n你是说高压锅吗？\nNǐ shì shuō gāoyāguō ma?\n\nBefore you use it\n- Check the valve\n- Add water first"
+    },
+    {
+      "user": "",
+      "reply": "This label says **酱油** (*jiàngyóu*), soy sauce.\n\n*   **生抽** is the light one for cooking.\n*   **老抽** is darker and used for colour."
+    },
+    {
+      "user": "Thanks! And how do I say \"that's enough\"?",
+      "reply": "Just say:\n\n够了。\n\nIt works for food, water and toys."
+    }
+  ]
+}

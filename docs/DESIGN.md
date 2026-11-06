@@ -392,16 +392,97 @@ same mechanism as PandaBase's `jobs replies`.
 
 ### 5.2 Reading a conversation (`bamboo-tools`)
 
-**Share link** (`agent/tools/src/share.ts`): the details are settled by the **M0 spike**, which
-records its findings here. The expected shape:
+**Share link** (`agent/tools/src/share.ts`). **Verdict (M0, 2026-11): link works**, read with
+two plain HTTPS requests and no browser. The spike is `spikes/share-link/read.mjs`; on a real
+86-turn conversation both methods below returned the same title, the same 86 turns, and identical
+prompt text (86/86).
 
-- load the page in headless Chromium (Playwright), wait for the conversation to render;
-- read the title, then the user and model turns from the DOM in order, as plain text with line
-  breaks kept;
-- if the page embeds its data (a JSON blob), prefer that over the DOM.
+*What doesn't work:* the share page's HTML holds no conversation. It is an Angular shell (zero
+hanzi; `og:title` is the generic "Gemini - direct access to Google AI"). The conversation arrives
+afterwards from an internal RPC.
+
+*Redirects.* `share.gemini.google/<code>` → **301** → `gemini.google.com/share/<id>` (query
+`social_preview`, `skid`) → **200**. One hop; `g.co/gemini/share/<id>` → **302** to the same
+host. Follow redirects (up to 5) and take the share id from the final `/share/<id>` path.
+
+*Method (primary): RPC over HTTPS.*
+
+1. `GET` the link, following redirects. From the final page take the share id (path), and from
+   its inline `WIZ_global_data`: `cfb2h` (build label, sent as `bl`) and `FdrFJe` (session id,
+   sent as `f.sid`). Both are optional: without `f.sid` the call still works, with a smaller
+   payload.
+2. `POST https://gemini.google.com/_/BardChatUi/data/batchexecute?rpcids=ujx1Bf&source-path=/share/<id>&bl=…&f.sid=…&hl=en-US&_reqid=<random>&rt=c`
+   with headers `content-type: application/x-www-form-urlencoded;charset=UTF-8`,
+   `x-same-domain: 1`, and the body `f.req=[[["ujx1Bf","[null,\"<id>\",[4]]",null,"generic"]]]`.
+   No cookies, no XSRF token, no sign-in.
+3. The response is `)]}'`, then length-prefixed JSON chunks. Take the line that starts with
+   `[["wrb.fr"`; its element `[0][2]` is a **JSON string** holding the payload (`null` when the
+   share doesn't exist).
+4. Payload paths (positional arrays): `[0][1]` = turns, **oldest first**; `[0][2][1]` = title.
+   For each turn: `[2][0][0]` = Will's prompt as he typed it (`\n` kept); `[3][0][0][1][0]` =
+   the reply; `[4]` = `[unix seconds, nanos]`. Each turn had exactly one reply candidate.
+5. **Replies are Gemini's markdown with JSX-like components**, not plain text. Flatten them:
+   - `<TextBox text="…" subtext="…"/>` → the text line, then the subtext line. This is where the
+     key Chinese phrase lives; `subtext` is Gemini's pinyin, which §4.2 never stores.
+   - `<Section title="…">…</Section>` → the title as a line, then the body.
+   - `<TemplateWidget templateName="checklist" …>` wraps a fenced JSON block → its
+     `items[].label` as `- ` lines. If the JSON has another shape, keep the block.
+   - Drop `<ElicitationsGroup>…</ElicitationsGroup>` (suggestion chips, the PDF's "Explore
+     related" block), `<Elicitation/>`, `<FollowUp/>`, `<Image/>` (its caption is a web-page
+     title from image search), `<Video/>` and `<Carousel>` tags.
+   - Any other `<Capitalized …>` tag is dropped and counted as `unknown_component` in telemetry,
+     so a format change shows up.
+   - The markdown itself (`**`, `###`, tables, lists) is kept: hanzi are unaffected, which is
+     all the verbatim check (§4.6) needs, and the structure helps the local model.
+
+   Components seen in one 86-turn conversation: TextBox 93, Section 82, ElicitationsGroup 59
+   (with 118 Elicitation), Image 4, FollowUp 3, TemplateWidget 2, Carousel 1, Video 1.
+6. Node's `fetch` fails on these responses (`UND_ERR_HEADERS_OVERFLOW`: Google sends more than
+   Node's default 16 KB of headers). Use `node:https` with `maxHeaderSize` (the spike uses
+   256 KB), or run Node with `--max-http-header-size`.
+
+*Timing:* ~1.1–1.6 s for 86 turns (a ~0.8 MB RPC response), on the Mac.
+
+*Method (fallback, kept in the spike only): headless Chromium.* Playwright, `goto` with
+`domcontentloaded`, then wait for `share-viewer share-turn-viewer` and until the turn count stops
+changing (polled every 500 ms); ~5 s. Read:
+- title: `share-viewer h1`;
+- one `share-turn-viewer` per turn;
+- prompt: `user-query .query-text .query-text-line`, one `<p>` per line. `.query-text` also holds
+  a visually hidden "You said" `h5`, so don't read it whole.
+- reply: `response-container message-content` `innerText`, after hiding
+  `.hide-from-message-actions` and buttons (chips, image cards with source labels, copy/play
+  buttons, table footers, the checklist `mini-app`).
+
+It agreed with the RPC on the hanzi of 84 of 86 replies. The other 2 are checklist widgets, which
+render as a sandboxed iframe (`mini-app`) with no text in the DOM: the RPC is more complete.
+It costs a ~100 MB Chromium on the Mac, so M5 doesn't ship it. If the RPC breaks, the PDF is the
+fallback (§5.3 of the PRD), and this method is the first thing to try when repairing the link
+path.
+
+*Known fragility.* Everything here is undocumented and can change without notice: the RPC id
+`ujx1Bf`, its argument `[null,id,[4]]`, the positional payload paths, the component names, and
+(for the fallback) the Angular element names. To make breakage loud: fail on a missing path
+rather than returning empty text; count unknown components; keep the synthetic fixtures in
+`agent/tools/tests/fixtures/` (`share-rpc.txt`, `share-page.html`, `share-page.expected.json`;
+`node spikes/share-link/check-fixtures.mjs` checks both readers against them).
+
+*Turns with no prompt text.* A prompt that is only an image has an empty prompt string (1 of 86
+turns). Every such turn would share the same `turn_key` (§4.5), so it needs a different key; see
+M0's Notes in PLAN.md.
+
+*Snapshot or live? **Frozen snapshot**, and a re-share makes a **new link** (tested in M0).*
+After Will added turns to the conversation, the original link still returned exactly what it had
+before: the same 86 turns, with identical prompts, timestamps and replies. Re-sharing produced a
+link with a different share id that returned 88 turns. Its first 86 were identical to the old
+link's (prompts, timestamps and replies), followed by the 2 new turns; the title was unchanged.
+So each re-share is a separate public link that carries the whole conversation so far. The
+turn-key dedupe in §4.5 turns that into "88 questions, 2 new". Old links stay public until Will
+deletes them, which is why the reply after a link import reminds him (§5.1).
 
 A failure (layout changed, or the link was deleted) replies "⚠️ Couldn't read that link. Send the
-PDF instead." and logs `share_parse_failed`.
+PDF instead." and logs `share_parse_failed`. A deleted or unknown link shows up as an HTTP 404 on
+`share.gemini.google`, or as a `null` payload from the RPC.
 
 **PDF** (`shared/src/segment.ts`, on `pdftotext -layout -enc UTF-8` output):
 
@@ -625,6 +706,7 @@ bamboo/
 | 17 | Mandarin only; no `lang` column yet | Cantonese is undecided; adding it later is one expand migration plus Jyutping and a zh-HK voice |
 | 18 | Single user, no `member` table | One learner; add a user column if a second learner is real |
 | 19 | `DEV_AUTH_BYPASS` is refused on every Vercel deployment, not just production; previews have no Google sign-in | Previews run unreviewed PR code on a guessable URL, so a stray env var must never open one; a per-preview redirect URI isn't possible with Google, and M1–M6 need no signed-in preview |
+| 20 | Read share links through Gemini's share RPC over plain HTTPS, not headless Chromium (M0) | The page HTML has no conversation; the RPC returns it whole (prompts verbatim, checklist data the DOM hides) in ~1 s with no browser on the Mac; both are undocumented, and the PDF path covers breakage |
 
 ## Appendix A — Synthetic fixtures
 
@@ -651,6 +733,12 @@ export:
 copy of a real share page's structure, made in M0. Keep the real markup and structure, but replace
 every piece of conversation text with invented text. Expected turns live next to each fixture as
 JSON and are asserted in tests.
+
+**Share RPC** (`agent/tools/tests/fixtures/share-rpc.txt`, M0): the batchexecute response that
+§5.2's primary method parses, in the real envelope and positional layout, generated with invented
+text by `spikes/share-link/make-fixtures.mjs`. It matches `share-page.html` turn for turn (4 turns:
+TextBox, Section, table, image, suggestion chips, a two-line prompt, a checklist widget, an
+image-only prompt, a follow-up suggestion). Both share `share-page.expected.json`.
 
 ## Appendix B — Optional Gemini instruction
 
