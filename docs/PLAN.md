@@ -698,6 +698,17 @@ idempotency, backup, additive extraDirs, automations, no token in any output or 
   `AGENT_API_TOKEN` instead of `agent.env`'s. The key is now `BAMBOO_AGENT_API_TOKEN`;
   `make agent-install` renames an older file's line in place (DESIGN §10 #42). PandaBase prefixes
   its side too (`PANDABASE_AGENT_API_TOKEN`).
+- **`#bamboo` pinned to the skill (post-merge fix, 2026-11-05).** Live, the agent answered a bare
+  share link in `#bamboo` with OpenClaw's `view_image` (which failed) instead of the bamboo skill.
+  Two causes: nothing kept other tools and skills out of the channel, and the skill's unquoted
+  `description` was cut at ` #bamboo` by OpenClaw's YAML parser, leaving "Bamboo intake in the".
+  `make agent-install` now merges `skills: ["bamboo"]`, a firm `systemPrompt` and a `tools.deny`
+  of the media/link readers into `#bamboo`'s existing entry (access keys and other channels
+  untouched; the printed command for a missing entry includes them), and the description is a
+  double-quoted string naming the bare share-link forms. Regression tests in
+  `agent/tools/src/install.test.ts`. DESIGN §5.1, §8.3, §10 #43. **Will:** `git pull --ff-only &&
+  make agent-install` as `openclaw-agent`, then start a new session in `#bamboo` (`/new`) so the
+  agent picks up the pin and the new description.
 - **`import` prints the reply.** Its JSON has a `reply` field the skill posts verbatim: "📥 Got
   it…", "✅ Nothing new since last time." (plus the public-link line for links), or a failure
   line (`share_parse_failed` asks for the PDF; `pdftotext_missing` / `pdf_unreadable` ask for the

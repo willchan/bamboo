@@ -1,6 +1,6 @@
 ---
 name: bamboo
-description: Bamboo intake in the #bamboo Discord channel only — a Gemini share link, a PDF of a Gemini conversation, or a pasted Gemini answer is handed to bamboo-tools, which queues Mandarin phrases for Will's daily review. Never used in any other channel.
+description: "Use for every message in the #bamboo Discord channel, and only there. A bare Gemini share link (share.gemini.google/…, gemini.google.com/share/…, g.co/gemini/share/…), a PDF of a Gemini conversation or a pasted Gemini answer goes to bamboo-tools import, which queues Mandarin phrases for Will's daily review. Never open, fetch or view the link or file yourself."
 metadata:
   {
     "openclaw":

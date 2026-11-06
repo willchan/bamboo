@@ -100,13 +100,16 @@ BAMBOO_DISCORD_CHANNEL_ID=<#bamboo channel id> BAMBOO_DISCORD_GUILD_ID=<server i
 
 It installs dependencies, links `~/.local/bin/bamboo-tools`, creates
 `~/.config/bamboo/bamboo.config.json` and `~/.config/bamboo/agent.env` (only if missing), and
-adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). Then:
+adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). It
+also pins `#bamboo`'s channel entry to the bamboo skill (`skills`, `systemPrompt`, `tools.deny`;
+DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. Then:
 
 1. Put the production `AGENT_API_TOKEN` in `~/.config/bamboo/agent.env` as
    `BAMBOO_AGENT_API_TOKEN=…` with an editor (not on a command line), and run `make agent-install` again: it adds the `bamboo-replies` and
    `bamboo-nudge` command automations.
 2. If it warns that `#bamboo` isn't enabled for the bot, run the `openclaw config set …` line it
-   prints, with the same Discord user id as `#pandabase`'s entry.
+   prints, with the same Discord user id as `#pandabase`'s entry (the line already includes the
+   pin), then run `make agent-install` again.
 3. `bamboo-tools segment --url <a share link>`: a dry run that prints the title and turn count.
 
 PDF imports need poppler's `pdftotext` (`brew install poppler`) in `/opt/homebrew/bin`. New
