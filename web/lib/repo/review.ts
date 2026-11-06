@@ -43,7 +43,7 @@ export interface Clock {
 
 const dayOpts = (c: Clock) => ({ timeZone: c.timeZone });
 
-const fsrsColumns = (c: Card): FsrsColumns => ({
+export const fsrsColumns = (c: Card): FsrsColumns => ({
   due: c.due,
   stability: c.stability,
   stabilityFast: c.stabilityFast,

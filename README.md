@@ -67,3 +67,20 @@ Vercel deploys `main` to production and every PR to a preview (DESIGN §8.2). Th
 
    Never set `DEV_AUTH_BYPASS` on Vercel (the app ignores it there anyway).
 5. Redeploy production (*Deployments → … → Redeploy*) so it picks up the variables.
+6. **Cron**: `web/vercel.json` schedules `GET /api/cron/daily` once a day (11:17 UTC, around
+   04:00 in Los Angeles). Vercel sends `CRON_SECRET` as its bearer token. Check it under
+   *Settings → Cron Jobs* after the first production deploy that includes it.
+
+## After each deploy
+
+Run the public smoke check against the deployment (no sign-in, no secrets, never a real token):
+
+```
+pnpm smoke https://<production domain>
+```
+
+It prints one line per check and exits non-zero on any failure: `/` redirects signed-out
+visitors to `/sign-in`; the manifest is standalone and its icons load; Google is the auth provider
+with this host's callback, and the sign-in POST redirects to `accounts.google.com` with a Google
+client id and that callback; and every machine route (`/api/imports*`, `/api/agent/*`,
+`/api/jobs/*`, `/api/worker/*`, `/api/cron/*`) answers 401 with no token and with a wrong one.

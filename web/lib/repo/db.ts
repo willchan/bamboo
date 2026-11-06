@@ -2,7 +2,7 @@
 // open a new client each time). Repo functions take a `Db` so tests can pass `createTestDb()`.
 import { createDb, event, type Db } from "@bamboo/db";
 import type { BatchItem } from "drizzle-orm/batch";
-import { ulid } from "ulid";
+import { monotonicFactory } from "ulid";
 
 const holder = globalThis as unknown as { __bambooDb?: Db };
 
@@ -11,6 +11,8 @@ export function getDb(): Db {
   return holder.__bambooDb;
 }
 
+/** ULIDs, monotonic within a millisecond, so rows written together (jobs) sort in write order. */
+const ulid = monotonicFactory();
 export const newId = (): string => ulid();
 
 /** Run writes atomically (libSQL batch = one implicit transaction). No-op when empty. */

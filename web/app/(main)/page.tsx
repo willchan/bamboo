@@ -9,15 +9,29 @@ import { requireUser } from "@/lib/auth/current";
 import { serverClock } from "@/lib/repo/clock";
 import { getDb } from "@/lib/repo/db";
 import { getToday } from "@/lib/repo/review";
+import { getWorkerStatus } from "@/lib/repo/capture";
 
 export const metadata: Metadata = { title: "Today" };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
+const lastSeen = (ms: number, timeZone: string) =>
+  new Date(ms).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone,
+  });
+
 // Today (DESIGN §6): "1 round · N due · M new" and Start, or "✓ Done for today".
 export default async function TodayPage() {
   const user = await requireUser();
-  const { status, queueSize } = await getToday(getDb(), serverClock());
+  const clock = serverClock();
+  const [{ status, queueSize }, worker] = await Promise.all([
+    getToday(getDb(), clock),
+    getWorkerStatus(getDb(), clock.now),
+  ]);
 
   return (
     <>
@@ -57,6 +71,15 @@ export default async function TodayPage() {
             ) : null}
           </>
         )}
+        {worker.kind === "offline" ? (
+          <p className="text-sm text-muted" data-testid="worker-offline">
+            ⏳ {plural(worker.waiting, "question")} waiting for the Mac worker (
+            {worker.lastSeenAt
+              ? `last seen ${lastSeen(worker.lastSeenAt, clock.timeZone)}`
+              : "never seen"}
+            ).
+          </p>
+        ) : null}
         <VoiceHint />
       </main>
 

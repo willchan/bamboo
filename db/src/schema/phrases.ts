@@ -57,8 +57,13 @@ export const phrase = sqliteTable(
     /** When `pinned` was last set; orders pins newest first. Null when unpinned. */
     pinnedAt: integer("pinned_at"),
     source: text("source", { enum: ["manual", "import"] }).notNull(),
-    /** fk `turn` (M3). No constraint yet: the table arrives in M3. */
+    /**
+     * The turn that first produced it (`turn.id`). A plain column, no FK constraint: SQLite can add
+     * one only by rebuilding the table, which isn't an expand-only change (PLAN M3 Notes).
+     */
     sourceTurnId: text("source_turn_id"),
+    /** The import that last bumped `asked_count` (or created it): at most one bump per import. */
+    lastAskedImportId: text("last_asked_import_id"),
     askedCount: integer("asked_count").notNull().default(1),
     lastAskedAt: integer("last_asked_at").notNull(),
     flags: text("flags", { mode: "json" })
