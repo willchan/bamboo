@@ -72,7 +72,7 @@ genuinely useful** (share a conversation, get a deck).
 
 | Milestone | Status | PR |
 |---|---|---|
-| M0 Share-link spike | in review | [#3](https://github.com/willchan/bamboo/pull/3) |
+| M0 Share-link spike | merged | [#3](https://github.com/willchan/bamboo/pull/3) |
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | todo | |
 | M3 Capture: engine | todo | |
@@ -144,6 +144,8 @@ either way: it is a required path, not a contingency.
   turn gets the same `turn_key` and all but the first would be dropped as "known". Suggested fix
   (not made here, as §4.5 isn't M0's): when `hanziKey(user_text)` is empty, key the turn like a
   text import, on the reply. The PDF path presumably has the same case; check it in M5.
+  *Resolved in the `claude/plan-update-m0-findings` PR:* DESIGN §4.5 now keys empty prompts
+  on the reply, and M3 and M5 test it.
 - **Will's prompts here had no hanzi at all**, so `hanziKey` keys his turns on their English
   letters and digits. That's fine for dedupe, and it's why the RPC's verbatim prompt text
   matters more than the reply formatting.
@@ -335,6 +337,8 @@ contract and engine side), §6 (Imports), §7.
 **Tests:** route integration tests on in-memory libSQL:
 - `known` → `imports` with chunking and idempotency;
 - turns deduped by `turn_key` across two imports, so the second import creates only new jobs;
+- an image-only turn (empty prompt) keyed on its reply (DESIGN §4.5): two image-only turns with
+  different replies get different keys;
 - claim and lease, stale-attempt 409, lease expiry and requeue, 3-attempt failure, Retry failed;
 - extract result:
   - a verbatim drop;
@@ -406,7 +410,10 @@ command automations, `make install-agent-*`).
 **Owns:**
 - `/agent/tools` (`bamboo-tools`): `import --url | --file | --text-file`, `segment` (dry run),
   `replies`, and `nudge` (the CLI side only; the engine route is M6);
-- `agent/tools/src/share.ts` (from M0's findings; omit if M0 found links unreadable);
+- `agent/tools/src/share.ts`: port the RPC reader from `spikes/share-link/read.mjs` (M0 Notes).
+  Fetch with `node:https` and a large `maxHeaderSize`, because Node's `fetch` fails on Google's
+  response headers. Don't ship Playwright. If the RPC breaks, reply asking for the PDF
+  (`share_parse_failed`);
 - the **PDF path is required** whatever M0 found: `--file`, `pdftotext`, segmentation;
 - `shared/src/segment.ts` and the synthetic PDF-text fixture;
 - `agent/skills/bamboo/SKILL.md` and `agent/bamboo.config.example.json`;
@@ -416,7 +423,8 @@ command automations, `make install-agent-*`).
 **Tests:**
 - segmentation of the synthetic PDF text (exact expected turns, radicals normalized, boilerplate
   and duplicates removed);
-- share parsing of the synthetic page fixture;
+- share parsing of the synthetic RPC fixture (`share-rpc.txt` → `share-page.expected.json`);
+- an image-only prompt from a link or a PDF gets the reply-based key (DESIGN §4.5);
 - import chunking and the `known` round-trip against a fake API;
 - `replies` prints `NO_REPLY` when idle and posts and marks notified otherwise;
 - the skill's frontmatter parses, and every command it names exists (PandaBase's
@@ -432,6 +440,8 @@ Manual, end to end (needs M4):
 - share the real conversation link to `#bamboo` → acknowledgement → the reply arrives with
   "N new questions → M phrases queued";
 - re-share it → "Nothing new since last time";
+- add a message in Gemini, re-share (a new link, since old links are frozen snapshots; M0 Notes) →
+  only the new question is reported;
 - share the PDF of the same conversation → also nothing new (turn keys agree across formats).
 
 Report counts only in the PR.
