@@ -302,6 +302,7 @@ describe("agent/install.sh", () => {
     expect(backups()).toHaveLength(0);
     expect(existsSync(join(home, ".config/bamboo/agent.env"))).toBe(false);
     expect(existsSync(join(home, ".local/bin/bamboo-tools"))).toBe(false);
+    expect(existsSync(join(oc(), "workspace-bamboo"))).toBe(false);
   });
 
   it("refuses to run without an OpenClaw config (the wrong user)", () => {
@@ -310,6 +311,193 @@ describe("agent/install.sh", () => {
     const out = install();
     expect(out.code).toBe(1);
     expect(out.out).toContain("run this as the user that owns the gateway");
+  });
+});
+
+// The dedicated bamboo agent (DESIGN §5.1, §10 #50): thinking off, the skill inline in its
+// workspace AGENTS.md, and #bamboo bound to it, with main keeping everything else.
+describe("agent/install.sh: the bamboo agent, and agent/check.sh", () => {
+  type Cfg = {
+    agents?: {
+      defaults?: { systemAgent?: { agentId?: string } };
+      entries?: Record<string, Record<string, unknown>>;
+    };
+    bindings?: unknown;
+  };
+  const cfg = () => readJson(join(oc(), "openclaw.json")) as Cfg;
+  const patchCfg = (f: (c: Cfg) => void) => {
+    const c = cfg();
+    f(c);
+    writeFileSync(join(oc(), "openclaw.json"), JSON.stringify(c));
+  };
+  const ws = () => join(oc(), "workspace-bamboo");
+  const generated = () => {
+    const r = spawnSync(
+      join(repo, "agent/tools/node_modules/.bin/tsx"),
+      [
+        join(repo, "agent/tools/src/openclaw/main.ts"),
+        "agents-md",
+        join(repo, "agent/skills/bamboo/SKILL.md"),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(r.status, r.stderr).toBe(0);
+    return r.stdout;
+  };
+  const check = () => {
+    const r = spawnSync("bash", [join(repo, "agent/check.sh")], {
+      encoding: "utf8",
+      env: { HOME: home, PATH: `${join(home, "fakebin")}:${process.env.PATH}` },
+    });
+    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+  const calls = () => readFileSync(join(home, "openclaw-calls.log"), "utf8");
+  const MAIN_ALL = { agentId: "main", match: { channel: "discord", accountId: "*" } };
+  const OURS = {
+    agentId: "bamboo",
+    match: { channel: "discord", accountId: "default", peer: { kind: "channel", id: BAMBOO } },
+  };
+  const PANDA = {
+    agentId: "main",
+    match: {
+      channel: "discord",
+      accountId: "default",
+      peer: { kind: "channel", id: PANDABASE_CHANNEL },
+    },
+  };
+
+  it("sets it all up from scratch, and a re-run changes nothing", () => {
+    expect(check().code).toBe(1);
+    const first = install();
+    expect(first.code, first.out).toBe(0);
+    const c = cfg();
+    expect(c.agents?.defaults?.systemAgent?.agentId).toBe("main");
+    expect(c.agents?.entries?.bamboo).toMatchObject({
+      model: "ollama/qwen3.5:27b",
+      thinkingDefault: "off",
+      skills: ["bamboo"],
+    });
+    // main's binding (materialized by OpenClaw when systemAgent is set) is kept, after ours.
+    expect(c.bindings).toEqual([OURS, MAIN_ALL]);
+    expect(readFileSync(join(ws(), "AGENTS.md"), "utf8")).toBe(generated());
+    expect(existsSync(join(ws(), "BOOTSTRAP.md"))).toBe(false);
+    expect(readFileSync(join(ws(), ".orig/BOOTSTRAP.md"), "utf8")).toMatch(/who am I/u);
+    expect(readFileSync(join(ws(), ".orig/AGENTS.md"), "utf8")).toMatch(/generated/u);
+    expect(first.out).toContain("agent-check: ok");
+    expect(backups()).toHaveLength(1);
+
+    const n = calls().split("\n").length;
+    const second = install();
+    expect(second.code, second.out).toBe(0);
+    expect(second.out).toContain("kept the bamboo agent");
+    expect(second.out).toContain("kept the binding #bamboo");
+    expect(second.out).toContain("matches SKILL.md");
+    const again = calls()
+      .split("\n")
+      .slice(n - 1);
+    expect(again.filter((l) => /^(config set|agents add)/u.test(l))).toEqual([]);
+    expect(backups()).toHaveLength(1);
+    expect(cfg()).toEqual(c);
+    expect(check()).toMatchObject({ code: 0 });
+  });
+
+  it("merges into existing bindings: ours first, the rest kept in order", () => {
+    const telegram = { agentId: "main", match: { channel: "telegram" } };
+    patchCfg((c) => {
+      c.agents = { defaults: { systemAgent: { agentId: "main" } } };
+      c.bindings = [PANDA, MAIN_ALL, telegram];
+    });
+    const r = install();
+    expect(r.code, r.out).toBe(0);
+    expect(cfg().bindings).toEqual([OURS, PANDA, MAIN_ALL, telegram]);
+  });
+
+  it("re-routes #bamboo when another binding for it, or main's, came first", () => {
+    install();
+    patchCfg((c) => {
+      c.bindings = [MAIN_ALL, { ...OURS, agentId: "main" }];
+    });
+    const bad = check();
+    expect(bad.code).toBe(1);
+    expect(bad.out).toMatch(/routes to 'main', not bamboo/u);
+    install();
+    expect(cfg().bindings).toEqual([OURS, MAIN_ALL]);
+    expect(check().code).toBe(0);
+  });
+
+  it("puts thinking back off and the skills back, keeping the agent's model", () => {
+    install();
+    patchCfg((c) => {
+      c.agents!.entries!.bamboo = {
+        ...c.agents!.entries!.bamboo,
+        model: "ollama/other:9b",
+        thinkingDefault: "high",
+        skills: ["bamboo", "x"],
+      };
+    });
+    const bad = check();
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain("thinkingDefault is 'high', not off");
+    install();
+    expect(cfg().agents?.entries?.bamboo).toMatchObject({
+      model: "ollama/other:9b",
+      thinkingDefault: "off",
+      skills: ["bamboo"],
+    });
+  });
+
+  it("rewrites a drifted AGENTS.md, and stashes a reappeared BOOTSTRAP.md", () => {
+    install();
+    writeFileSync(join(ws(), "AGENTS.md"), "# Bamboo agent\n\nold instructions\n");
+    writeFileSync(join(ws(), "BOOTSTRAP.md"), "# BOOTSTRAP.md - again\n");
+    const bad = check();
+    expect(bad.code).toBe(1);
+    expect(bad.out).toContain("differs from what SKILL.md generates");
+    expect(bad.out).toContain("BOOTSTRAP.md is active");
+    const r = install();
+    expect(r.code, r.out).toBe(0);
+    expect(readFileSync(join(ws(), "AGENTS.md"), "utf8")).toBe(generated());
+    // Our own old copy isn't kept; OpenClaw's first one is never overwritten.
+    expect(readFileSync(join(ws(), ".orig/AGENTS.md"), "utf8")).toMatch(/generated/u);
+    expect(readFileSync(join(ws(), ".orig/BOOTSTRAP.md"), "utf8")).toMatch(/who am I/u);
+    expect(
+      readdirSync(join(ws(), ".orig")).filter((f) => f.startsWith("BOOTSTRAP.md.")),
+    ).toHaveLength(1);
+    expect(check().code).toBe(0);
+  });
+
+  it("leaves a systemAgent other than main alone, and the check fails", () => {
+    patchCfg((c) => {
+      c.agents = { defaults: { systemAgent: { agentId: "other" } } };
+      c.bindings = [MAIN_ALL];
+    });
+    const r = install();
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("systemAgent.agentId is 'other', not main; left as it is");
+    expect(cfg().agents?.defaults?.systemAgent?.agentId).toBe("other");
+    expect(cfg().bindings).toEqual([OURS, MAIN_ALL]);
+    expect(check().out).toContain("is 'other', not main");
+  });
+
+  // Rewriting bindings from an unreadable value would drop main's: print the binding instead.
+  it("doesn't touch bindings it can't read as a list", () => {
+    patchCfg((c) => {
+      c.agents = { defaults: { systemAgent: { agentId: "main" } } };
+      c.bindings = { odd: true };
+    });
+    const r = install();
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("can't read OpenClaw's bindings as a list");
+    expect(r.out).toContain(JSON.stringify(OURS));
+    expect(cfg().bindings).toEqual({ odd: true });
+    expect(calls()).not.toMatch(/^config set bindings/mu);
+  });
+
+  it("skips the agent without a channel id", () => {
+    const r = install({ BAMBOO_DISCORD_CHANNEL_ID: "" });
+    expect(r.code, r.out).toBe(0);
+    expect(r.out).toContain("skipped the bamboo agent");
+    expect(cfg().agents).toBeUndefined();
   });
 });
 

@@ -65,7 +65,7 @@ beforeEach(() => {
   mkdirSync(bin);
   stubLog = join(home, ".stub-log");
   writeFileSync(join(state, "head"), "aaaaaaaaaaaaaaaa\n");
-  for (const name of ["launchctl", "pnpm", "git"]) {
+  for (const name of ["launchctl", "pnpm", "git", "agent-install"]) {
     writeFileSync(join(bin, name), STUB(name));
     chmodSync(join(bin, name), 0o755);
   }
@@ -74,6 +74,7 @@ beforeEach(() => {
     PATH: `${bin}:${process.env.PATH}`,
     STUB_LOG: stubLog,
     STUB_STATE: state,
+    AGENT_INSTALL: join(bin, "agent-install"),
     NO_COLOR: "1",
   };
 });
@@ -173,7 +174,9 @@ describe.skipIf(process.platform === "win32")("make mac-update / worker-logs", (
     expect(did[0]).toBe("git pull --ff-only");
     expect(did[1]).toBe("pnpm install --frozen-lockfile");
     expect(did[2]).toMatch(/^launchctl kickstart -k /u);
-    expect(did).toHaveLength(3);
+    // Then agent-install, so the OpenClaw side (the bamboo agent's AGENTS.md) follows the pull.
+    expect(did[3]).toBe("agent-install");
+    expect(did).toHaveLength(4);
 
     const m = calls().length;
     const again = sh("mac-update.sh");

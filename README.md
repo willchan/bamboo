@@ -106,7 +106,12 @@ It installs dependencies, links `~/.local/bin/bamboo-tools`, creates
 `~/.config/bamboo/bamboo.config.json` and `~/.config/bamboo/agent.env` (only if missing), and
 adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). It
 also pins `#bamboo`'s channel entry to the bamboo skill (`skills`, `systemPrompt`, `tools.deny`;
-DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. Then:
+DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are, and routes
+`#bamboo` to a dedicated `bamboo` OpenClaw agent with thinking off (much faster replies): it adds
+the agent if missing, writes its workspace `AGENTS.md` from the skill, and puts one binding for
+`#bamboo` first in OpenClaw's `bindings`, keeping every other binding and `main` as the agent for
+everything else. It ends with `make agent-check`, which you can run on its own any time
+(read-only). Then:
 
 1. Put the production `AGENT_API_TOKEN` in `~/.config/bamboo/agent.env` as
    `BAMBOO_AGENT_API_TOKEN=…` with an editor (not on a command line), and run `make agent-install` again: it adds the `bamboo-replies` and
@@ -117,8 +122,8 @@ DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. 
 3. `bamboo-tools segment --url <a share link>`: a dry run that prints the title and turn count.
 
 PDF imports need poppler's `pdftotext` (`brew install poppler`) in `/opt/homebrew/bin`. New
-OpenClaw sessions pick the skill up. After later merges: `git pull --ff-only && make
-agent-install` in `~/Code/bamboo`.
+OpenClaw sessions pick the skill up. After later merges: `make mac-update` in `~/Code/bamboo`
+(it pulls, updates the worker, then runs `make agent-install`).
 
 ## Mac mini: tutor evaluation (one-off)
 

@@ -69,7 +69,7 @@ pnpm db:migrate                            # apply migrations to TURSO_DATABASE_
 pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
 pnpm smoke <url>                           # after each deploy: public, read-only checks of a deployment (no secrets)
-make worker-install / worker-logs / agent-install / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
+make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
 pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model
 make tutor-eval ARGS="run | serve | score …"   # Mac, as openclaw-agent: local tutor evaluation (DESIGN §5.4); output in ~/bamboo-eval/
 ```
