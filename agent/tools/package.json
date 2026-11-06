@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "tsx src/main.ts",
+    "tutor-eval": "tsx src/eval/main.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

@@ -14,6 +14,7 @@ import {
 import { turnKey, type ExtractTurnResult } from "@bamboo/shared";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GET as evalTurnsGET } from "@/app/api/agent/eval/turns/route";
 import { GET as notificationsGET } from "@/app/api/agent/notifications/route";
 import { GET as cronGET } from "@/app/api/cron/daily/route";
 import { POST as notifiedPOST } from "@/app/api/imports/[id]/notified/route";
@@ -185,6 +186,7 @@ describe("auth", () => {
     known: () => knownPOST(req("/api/imports/known", token, { turn_keys: [] })),
     imports: () => importsPOST(req("/api/imports", token, {})),
     notifications: () => notificationsGET(req("/api/agent/notifications", token)),
+    evalTurns: () => evalTurnsGET(req("/api/agent/eval/turns", token)),
     notified: () =>
       notifiedPOST(req("/api/imports/x/notified", token, {}), {
         params: Promise.resolve({ id: "x" }),
@@ -198,6 +200,7 @@ describe("auth", () => {
     known: "agent",
     imports: "agent",
     notifications: "agent",
+    evalTurns: "agent",
     notified: "agent",
     claim: "worker",
     complete: "worker",
@@ -710,6 +713,66 @@ describe("extract results", () => {
     expect(await json(await notificationsGET(req("/api/agent/notifications", AGENT)))).toEqual({
       notifications: [],
     });
+  });
+});
+
+describe("tutor eval", () => {
+  type EvalBody = {
+    turns: { turn_id: string; import_id: string; user_text: string; reply_text: string }[];
+    pool: { turns: number; imports: number };
+  };
+  const evalGet = async (query = "") => evalTurnsGET(req(`/api/agent/eval/turns${query}`, AGENT));
+
+  it("samples questions with Gemini's answers, skipping image-only turns; seeded", async () => {
+    // Two imports; the second has an image-only turn (no prompt text).
+    await postImport({});
+    await postImport(
+      {
+        discord_message_id: "m2",
+        turns_total: 2,
+        turns: [
+          { user_text: "", reply_text: "图片里是“奶瓶”。", position: 0 },
+          { user_text: "How do I say we're out of milk?", reply_text: "牛奶没了。", position: 1 },
+        ],
+      },
+      { "idempotency-key": "discord:m2" },
+    );
+
+    const r = await evalGet("?limit=2&seed=s1");
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as EvalBody;
+    expect(body.pool).toEqual({ turns: 4, imports: 2 });
+    expect(body.turns).toHaveLength(2);
+    // Spread: one from each import.
+    expect(new Set(body.turns.map((t) => t.import_id)).size).toBe(2);
+    for (const t of body.turns) {
+      expect(Object.keys(t).sort()).toEqual(["import_id", "reply_text", "turn_id", "user_text"]);
+      expect(t.user_text.trim()).not.toBe("");
+    }
+    expect(await json(await evalGet("?limit=2&seed=s1"))).toEqual(body);
+
+    const all = (await (await evalGet()).json()) as EvalBody;
+    expect(all.turns).toHaveLength(4);
+    expect(all.turns.some((t) => t.reply_text.includes("奶瓶"))).toBe(false);
+  });
+
+  it("is read-only: no events, no changes", async () => {
+    await postImport({});
+    const before = await db.select().from(event);
+    await evalGet();
+    expect(await db.select().from(event)).toEqual(before);
+  });
+
+  it("answers an empty sample from an empty database", async () => {
+    expect(await json(await evalGet())).toEqual({ turns: [], pool: { turns: 0, imports: 0 } });
+  });
+
+  it("rejects a bad limit or seed with 400 invalid_query", async () => {
+    for (const q of ["?limit=0", "?limit=51", "?limit=abc", `?seed=${"x".repeat(101)}`]) {
+      const r = await evalGet(q);
+      expect(r.status, q).toBe(400);
+      expect(await json(r)).toMatchObject({ error: "invalid_query" });
+    }
   });
 });
 

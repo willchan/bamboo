@@ -4,6 +4,8 @@ import { z } from "zod";
 export const API_ERROR_CODES = [
   /** 400: the body isn't JSON or doesn't match the contract (`issues` says where). */
   "invalid_body",
+  /** 400: query parameters don't match the contract (`issues` says where). */
+  "invalid_query",
   /** 401: missing or wrong bearer token for this route. */
   "unauthorized",
   /** 404: unknown import or job id. */

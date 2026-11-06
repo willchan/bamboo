@@ -9,7 +9,11 @@
   through local models, e.g. the current 9B and a ~30B-class model that fits the 32GB Mac
   alongside PandaBase. Compare their answers with Gemini's on decoding accuracy, naturalness and
   latency. Will judges blind. If a local model is good enough, a Bamboo "Ask" page (with
-  automatic capture) becomes viable without breaking the local-only rule.
+  automatic capture) becomes viable without breaking the local-only rule. **The harness exists**
+  (`bamboo-eval`, DESIGN §5.4): on the Mac as `openclaw-agent`, `make tutor-eval ARGS="run"`
+  replays a seeded sample through `qwen3.5:9b` and `qwen3.5:27b`, `ARGS="serve --out <dir> --host
+  <tailscale ip>"` puts the blind judging page on Will's iPhone, and `ARGS="score --out <dir>"`
+  prints the per-model table. Outputs stay in `~/bamboo-eval/`. Results: not yet run.
 - **Tutor that reuses what's due.** When answering "how do I say X", prefer phrasing that
   reuses due or recently introduced frames and words.
 

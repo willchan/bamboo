@@ -30,3 +30,6 @@ test-results/
 .DS_Store
 *.pem
 *.log
+
+# tutor evaluation output (bamboo-eval refuses an --out inside the checkout; this is a backstop)
+bamboo-eval/

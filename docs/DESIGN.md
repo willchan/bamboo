@@ -202,13 +202,14 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `GET /api/agent/notifications` | agent | `{notifications: [{import_id, kind, discord_channel_id, discord_message_id, summary}]}`: finished imports with a Discord message and no `notified_at` |
 | `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
 | `GET /api/agent/nudge` | agent | `NudgeResponse` `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent (a conditional upsert of `nudge_last_sent_day`, so of two overlapping polls only one gets the text) and logs `nudge_sent` |
+| `GET /api/agent/eval/turns?limit=&seed=` | agent | `EvalTurnsResponse` `{turns: [{turn_id, import_id, user_text, reply_text}], pool: {turns, imports}}`: a seeded sample of past questions with Gemini's answers for the tutor evaluation (§5.4). `limit` 1–50 (default 20), `seed` ≤ 100 chars (default `bamboo`); otherwise 400 `invalid_query`. Image-only turns (empty `user_text`) are skipped; imports are visited round-robin in a seeded order (`web/lib/domain/tutor-eval.ts`). Read-only |
 | `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt) |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
 | `GET /api/cron/daily` | cron | expire stale queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
 
 Errors from every machine route are `{error, message?, issues?}` with `error` one of
-`invalid_body` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
+`invalid_body` and `invalid_query` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
 `import_closed`, `conflict` (409; a concurrent import inserted the same turn, retry),
 `too_large` (413), `invalid_result` (422), `not_configured` (503). The codes are
 `API_ERROR_CODES` in `shared/src/contracts/errors.ts`.
@@ -740,6 +741,60 @@ each result for the `extraction` event.
   agreement and example verbatim counts. The verbatim check it uses is the engine's
   (`shared/src/verbatim.ts`).
 
+### 5.4 Tutor evaluation (`bamboo-eval`)
+
+A one-off measurement for docs/ROADMAP.md › Tutor: is a local model a good enough Mandarin tutor
+to replace asking Gemini? Not product behavior. `bamboo-eval` (`agent/tools/src/eval/`, run with
+`make tutor-eval ARGS="…"`) is a separate entry point from `bamboo-tools`, so the OpenClaw skill
+can't reach it; like the worker it calls only the local Ollama.
+
+1. **Sample.** `GET /api/agent/eval/turns` with the agent token from `~/.config/bamboo/agent.env`
+   (read like `bamboo-tools`; no new secret): ~20 questions and Gemini's answers, spread across
+   imports, image-only turns skipped, deterministic for `--seed` and the same data.
+2. **Replay.** Each question goes to each model (default `qwen3.5:9b`, `qwen3.5:27b`;
+   `--models` overrides) through `POST /api/chat`, non-streaming, `think: false` (`--think`), model
+   default sampling, `num_ctx` 8192. The system prompt's only copy is in docs/PROMPTS.md › *Tutor
+   evaluation* (between markers); each run records its hash. The user message is the question as
+   asked. Models run **one at a time**: a warm-up load (timed apart), every question, then unload
+   with `keep_alive: 0`, except a model that was already loaded when the run began (PandaClaw's
+   27B), which is left loaded. An unpulled model stops the run before anything loads; a failed
+   load or answer is recorded and the run goes on. Per answer: latency (ms), `eval_count`,
+   tokens/s (`eval_count / eval_duration`) and any error. `answers.json` is rewritten after each
+   answer; re-running with the same `--out` retries only missing or failed answers.
+3. **Blind page.** `judge.html` is self-contained (no network). Per question, Gemini's answer and
+   each local answer appear in a seeded shuffle labeled A, B, C…; every answer gets the same
+   Markdown-to-plain-text cleanup so formatting doesn't reveal the source; failed answers are left
+   off. Will rates each answer 1–5 for accuracy (correct Mandarin, breakdown right) and
+   naturalness, and picks a preferred answer. Ratings persist in localStorage; Export downloads
+   `results-<run>.json`, Copy puts it on the clipboard. The label → source key (with timings) is
+   `key.json`, never in the page. `serve` serves only the page and `POST results` under a random
+   path token, on 127.0.0.1 unless `--host` (the Mac's Tailscale address) is given; "Save to Mac"
+   writes `results.json`.
+4. **Score.** `score` joins results with the key: per source, mean accuracy, mean naturalness,
+   % preferred (of questions with a preference), median latency and tokens/s, rated and error
+   counts.
+
+**Privacy.** Everything is written to `~/bamboo-eval/<run id>/` (directory 700, files 600) in
+the account that runs it; `bamboo-eval` refuses an `--out` inside the checkout, and `bamboo-eval/`
+is gitignored as a backstop. Progress lines carry ids, model names and timings only. Tests use
+synthetic questions and a fake Ollama.
+
+**Running it on the Mac** (as `openclaw-agent`, from `~/Code/bamboo`, after the endpoint is
+deployed and `make mac-update`):
+
+```
+make tutor-eval ARGS="run --seed <any word>"          # ~20 questions × 2 models; 20–45 min
+make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(tailscale ip -4)"
+#   Will opens the printed URL on his iPhone (Tailscale on), rates, taps "Save to Mac"
+#   (or Export, then the file comes back by AirDrop and goes in that directory as results.json)
+make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
+```
+
+`--models qwen3.5:4b,qwen3.5:9b,qwen3.5:27b` adds the 4B; `--limit`, `--ollama-url` and
+`--fixture <turns.json>` (a synthetic sample, no engine call: a dry run) are also accepted.
+Runtime is dominated by the 27B: roughly 30–90 s per answer on the 32 GB Mac (9B: 10–30 s),
+plus a minute or two per model load.
+
 ## 6. Web UI (PWA)
 
 Mobile-first; tested at a 390×844 viewport. Dark mode follows the system, since this is used at
@@ -931,7 +986,9 @@ Real conversations reach the Mac only through Discord, as links or as attachment
 stores. Will never needs to put files on the Mac's filesystem. If a developer session saves a
 copy while debugging, it goes in `private/` at the repo root, which is
 gitignored. Real conversations are never committed, never used as test fixtures, and never quoted
-in docs, PRs or commit messages (counts only). Test fixtures are synthetic (Appendix A).
+in docs, PRs or commit messages (counts only). Test fixtures are synthetic (Appendix A). The
+tutor evaluation's outputs (real questions, Gemini's and the models' answers, ratings) live only in
+`~/bamboo-eval/` in the account that ran it (§5.4).
 
 ## 9. Repository layout
 
@@ -949,6 +1006,7 @@ bamboo/
               prompts/, tests/fixtures/ (synthetic turns, recorded Ollama responses)
   agent/      skills/bamboo/SKILL.md; install.sh (`make agent-install`);
               tools/ (@bamboo/tools → bin/bamboo-tools; src/ cli, share, pdf, importer, api, env;
+              src/eval/ bamboo-eval, the tutor evaluation (`make tutor-eval`, §5.4);
               tests/fixtures/ synthetic share page, fake-openclaw); bamboo.config.example.json
   private/    gitignored
   ops/        launchd/com.bamboo.worker.plist; scripts/ (worker-install, worker-logs, mac-update);
@@ -1008,6 +1066,7 @@ bamboo/
 | 46 | On a 401, `bamboo-tools` names its token's source (file and key, or env var), never the value | A 401 from a working setup almost always means the wrong token was picked up (#42); naming the source makes that a one-line diagnosis in OpenClaw's logs without ever printing a secret |
 | 47 | The reminder learns from practice days (first finished round per household day), not every round | "Another round" or an abandoned round would otherwise pull the median; the reminder is about when the day's first round usually happens |
 | 48 | Discord replies show pinyin next to every hanzi, from the phrase's stored pinyin plus overrides; a long summary trims Next up, never the pinyin | New phrases use characters Will can't read yet, so hanzi with English alone isn't readable. Reusing the stored, computed reading (never an LLM's) keeps Discord and the PWA identical, overrides included. Fewer named phrases loses little (the queue is in the PWA); hanzi without pinyin would defeat the point |
+| 49 | The tutor evaluation reads its sample through a read-only agent-token route (`GET /api/agent/eval/turns`), sampled on the engine; its harness is `bamboo-eval`, separate from `bamboo-tools`; its prompt's one copy is in docs/PROMPTS.md, not `worker/prompts/` | The engine owns the data and the sampling rule, and the Mac already holds the agent token, so no new secret or DB access. Returning only the sampled turns keeps the export minimal. A separate entry point keeps model calls out of the CLI OpenClaw invokes. The prompt isn't a worker job prompt (no `prompt_version` on jobs); a run records its hash instead |
 
 ## Appendix A — Synthetic fixtures
 

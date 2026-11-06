@@ -119,3 +119,22 @@ DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. 
 PDF imports need poppler's `pdftotext` (`brew install poppler`) in `/opt/homebrew/bin`. New
 OpenClaw sessions pick the skill up. After later merges: `git pull --ff-only && make
 agent-install` in `~/Code/bamboo`.
+
+## Mac mini: tutor evaluation (one-off)
+
+Is a local model a good enough Mandarin tutor? (docs/ROADMAP.md › Tutor; DESIGN §5.4.) Needs the
+`GET /api/agent/eval/turns` deploy and `make mac-update`. As `openclaw-agent`, in `~/Code/bamboo`:
+
+```
+make tutor-eval ARGS="run --seed <any word>"     # sample ~20 questions, replay through qwen3.5:9b
+                                                  # then qwen3.5:27b, one at a time: ~20–45 min
+make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(tailscale ip -4)"
+make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
+```
+
+`run` prints the run directory. Will opens the URL `serve` prints on his iPhone (Tailscale on),
+rates every answer 1–5 for accuracy and naturalness, marks the one he prefers, and taps **Save to
+Mac** (ratings survive reloads; **Export** downloads the JSON instead, to put in the run directory
+as `results.json`). Answers are labeled A, B, C… with no model names; the key is `key.json` in the
+run directory. Add the 4B with `--models qwen3.5:4b,qwen3.5:9b,qwen3.5:27b`; an interrupted run
+resumes with `run --out <run dir>`. Everything stays in `~/bamboo-eval/`, never the checkout.
