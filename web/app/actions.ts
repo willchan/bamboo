@@ -6,6 +6,8 @@ import { requireUser } from "@/lib/auth/current";
 import { GRADES, type Grade } from "@/lib/domain/fsrs";
 import { PhraseInput } from "@/lib/domain/phrase";
 import { phraseFormToInput } from "@/lib/phrase-form";
+import { hasHanzi } from "@bamboo/shared";
+import { importPastedText, retryFailedJobs } from "@/lib/repo/capture";
 import { serverClock } from "@/lib/repo/clock";
 import { getDb } from "@/lib/repo/db";
 import {
@@ -118,6 +120,30 @@ export async function restorePhraseAction(fd: FormData): Promise<void> {
   const id = String(fd.get("id") ?? "");
   await restorePhrase(getDb(), id, Date.now());
   revalidatePath("/", "layout");
+}
+
+// --- Imports --------------------------------------------------------------------------------
+
+/** The paste box: one Gemini answer becomes a text import from the web (DESIGN §3.2). */
+export async function pasteAnswerAction(fd: FormData): Promise<void> {
+  await requireUser();
+  const text = String(fd.get("text") ?? "");
+  let outcome: "new" | "known" | "invalid" | "busy";
+  if (!hasHanzi(text)) {
+    outcome = "invalid";
+  } else {
+    const res = await importPastedText(getDb(), text, Date.now());
+    outcome = !res.ok ? "busy" : res.turnsNew > 0 ? "new" : "known";
+  }
+  revalidatePath("/", "layout");
+  redirect(`/imports?pasted=${outcome}`);
+}
+
+/** Imports › Retry failed: requeue every failed job with its attempts reset. */
+export async function retryFailedAction(): Promise<void> {
+  await requireUser();
+  await retryFailedJobs(getDb());
+  revalidatePath("/imports");
 }
 
 export async function pinPhraseAction(fd: FormData): Promise<void> {

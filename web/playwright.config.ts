@@ -39,6 +39,10 @@ export default defineConfig({
       DEV_AUTH_BYPASS: "1",
       TURSO_DATABASE_URL: `file:${E2E_DB}`,
       HOUSEHOLD_TZ: "America/Los_Angeles",
+      // Machine tokens for the fake worker in e2e/capture.spec.ts (local values, not secrets).
+      AGENT_API_TOKEN: "e2e-agent-token",
+      WORKER_API_TOKEN: "e2e-worker-token",
+      CRON_SECRET: "e2e-cron-secret",
       NEXT_TELEMETRY_DISABLED: "1",
     },
   },

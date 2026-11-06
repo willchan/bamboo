@@ -15,7 +15,8 @@
     "db:generate": "pnpm --filter @bamboo/db generate",
     "db:check": "pnpm --filter @bamboo/db check",
     "db:migrate": "pnpm --filter @bamboo/db migrate",
-    "db:seed": "pnpm --filter web seed"
+    "db:seed": "pnpm --filter web seed",
+    "smoke": "pnpm --filter web smoke"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

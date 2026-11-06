@@ -95,8 +95,9 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `pinned` | bool | hand-added or "move to top" → front of the queue |
 | `pinned_at` | int null | when `pinned` was set; orders pins newest first |
 | `source` | `'manual' \| 'import'` | |
-| `source_turn_id` | text null | fk `turn` (column from M2; the constraint arrives with the table in M3) |
-| `asked_count` | int default 1 | +1 each time an import shows he asked again |
+| `source_turn_id` | text null | the `turn` that first produced it. No FK constraint: SQLite can add one only by rebuilding the table, which isn't expand-only (§10 #27) |
+| `asked_count` | int default 1 | +1 each time an import shows he asked again (at most once per import) |
+| `last_asked_import_id` | text null | the import that created it or last bumped `asked_count`; enforces "once per import" (§4.6) |
 | `last_asked_at` | int | creation time initially |
 | `flags` | json `string[]` | e.g. `long`, `heard_as_dropped`, `example_dropped` |
 | `introduced_at`, `dropped_at` | int null | |
@@ -136,10 +137,15 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `source_ref` | share URL or file name; null for text |
 | `conversation_title` | from the page or PDF title; null for text |
 | `discord_channel_id`, `discord_message_id` | null for web; the reply target |
+| `idempotency_key` | **unique** null; the `Idempotency-Key` header of the call that created it |
 | `turns_total`, `turns_new` | |
-| `status` | `'extracting' \| 'done'` (`done` once every job is `done` or `failed`) |
+| `status` | `'extracting' \| 'done'` (`done` once the last chunk is in and every job is `done` or `failed`) |
 | `jobs_failed` | int |
-| `notified_at` | null until the Discord reply is posted |
+| `phrases_new` | int; phrases queued from its turns (new, or revived to `queued`) |
+| `phrases_again` | int; existing phrases its turns asked about again |
+| `uploaded_at` | null while chunks are still arriving (`more: true`) |
+| `summary` | null until done; the ready-to-post Discord reply (§5.1) |
+| `notified_at` | null until the Discord reply is posted; set at once for an import with nothing new (the skill already replied "Nothing new") |
 | `created_at`, `finished_at` | |
 
 **`turn`**: one user message plus Gemini's reply.
@@ -152,13 +158,16 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `position` | index within its first import |
 | `kind` | null until extracted; `'decode' \| 'say' \| 'errand' \| 'other'` |
 | `extracted_at` | null until extracted |
+| `created_at` | |
 
 ### 2.3 Platform
 
 - **`job`**: the PandaBase job queue, simplified to one type. Columns: `id`, `type`
-  (`'extract_turn'`), `status` (`'queued' | 'leased' | 'done' | 'failed'`), `input` json,
-  `result` json null, `attempt` int, `lease_expires_at` null, `model` null, `prompt_version` null,
-  `error` null, `created_at`, `finished_at` null.
+  (`'extract_turn'`), `status` (`'queued' | 'leased' | 'done' | 'failed'`), `import_id` (fk
+  `import`, denormalized from the turn, to count an import's open jobs), `input` json, `result`
+  json null, `attempt` int, `lease_expires_at` null, `model` null, `prompt_version` null, `error`
+  null, `created_at`, `finished_at` null. Jobs are claimed oldest first (ids are monotonic ULIDs,
+  so one import's turns are processed in order).
 - **`event`**: telemetry. Columns: `id`, `type`, `data` json, `at`. See §7.
 - **`setting`**: key/value: `nudge_enabled`, `nudge_last_sent_day`.
 
@@ -178,6 +187,11 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
   - `AGENT_API_TOKEN`: `/api/imports*` and `/api/agent/*` (`bamboo-tools`).
   - `WORKER_API_TOKEN`: `/api/jobs/*` and `/api/worker/*`.
   - `CRON_SECRET`: `/api/cron/*` (Vercel Cron sends it as a bearer).
+
+  A token opens only its own routes: the agent token gets 401 on `/api/jobs/*`, the worker token
+  gets 401 on `/api/imports*`, and so on. A route whose token isn't configured on the server
+  answers 503 `not_configured`, never "open". `web/lib/api/http.ts` (`checkBearer`) does this;
+  `pnpm smoke <url>` checks every machine route refuses no token and a wrong one.
 - UI mutations use **server actions**; the routes below are for machines.
 
 ### 3.2 Routes
@@ -185,17 +199,23 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | Route | Auth | Purpose |
 |---|---|---|
 | `POST /api/imports/known` | agent | `{turn_keys: string[]}` (≤ 5,000) → `{unknown: string[]}` so the CLI uploads only new turns |
-| `POST /api/imports` | agent | `{kind, origin, source_ref?, conversation_title?, discord_channel_id?, discord_message_id?, turns_total, turns: [{user_text, reply_text, position}]}` (≤ 2 MB; the CLI chunks, passing `import_id` on later calls) → `{import_id, turns_new}`. The engine recomputes each `turn_key`, inserts new turns, and queues one `extract_turn` per new turn. Header `Idempotency-Key: discord:<message id>` |
-| `GET /api/agent/notifications` | agent | finished imports with a Discord message and no `notified_at`, each with a ready-to-post `summary` |
-| `POST /api/imports/{id}/notified` | agent | sets `notified_at` |
+| `POST /api/imports` | agent | `{kind, origin, source_ref?, conversation_title?, discord_channel_id?, discord_message_id?, turns_total, turns: [{user_text, reply_text, position}], more?}` (≤ 2 MB, else 413; the CLI chunks, passing `import_id` on later calls and `more: true` on every call but the last) → `{import_id, turns_new, turns_added}`. `turns_new` is the import's running total, `turns_added` this call's. The engine recomputes each `turn_key`, inserts new turns, and queues one `extract_turn` per new turn, in one transaction. Header `Idempotency-Key: discord:<message id>` on every call: a repeated first call returns the same import. A chunk with new turns for an import whose last chunk already arrived → 409 `import_closed`; an unknown `import_id` → 404 |
+| `GET /api/agent/notifications` | agent | `{notifications: [{import_id, kind, discord_channel_id, discord_message_id, summary}]}`: finished imports with a Discord message and no `notified_at` |
+| `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
 | `GET /api/agent/nudge` | agent | `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent |
-| `POST /api/jobs/claim` | worker | → a job or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1` |
-| `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version}` or `{…, status:'failed', error}`. A stale `attempt` returns `409`. The result is validated against `ExtractTurnResult` and applied in the same transaction (§4.6) |
-| `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `event` |
-| `GET /api/cron/daily` | cron | expire stale queue items (§4.7), requeue expired leases, prune events > 180 d |
+| `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt) |
+| `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
+| `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
+| `GET /api/cron/daily` | cron | expire stale queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. Scheduled in `web/vercel.json` at 11:17 UTC |
+
+Errors from every machine route are `{error, message?, issues?}` with `error` one of
+`invalid_body` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
+`import_closed`, `conflict` (409; a concurrent import inserted the same turn, retry),
+`too_large` (413), `invalid_result` (422), `not_configured` (503). The codes are
+`API_ERROR_CODES` in `shared/src/contracts/errors.ts`.
 
 The PWA's paste box uses a server action that calls the same import service
-(`origin: 'web'`, `kind: 'text'`).
+(`origin: 'web'`, `kind: 'text'`, one turn with an empty prompt).
 
 Contracts are Zod schemas in `shared/src/contracts/`, imported by web, worker and tools.
 
@@ -319,6 +339,10 @@ PDF), the turn is keyed like a text import, on the reply. Otherwise every image-
 share one key and all but the first would be dropped as known. M0 found one such turn in 86 in
 Will's real conversation. The rule lives in `turnKey()`, so the CLI and the engine agree.
 
+`turnKey({user_text, reply_text}, kind)` in `shared/src/turns.ts` (`kind` is the import's
+`'link' | 'pdf' | 'text'`) returns the hex sha256. A prompt of only punctuation counts as empty.
+The engine computes the key from the full normalized text, then caps `reply_text` for storage.
+
 The CLI computes keys to ask `/api/imports/known`; the engine recomputes them and is the
 authority.
 
@@ -328,19 +352,30 @@ On `extract_turn` completion, for each raw item:
 
 1. `hanzi = normalizeText(item.hanzi)`. **Drop** the item if `hanziKey(hanzi)` has no CJK
    character, or if it does not occur in `hanziKey(user_text + reply_text)`. This verbatim check
-   stops the model inventing Chinese. Count drops in telemetry.
+   stops the model inventing Chinese. Count drops in telemetry. For a **frame**, the slot `…`
+   (or `...`) matches anything: each part between slots must occur, in order, so
+   `阿姨，您是说…吗？` passes on a turn that only says `阿姨，您是说要加水吗？` (§10 #26). Items
+   repeating an earlier item's key in the same result are dropped too.
 2. Keep `heard_as` only if it occurs (case-insensitive, spaces ignored) in `user_text`;
    otherwise null it and flag `heard_as_dropped`.
 3. Keep `example` (terms only) only if it occurs verbatim in the turn **and** contains the term's
    `hanzi_key`; otherwise drop the example and flag `example_dropped`.
 4. If a phrase with the same `hanzi_key` exists:
-   - `asked_count += 1`, `last_asked_at = now`, and append the new example (dedupe; keep at
-     most 3);
+   - the first time **this import** asks about it (`last_asked_import_id` differs):
+     `asked_count += 1`, `last_asked_at = now`, `last_asked_import_id = import`, and log
+     `asked_again`. Later turns of the same import only merge their example (§10 #28);
+   - append the new example (dedupe by key; keep the oldest 3), and fill `heard_as` if it was
+     empty; re-score;
    - `active` → apply *asked again* (§4.4);
-   - `queued` → re-score;
+   - `queued` → re-scored as above;
    - `dropped` or `expired` → back to `queued` and re-score. Asking again means it matters.
-     Log a `phrase_revived` event.
-5. Else, create a `queued` phrase with its cards (§4.8).
+     Log a `phrase_revived` event. A phrase that had been introduced (`introduced_at` set) goes
+     back to `active` instead, with *asked again* applied: a queued phrase only ever offers New
+     cards, so its reviewed cards would never come back (§10 #29).
+5. Else, create a `queued` phrase with its cards (§4.8), `last_asked_import_id = import`.
+
+All of this is `validateExtraction` and `planMerge` (pure, in `queue.ts`), applied by
+`completeJob` in `web/lib/repo/capture.ts` in the same batch as the job and turn updates.
 
 **Score.** `base_score` is stored. The queue order uses `effective_score`, computed at read time.
 Weights are in `config.rank`.
@@ -362,8 +397,9 @@ The **Up next** page lists the queue, with **Move to top** (sets `pinned`) and *
 ### 4.7 Expiry
 
 The daily cron marks `queued`, unpinned phrases as `expired` when `effective_score <
-config.queue.expireBelow` (−2) and they are older than `config.queue.minAgeDays` (30). Expired
-phrases come back if asked about again (§4.6). Nothing depends on Will acting.
+config.queue.expireBelow` (−2) and they are older than `config.queue.minAgeDays` (30, by
+`created_at`). Expired phrases come back if asked about again (§4.6). Nothing depends on Will
+acting. (`expiredPhraseIds` in `queue.ts`.)
 
 ### 4.8 Card creation
 
@@ -422,6 +458,14 @@ questions → 14 phrases queued. Next up: 高压锅 pressure cooker, 泡打粉 b
 link imports it appends "🔗 This share link is public; you can delete it in Gemini → Settings →
 Public links." It then marks the import notified, and prints `NO_REPLY` when idle. This is the
 same mechanism as PandaBase's `jobs replies`.
+
+The engine builds the summary when the import finishes (`importSummary` in
+`web/lib/domain/imports.ts`): "✅ {N} new questions → {M} phrases queued." (or "no new phrases"),
+then "Next up: hanzi (english), …" for up to `imports.nextUpCount` (3) of this import's phrases in
+queue order; then, on their own lines, "🔁 {K} phrases you'd asked about before are back in
+rotation." when it asked again, "⚠️ {F} questions couldn't be processed; Retry failed on the
+Imports page." when jobs failed, and the public-link line for links. Retry failed reopens an
+import but doesn't reply in Discord a second time once it has been notified.
 
 **Reminder**: a second command automation runs `bamboo-tools nudge` (§4.9) and posts the text or
 `NO_REPLY`.
@@ -587,16 +631,24 @@ failure fails the attempt. After 3 attempts the job is `failed` and counted in
 The engine, on completion: sets `turn.kind`/`extracted_at` and runs §4.6. When the import's last
 job finishes, it sets the import to `done`, builds its summary, and logs `import_finished`.
 
+Attempts are counted by the engine: every claim is a new attempt; a reported failure, a result
+that fails `ExtractTurnResult` (422), or a lease that runs out uses it up. Below
+`jobs.maxAttempts` (3) the job goes back to `queued`; at 3 it is `failed`. The worker's own
+repair turn happens inside one attempt. The worker should send `latency_ms` and `repaired` with
+each result for the `extraction` event.
+
 ## 6. Web UI (PWA)
 
 Mobile-first; tested at a 390×844 viewport. Dark mode follows the system, since this is used at
 night.
 
-Today, Up next and Phrases share a bottom tab bar (`app/(main)/`); Review is full-screen.
+Today, Up next, Phrases and Imports share a bottom tab bar (`app/(main)/`); Review is
+full-screen.
 
 - **Today** (`/`): "1 round · N due · M new", **Start**, or "✓ Done for today" (plus "Another
-  round (N due)" when more is waiting, §4.4); a line for the worker's status if jobs are waiting
-  and the worker is offline (M3+).
+  round (N due)" when more is waiting, §4.4); "⏳ N questions waiting for the Mac worker (last
+  seen …)" when jobs are queued or leased and no heartbeat came in the last
+  `worker.offlineAfterMinutes` (25; the worker beats every 10).
 - **Review** (`/review/[id]`): one card at a time. **Start** is a server action that builds the
   round, stores it and opens `/review/<round id>`; reloading resumes it. Grading, Not useful and
   finishing are server actions; Again's re-insertion (§4.4) happens in the client.
@@ -614,7 +666,8 @@ Today, Up next and Phrases share a bottom tab bar (`app/(main)/`); Review is ful
   card types); drop, and restore a dropped phrase. After adding, the editor opens so Will can
   check the computed pinyin (per-character override inputs appear once the hanzi is saved).
 - **Imports** (`/imports`): recent imports with status and counts, failed jobs (Retry), and a
-  paste box for a single Gemini answer.
+  paste box for a single Gemini answer (it must contain Chinese; the result line says whether
+  it was new or already imported).
 - **Stats** (`/stats`): PRD §6 measures (§7).
 
 **Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN`, preferring an
@@ -632,13 +685,14 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 
 `event` types:
 
-- `import_finished {import_id, kind, turns_total, turns_new, jobs_failed}`
+- `import_finished {import_id, kind, turns_total, turns_new, jobs_failed, phrases_new, phrases_again}`
 - `share_parse_failed {host}`
-- `extraction {turn_id, model, prompt_version, latency_ms, turn_kind, items, dropped_not_verbatim, examples_dropped, repaired}`
+- `extraction {turn_id, job_id, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, examples_dropped, heard_as_dropped, repaired}`
+  (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind}`
 - `already_know {phrase_id}`
-- `asked_again {phrase_id, status}`
+- `asked_again {phrase_id, status, import_id}` (status before the merge)
 - `phrase_revived {phrase_id}`
 - `review {card_type, rating, source}`
 - `round_finished {cards, ms}`
@@ -720,7 +774,8 @@ bamboo/
   CLAUDE.md  README.md  Makefile  package.json  pnpm-workspace.yaml  tsconfig.base.json
   docs/       PRD.md DESIGN.md PLAN.md ROADMAP.md
   web/        Next.js app — app/, components/, lib/domain/ (pure), lib/repo/ (DB), lib/config.ts,
-              scripts/seed.ts (`pnpm db:seed`), e2e/ (Playwright)
+              lib/api/ (machine-route auth and bodies), scripts/seed.ts (`pnpm db:seed`),
+              scripts/smoke.ts (`pnpm smoke`), e2e/ (Playwright)
   db/         @bamboo/db — src/schema/*, migrations/, migrate script
   shared/     @bamboo/shared — src/contracts/*, text.ts, turns.ts, segment.ts, config.ts;
               tests/fixtures/ (synthetic PDF text)
@@ -761,6 +816,13 @@ bamboo/
 | 23 | pinyin-pro plus a small table of context rules (得, 长) | pinyin-pro alone misreads the most common household polyphones; a rule table is cheap, tested, and Will's overrides remain the final word |
 | 24 | Turning a card type off suspends the card | Deleting it would drop its review history; suspending keeps `review_log` append-only and makes the toggle reversible |
 | 25 | A finished round meets the daily goal even if more is due; "Another round" stays optional | The daily unit is one round (PRD §3.4); showing "✓ Done" with an optional extra matches the habit model |
+| 26 | A frame's slot (`…`) matches anything in the verbatim check (§4.6) | Gemini writes the full sentence ("阿姨，您是说要加水吗？") more often than the frame itself; a plain substring check would drop every reusable frame, the item kind the ranking values most. Each fixed part must still be copied, in order |
+| 27 | `phrase.source_turn_id` stays a plain column, without a foreign key | SQLite adds a constraint only by rebuilding the table (copy, drop, rename), which isn't an expand-only migration on a live Turso DB; the engine is the only writer and sets it from a real turn |
+| 28 | "Asked again" counts at most once per import (`phrase.last_asked_import_id`) | One conversation that mentions a word in five turns is one act of forgetting, not five; also keeps the Again review to once per phrase per import (§4.4) |
+| 29 | Reviving a dropped phrase that had been introduced puts it back in `active` (with Again), not `queued` | A queued phrase only offers New cards (§4.4), so an introduced phrase's reviewed cards would never come back from the queue; matches the editor's Restore |
+| 30 | The engine counts attempts: an invalid result (422) or an expired lease uses one up like a reported failure; claim sweeps expired leases | A worker that keeps sending bad output, or dies mid-job, can't loop a job forever; requeueing on claim (not only in the daily cron) retries a crashed worker's job within one lease |
+| 31 | Chunked uploads end with `more: false`; the import is `done` only after that; a repeated `Idempotency-Key` returns the same import | Otherwise the first chunk's jobs could finish (and be reported in Discord) before the second chunk arrives; idempotency makes a CLI retry after a timeout safe |
+| 32 | `pnpm smoke <url>` after each deploy: public requests only, never a real token | Catches a broken sign-in config, a lost PWA manifest or a machine route that forgot its token check, without needing secrets on the machine that runs it |
 
 ## Appendix A — Synthetic fixtures
 

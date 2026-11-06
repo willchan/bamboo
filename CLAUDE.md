@@ -68,5 +68,6 @@ pnpm db:generate                           # after editing db/src/schema/*: new 
 pnpm db:migrate                            # apply migrations to TURSO_DATABASE_URL (default file:db/dev.db)
 pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse on the Mac (M5+)
+pnpm smoke <url>                           # after each deploy: public, read-only checks of a deployment (no secrets)
 make worker-install / worker-logs / agent-install / mac-update   # Mac mini (M4+)
 ```

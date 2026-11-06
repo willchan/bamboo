@@ -15,6 +15,13 @@
       "when": 1793922794406,
       "tag": "0001_phrases_cards_rounds",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793925759746,
+      "tag": "0002_capture",
+      "breakpoints": true
     }
   ]
 }

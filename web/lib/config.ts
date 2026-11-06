@@ -71,10 +71,37 @@ export const config = {
     weeklyDecay: 0.5,
   } as RankConfig,
 
-  /** Expiry (DESIGN §4.7; the cron arrives in M3). */
+  /** Expiry (DESIGN §4.7), run by the daily cron. */
   queue: {
     expireBelow: -2,
     minAgeDays: 30,
+  },
+
+  /** The extract_turn job queue (DESIGN §3.2, §5.3). */
+  jobs: {
+    leaseMinutes: 10,
+    /** A job that fails this many attempts is `failed` (Retry failed on Imports requeues it). */
+    maxAttempts: 3,
+  },
+
+  /** Imports (DESIGN §2.2, §5.1). */
+  imports: {
+    /** `turn.reply_text` is cut to this many characters (after the turn key is computed). */
+    replyMaxChars: 12_000,
+    /** "Next up: …" in an import's summary names this many of its queued phrases. */
+    nextUpCount: 3,
+    /** The Imports page lists this many recent imports. */
+    recentCount: 20,
+  },
+
+  /** Telemetry retention (DESIGN §3.2 cron). */
+  events: {
+    retainDays: 180,
+  },
+
+  /** The Mac worker heartbeats every 10 min; Today calls it offline after this much silence. */
+  worker: {
+    offlineAfterMinutes: 25,
   },
 
   phrase: {

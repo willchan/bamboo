@@ -74,8 +74,8 @@ genuinely useful** (share a conversation, get a deck).
 |---|---|---|
 | M0 Share-link spike | merged | [#3](https://github.com/willchan/bamboo/pull/3) |
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
-| M2 Phrases, rounds & review | in review | [#5](https://github.com/willchan/bamboo/pull/5) |
-| M3 Capture: engine | todo | |
+| M2 Phrases, rounds & review | merged | [#5](https://github.com/willchan/bamboo/pull/5) |
+| M3 Capture: engine | in review | |
 | M4 Worker | todo | |
 | M5 Discord intake | todo | |
 | M6 Reminder & stats | todo | |
@@ -388,7 +388,9 @@ contract and engine side), §6 (Imports), §7.
   `/api/worker/heartbeat`, `/api/cron/daily` (with the `vercel.json` cron);
 - `web/lib/domain/queue.ts`: validation, dedupe, revive and expiry;
 - import summaries;
-- the Imports page, with the paste box and Retry failed.
+- the Imports page, with the paste box and Retry failed;
+- `pnpm smoke <url>` (`web/lib/smoke.ts`, `web/scripts/smoke.ts`): public, read-only checks of a
+  deployment, run after each deploy (scope added by the orchestrator, approved by Will).
 
 **Tests:** route integration tests on in-memory libSQL:
 - `known` → `imports` with chunking and idempotency;
@@ -419,6 +421,89 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm --filter web build && pnpm --fi
 **Out of scope:** the worker, `bamboo-tools`, the skill.
 
 **Notes:**
+
+*Versions:* no new runtime dependency in `/web`. `@bamboo/shared` now depends on zod **4.6.7**
+(same as `/web`) for the contracts.
+
+*Acceptance (local, macOS, Node 24.22.2):* lint, typecheck, test, `web build` and `test:e2e` (2
+tests: M2's review flow and the new capture flow) all pass. Coverage on `web/lib/domain`: 99.7%
+statements, 96.4% branches, 99.1% functions, 99.6% lines. `pnpm smoke` against a local
+`next start` (fake Google client id, local tokens): 14/14. Against production (read-only, once,
+before this PR is deployed): the 6 page/auth checks pass; the 8 machine-route checks get 404,
+as expected, because the routes don't exist there yet.
+
+*Deviations / choices:*
+- **Frames: the slot is a wildcard in the verbatim check.** `您是说…吗` would otherwise fail on
+  every turn that only contains the full sentence. Each fixed part must occur, in order.
+  DESIGN §4.6, §10 #26.
+- **`phrase.source_turn_id` has no FK** (deferred indefinitely): SQLite can add one only by
+  rebuilding `phrase`, which isn't an expand-only migration. DESIGN §2.1, §10 #27.
+- **Schema additions beyond DESIGN** (migration `0002_capture`, all additive):
+  `phrase.last_asked_import_id` (asked again counts once per import, §10 #28);
+  `import.idempotency_key` (unique), `phrases_new`, `phrases_again`, `uploaded_at`, `summary`;
+  `turn.created_at`; `job.import_id` (fk). DESIGN §2.
+- **Chunking protocol:** `POST /api/imports` takes `more: true` on every chunk but the last; the
+  import can't finish before the last chunk. The response adds `turns_added` (this call) next to
+  `turns_new` (the import's running total, so a retried call still reports the right number).
+  A repeated `Idempotency-Key` on a first call returns the same import. §10 #31.
+- **Attempts are counted by the engine.** A `complete` whose result fails `ExtractTurnResult`
+  gets 422 `invalid_result` and uses up the attempt; so does an expired lease. `claim` sweeps
+  expired leases first (the daily cron does too). §10 #30.
+- **Reviving an introduced phrase** puts it back in `active` with Again on its reviewed cards,
+  not in `queued` (where its reviewed cards could never come back). §10 #29.
+- **An import with nothing new** is finished at once and marked notified (the skill already
+  replied "Nothing new"), so `bamboo-tools replies` never posts for it.
+- **Retry failed** reopens the import (status `extracting`, summary cleared) but doesn't reply in
+  Discord again if it was already notified.
+- **Summary wording** (`importSummary`): "✅ N new questions → M phrases queued. Next up: hanzi
+  (english), …" with up to 3 of this import's queued phrases in queue order; extra lines for
+  asked-again phrases, failed questions and the public-link reminder (links only). DESIGN §5.1.
+- `newId()` now uses ULID's monotonic factory (small edit to M2's `web/lib/repo/db.ts`), so jobs
+  created in one batch claim in turn order. `fsrsColumns` is now exported from M2's
+  `web/lib/repo/review.ts` (for the asked-again Again review).
+- **The Next dev indicator moved to the top right** (`next.config.ts`): with a fourth tab
+  (Imports) it covered the Today tab at phone width and broke M2's e2e click.
+- `turnKey(turn, kind)` takes the import kind; a prompt of only punctuation counts as empty.
+- Today shows "⏳ N questions waiting for the Mac worker (last seen …)" when jobs are open and no
+  heartbeat came in 25 min (`config.worker.offlineAfterMinutes`).
+- The Vercel cron runs daily at 11:17 UTC (`web/vercel.json`), off the hour, around 04:00 LA.
+- **`pnpm smoke <url>`** (orchestrator's scope addition): 14 checks, one line each, exit 1 on any
+  failure. It never signs in and only ever sends the obviously fake `smoke-test-not-a-real-token`.
+  Unit-tested against a fake deployment whose machine routes are the real route handlers
+  (`web/lib/smoke.test.ts`), which also asserts the smoke list covers every machine route. CI
+  never calls production.
+
+*For M4 (worker):*
+- Contracts: `ClaimedJob`, `CompleteRequest`, `CompleteResponse`, `Heartbeat`,
+  `ExtractTurnInput`, `ExtractTurnResult` (+ `ExtractItem`, `TURN_KINDS`, `ITEM_KINDS`) from
+  `@bamboo/shared`; limits in `sharedConfig.extraction` (≤ 8 items, `english` ≤ 120).
+- `POST /api/jobs/claim` → 200 `ClaimedJob` or 204. `POST /api/jobs/complete` → 200
+  `{job_status: 'queued' | 'done' | 'failed'}`, 409 `stale_attempt` (drop the job, claim the
+  next), 422 `invalid_result` (counted as a failed attempt), 404 `not_found`. Echo `attempt`
+  from the claim. Send `latency_ms` and `repaired` with results; `model` and `prompt_version`
+  (`extract_turn.v1`) always.
+- The engine counts attempts (max 3) and leases (10 min); the worker doesn't retry a job itself
+  beyond its one repair turn: report `failed` and move on.
+- `POST /api/worker/heartbeat` → 204. Only `WORKER_API_TOKEN` opens `/api/jobs/*` and
+  `/api/worker/*`; the agent token gets 401 there.
+
+*For M5 (bamboo-tools):*
+- `turnKey({user_text, reply_text}, kind)` from `@bamboo/shared` (the engine recomputes).
+  `POST /api/imports/known` takes ≤ `sharedConfig.imports.maxKnownKeys` (5,000) keys per call.
+- `POST /api/imports` bodies ≤ `sharedConfig.imports.maxBodyBytes` (2 MiB) or 413. Chunk:
+  first call without `import_id`, later calls with it, `more: true` on all but the last, and
+  `Idempotency-Key: discord:<message id>` on every call. Print the final response's `turns_new`.
+  Errors: 404 `not_found` (bad `import_id`), 409 `import_closed`, 409 `conflict` (retry).
+- `GET /api/agent/notifications` → `{notifications: [{import_id, kind, discord_channel_id,
+  discord_message_id, summary}]}`; post `summary` verbatim (it already has the link line), then
+  `POST /api/imports/{id}/notified` (204, idempotent).
+- `NudgeResponse` (`{text: string | null}`) is defined for M6's route.
+- Error body everywhere: `ApiError` `{error, message?, issues?}`; codes in `API_ERROR_CODES`.
+
+*Manual steps for Will (after merge):*
+- `pnpm smoke https://bamboo-panda.vercel.app`: all 14 checks should pass once this is deployed.
+- Vercel → *Settings → Cron Jobs*: `/api/cron/daily` is listed, daily at 11:17 UTC; after its
+  first run, its log shows a 200 with counts (a 401/503 means `CRON_SECRET` is missing).
 
 ---
 
