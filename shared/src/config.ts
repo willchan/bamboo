@@ -62,6 +62,38 @@ export const sharedConfig = {
     previewPrompts: 5,
     previewChars: 60,
   },
+  /** The Mac worker (DESIGN §1.2, §5.3, §8.3). Env vars override `defaults`. */
+  worker: {
+    defaults: {
+      ollamaUrl: "http://localhost:11434",
+      model: "qwen3.5:9b",
+      pollIntervalSeconds: 15,
+      /** `~` is the home of the account the worker runs as. `BAMBOO_WORKER_ENV` overrides it. */
+      envFile: "~/.config/bamboo/worker.env",
+    },
+    /** Heartbeat at startup and this often (Today calls the worker offline after 25 min). */
+    heartbeatMinutes: 10,
+    /** While the model isn't pulled (or Ollama is down), re-check this often; no claims meanwhile. */
+    modelRecheckSeconds: 60,
+    /** Back-off after an engine error (network, 5xx): doubles from the poll interval up to this. */
+    maxBackoffSeconds: 300,
+    /** A `complete` that fails on the network is retried after these delays (the lease is 10 min). */
+    completeRetrySeconds: [5, 20, 60],
+    /** One HTTP call to the engine gives up after this long. */
+    apiTimeoutSeconds: 30,
+    /** One Ollama chat call gives up after this long (the first call may load the model). */
+    ollamaTimeoutSeconds: 180,
+    /**
+     * Ollama request options (DESIGN §1.2). `num_ctx` matches PandaBase's setting for the same
+     * model, so the two workers don't force a reload.
+     */
+    ollama: { think: false, temperature: 0, numCtx: 8192, keepAlive: "2m" },
+    /**
+     * The reply is cut to this many characters before it goes to the model, so prompt + reply
+     * stay inside `numCtx` tokens. The engine checks verbatim against the whole turn either way.
+     */
+    maxReplyCharsForModel: 6000,
+  },
 } as const;
 
 /** The reminder appended to link-import replies (DESIGN §5.1); share links stay public. */

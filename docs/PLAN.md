@@ -76,8 +76,8 @@ genuinely useful** (share a conversation, get a deck).
 | M1 Skeleton, auth, deploy | merged | [#2](https://github.com/willchan/bamboo/pull/2) |
 | M2 Phrases, rounds & review | merged | [#5](https://github.com/willchan/bamboo/pull/5) |
 | M3 Capture: engine | merged | [#6](https://github.com/willchan/bamboo/pull/6) |
-| M4 Worker | todo | |
-| M5 Discord intake | in review | [#8](https://github.com/willchan/bamboo/pull/8) |
+| M4 Worker | in review | |
+| M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
 | M6 Reminder & stats | todo | |
 
 ---
@@ -537,6 +537,83 @@ in Up next within a minute.
 **Out of scope:** reading links or PDFs (M5).
 
 **Notes:**
+
+*Versions:* no new third-party package. `@bamboo/worker` now depends on zod **4.6.7** (as `/web`
+and `/shared` do) for `z.toJSONSchema`, and is version 0.1.0 (sent in the heartbeat with the
+checkout's short sha).
+
+*Acceptance (local, macOS, Node 24.22.2, as `willchan`):* `pnpm lint`, `pnpm typecheck` and
+`pnpm test` pass (worker: 43 tests + the opt-in eval, skipped; web coverage on `lib/domain`
+unchanged at 99.7%); `pnpm --filter web build` passes. `make worker-install && make worker-logs`
+was **not** run for real (it belongs to `openclaw-agent`; this session may not touch launchd or
+that account). Instead `worker/src/ops.test.ts` runs the three scripts for real against a temp
+HOME with stub `launchctl`/`pnpm`/`git`: first run creates `worker.env` (600, dir 700) and
+doesn't load without a token; with a token it renders and bootstraps the plist; a re-run is a
+no-op; an existing `worker.env` is never overwritten (only its mode reset to 600); a changed
+plist is booted out and re-bootstrapped; `KICKSTART=1` and `mac-update` kickstart; `DRY_RUN=1`
+changes nothing; `worker-logs` shows the last heartbeat. `shellcheck`, `plutil -lint` and
+`xmllint` pass. `main.ts` ran locally against a fake engine on localhost and the real Ollama:
+heartbeat, one synthetic job done, SIGTERM mid-job → the job finished and was reported, exit 0.
+
+*Real-model eval* (`BAMBOO_EVAL_OLLAMA=1`, `qwen3.5:9b`, `extract_turn.v1`, 8 synthetic turns,
+final run): 8/8 contract-valid (0 repaired, 0 failed); items verbatim 15/15 (100%); examples
+verbatim 9/11; turn kind agrees with the fixture's label 6/8 (the Cantonese-only turn came back
+`decode` with no items; one decode turn came back `errand`); Cantonese-only term kept 0; 44 s of
+model time. Five runs in all while tuning the term-example wording (each 40–50 s, sequential).
+
+*Deviations / choices:*
+- **The plist runs `node --import tsx src/main.ts`**, not `pnpm --filter @bamboo/worker start`, so
+  SIGTERM reaches the worker; `ExitTimeOut` 300 s (launchd's default 20 s is shorter than a model
+  call). The `start` script is the same command. DESIGN §8.3, §10 #38.
+- **The worker reads `worker.env` itself** (`BAMBOO_WORKER_ENV`, default
+  `~/.config/bamboo/worker.env`; the process env wins), so the plist has no secret. It warns if
+  the file is readable by others. A missing/incomplete config exits 78 after a 5-min wait under
+  launchd so `KeepAlive` doesn't spin. `worker-install` doesn't load the agent until
+  `WORKER_API_TOKEN` is set. §10 #41.
+- **The verbatim check moved to `shared/src/verbatim.ts`** (M3's `queue.ts` re-exports it,
+  unchanged behaviour), so the eval measures exactly what the engine drops. §4.6, §10 #39.
+- **Prompt file format:** `<!-- system -->`, `<!-- user -->`, `<!-- repair -->` parts; the repair
+  turn's wording is versioned with the prompt. Tag list in the prompt: feeding, baby, toddler,
+  food, cooking, groceries, household, cleaning, units, time, family, polite. §5.3.
+- **Reply cut to 6,000 characters for the model** (`sharedConfig.worker.maxReplyCharsForModel`)
+  to stay inside `num_ctx` 8192, kept equal to PandaBase's so the shared model isn't reloaded.
+  §10 #40.
+- **Ollama down mid-job** → `failed` reported and claims paused until `/api/tags` answers with the
+  model (re-checked every 60 s, logged once). `complete` network/5xx errors are retried after
+  5/20/60 s; 409/404 drop the job; 422 is logged. Claim errors back off 15 s → 5 min. §5.3.
+- **`mac-update` kickstarts only when the pull moved HEAD** (a no-op update doesn't interrupt a
+  job), and re-runs `worker-install`, which reloads instead if the plist changed.
+- **Mac conventions (aligned with M5, PR #8):** everything runs as `openclaw-agent` from
+  `~/Code/bamboo`; `worker.env` sits in `~/.config/bamboo/` next to M5's `agent.env` and
+  `bamboo.config.json`; nothing goes into OpenClaw's gateway env. Scripts are in `ops/scripts/`
+  (`lib.sh` follows PandaBase's `scripts/ops/lib.sh`: `DRY_RUN`, `run`, `need`; overridable
+  `BAMBOO_CONFIG_DIR`, `LAUNCH_AGENTS_DIR`, `LOG_DIR`, `LAUNCHD_DOMAIN`). The launchd domain is
+  `gui/<uid>`, which needs `openclaw-agent`'s login session (automatic login); over ssh without
+  one, `LAUNCHD_DOMAIN=user/<uid>` is the fallback the error message suggests.
+- **§10 numbering:** M4's rows are #38–41; #33–37 are M5's (PR #8).
+- Fixtures: `worker/tests/fixtures/turns.json` (8 synthetic turns: decode ×2, say ×3 incl. a
+  frame and a pasted answer, errand, a Cantonese-only term) and `ollama.json` (Ollama 0.40
+  response shapes, recorded from a real call, with synthetic content).
+
+*For M6 / later:* the heartbeat sends `version` (worker `package.json`), `sha` (12 chars),
+`model`, `ollama_ok`. `pnpm --filter @bamboo/worker test:ollama` re-runs the eval after a prompt
+or model change (`OLLAMA_TEXT_MODEL`, `EVAL_MIN_VERBATIM`).
+
+*Manual steps for Will* (as `openclaw-agent`, e.g. `ssh agent`):
+1. `git clone https://github.com/willchan/bamboo.git ~/Code/bamboo && cd ~/Code/bamboo` (skip if
+   M5's setup already cloned it).
+2. `make worker-install`: creates `~/.config/bamboo/worker.env` (600) and stops before loading.
+3. Edit `~/.config/bamboo/worker.env`: paste the production `WORKER_API_TOKEN` from Vercel
+   (Settings → Environment Variables → Production). Leave the rest as is.
+4. `make worker-install` again: loads `com.bamboo.worker`.
+5. `make worker-logs`: within a few seconds, `ollama ok: qwen3.5:9b is pulled` and
+   `heartbeat ok (ollama_ok=true)` (a `heartbeat failed: HTTP 401 unauthorized` means the token
+   doesn't match Vercel's). Today in the PWA stops showing the worker as offline.
+6. End to end: in the PWA's Imports page, paste a synthetic Gemini answer (e.g. the `fx-say-1`
+   reply in `worker/tests/fixtures/turns.json`) → within a minute `make worker-logs` shows
+   `job … done, N item(s) … → job done` and the phrases appear in Up next. Remove them from Up
+   next afterwards if you don't want them.
+7. Later updates: `make mac-update`.
 
 ---
 

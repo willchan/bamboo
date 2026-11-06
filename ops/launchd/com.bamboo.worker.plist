@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Bamboo worker (DESIGN §8.3): claims extract_turn jobs and runs them on the local Ollama.
+  Rendered by ops/scripts/worker-install.sh (`make worker-install`) into the installing account's
+  ~/Library/LaunchAgents with @REPO@ / @HOME@ / @NODE@ / @ENV_FILE@ / @LOG_DIR@ filled in; don't edit the copy.
+  On the Mac mini that account is openclaw-agent, which also runs Ollama and OpenClaw.
+  Settings and the token come from ~/.config/bamboo/worker.env, which the worker reads itself:
+  no secret is ever written into this file.
+  Node runs main.ts directly (not through pnpm) so launchd's SIGTERM reaches the worker, which
+  finishes its current job before exiting; ExitTimeOut leaves room for one model call and the
+  report before launchd sends SIGKILL.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bamboo.worker</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@NODE@</string>
+    <string>--import</string>
+    <string>tsx</string>
+    <string>src/main.ts</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@REPO@/worker</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:@HOME@/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>BAMBOO_WORKER_ENV</key>
+    <string>@ENV_FILE@</string>
+    <key>NO_COLOR</key>
+    <string>1</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ExitTimeOut</key>
+  <integer>300</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>@LOG_DIR@/worker.log</string>
+  <key>StandardErrorPath</key>
+  <string>@LOG_DIR@/worker.log</string>
+</dict>
+</plist>

@@ -8,4 +8,5 @@ export * from "./text";
 export * from "./config";
 export * from "./turns";
 export * from "./segment";
+export * from "./verbatim";
 export * from "./contracts/index";

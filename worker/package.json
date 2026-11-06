@@ -1,16 +1,18 @@
 {
   "name": "@bamboo/worker",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "tsx src/main.ts",
+    "start": "node --import tsx src/main.ts",
+    "test:ollama": "BAMBOO_EVAL_OLLAMA=1 vitest run src/eval.test.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@bamboo/shared": "workspace:*"
+    "@bamboo/shared": "workspace:*",
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

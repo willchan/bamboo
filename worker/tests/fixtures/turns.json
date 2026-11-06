@@ -1,0 +1,61 @@
+{
+  "_comment": "Synthetic extract_turn inputs (DESIGN Appendix A): invented text in the shape of Gemini turns, one or more per turn kind. Used by the opt-in real-model eval (BAMBOO_EVAL_OLLAMA=1) and by the prompt tests. expect_kind is the kind a person would give; the eval reports agreement but does not require it.",
+  "turns": [
+    {
+      "turn_id": "fx-decode-1",
+      "expect_kind": "decode",
+      "conversation_title": "Talking with the yuesao",
+      "user_text": "The yuesao said she wants to cook the soup in the gaoyaguo. What is that?",
+      "reply_text": "She most likely said **高压锅** (gāoyāguō), which means \"pressure cooker\".\n\n* 高 (gāo) – high\n* 压 (yā) – pressure\n* 锅 (guō) – pot\n\nShe might say:\n用高压锅煮汤，二十分钟就好了。\n(Yòng gāoyāguō zhǔ tāng, èrshí fēnzhōng jiù hǎo le.)\n\"Cook the soup in the pressure cooker, it's done in twenty minutes.\""
+    },
+    {
+      "turn_id": "fx-say-1",
+      "expect_kind": "say",
+      "conversation_title": "Talking with the yuesao",
+      "user_text": "How do I ask the yuesao if the bottle water is warm enough?",
+      "reply_text": "Here are a few ways to ask, from most direct to most polite.\n\n**Short and direct:**\n水温好了吗？\n(Shuǐwēn hǎo le ma?)\n\"Is the water temperature ready?\"\n\n**A bit fuller:**\n阿姨，奶瓶里的水够热了吗？\n(Āyí, nǎipíng lǐ de shuǐ gòu rè le ma?)\n\"Auntie, is the water in the bottle warm enough?\"\n\n**Key terms**\n* 水温 (shuǐwēn) – water temperature: 冲奶粉的水温要四十度左右。\n* 奶瓶 (nǎipíng) – baby bottle: 奶瓶要每天消毒。\n* 够 (gòu) – enough"
+    },
+    {
+      "turn_id": "fx-say-2",
+      "expect_kind": "say",
+      "conversation_title": "Nanny",
+      "user_text": "I want to check with the nanny that I understood her. How do I say \"Do you mean ...?\"",
+      "reply_text": "A natural, polite way is:\n\n阿姨，您是说…吗？\n(Āyí, nín shì shuō … ma?)\n\"Auntie, do you mean …?\"\n\nFor example:\n阿姨，您是说要加水吗？\n\"Auntie, do you mean we need to add water?\"\n\n阿姨，您是说他已经睡了吗？\n\"Auntie, do you mean he's already asleep?\"\n\nUsing 您 instead of 你 sounds more respectful to an older caregiver."
+    },
+    {
+      "turn_id": "fx-say-3",
+      "expect_kind": "say",
+      "conversation_title": "Toddler",
+      "user_text": "how to tell my toddler to wash hands before eating",
+      "reply_text": "Keep it short and cheerful for a toddler:\n\n**Simplest:**\n先洗手，再吃饭。\n(Xiān xǐshǒu, zài chīfàn.)\n\"Wash hands first, then eat.\"\n\n**Playful:**\n小手脏脏，我们去洗一洗！\n(Xiǎo shǒu zāngzāng, wǒmen qù xǐ yi xǐ!)\n\"Little hands are dirty, let's go wash them!\"\n\n**Key terms**\n* 洗手 (xǐshǒu) – wash hands: 吃饭前要洗手。\n* 先…再… (xiān … zài …) – first … then …"
+    },
+    {
+      "turn_id": "fx-errand-1",
+      "expect_kind": "errand",
+      "conversation_title": "Groceries",
+      "user_text": "Which brand of rice is good for making congee? I'm at the store now.",
+      "reply_text": "For congee (粥, zhōu), any short- or medium-grain white rice works well. Jasmine rice is a popular choice because it breaks down nicely and has a pleasant aroma. Look for bags labelled \"jasmine\" or 香米 (xiāngmǐ). Avoid parboiled rice, which stays firm. A 5 lb bag is plenty for a few weeks of breakfasts."
+    },
+    {
+      "turn_id": "fx-other-cantonese-1",
+      "expect_kind": "other",
+      "conversation_title": "Talking with the yuesao",
+      "user_text": "The yuesao mentioned feizaishui. What is it and is it a Mandarin word?",
+      "reply_text": "She probably meant **肥仔水**, a Cantonese name for a herbal gripe water sold in Hong Kong. It is a Cantonese-only term; Mandarin speakers would usually describe the product instead, for example 婴儿草本水, or just use the brand name."
+    },
+    {
+      "turn_id": "fx-paste-1",
+      "expect_kind": "say",
+      "conversation_title": null,
+      "user_text": "",
+      "reply_text": "你可以说：\n今天外面太冷了，我们在家玩吧。\n(Jīntiān wàimiàn tài lěng le, wǒmen zài jiā wán ba.)\n\"It's too cold outside today, let's play at home.\"\n\n**Key terms**\n* 外面 (wàimiàn) – outside: 外面在下雨。\n* 在家 (zài jiā) – at home"
+    },
+    {
+      "turn_id": "fx-decode-2",
+      "expect_kind": "decode",
+      "conversation_title": "Nanny",
+      "user_text": "nanny asked me to buy more \"shir jin\" for the baby, I think? sounded like shi jin",
+      "reply_text": "She most likely said **湿巾** (shījīn), which means \"wet wipes\".\n\nShe might have said:\n湿巾快用完了，再买一包吧。\n(Shījīn kuài yòng wán le, zài mǎi yì bāo ba.)\n\"We're almost out of wet wipes, buy another pack.\"\n\nRelated: 纸巾 (zhǐjīn) means tissues."
+    }
+  ]
+}

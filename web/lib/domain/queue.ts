@@ -1,7 +1,13 @@
 // The phrase queue (DESIGN §4.6–4.7): score and order, validation of extracted items, dedupe into
 // existing phrases (asked again, revival), and expiry. Pure: lib/repo applies the results.
 import type { PhraseExample, PhraseKind, PhraseStatus, TurnKind } from "@bamboo/db";
-import { hanziKey, hasHanzi, normalizeText, type ExtractTurnResult } from "@bamboo/shared";
+import {
+  cleanHanzi,
+  hanziKey,
+  occursVerbatim,
+  turnTextKey,
+  type ExtractTurnResult,
+} from "@bamboo/shared";
 import { config, type RankConfig } from "../config";
 
 export interface ScoreInput {
@@ -79,34 +85,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 // --- Validation (§4.6 steps 1–3) ---------------------------------------------------------------
 
-/** A frame's slot. Gemini writes `…`; `...` is accepted too. */
-const SLOT = /…|\.{3}/u;
-
-/** Hanzi for storage: normalized (§4.1), on one line. */
-export const cleanHanzi = (s: string): string => normalizeText(s).replace(/\n+/gu, " ");
-
-/** Keys are compared on the whole turn: Will's prompt and Gemini's reply. */
-export const turnTextKey = (t: { userText: string; replyText: string }): string =>
-  hanziKey(`${t.userText}\n${t.replyText}`);
-
-/**
- * The verbatim check: `hanziKey(hanzi)` must occur in the turn's key. A frame's slot (`…`) matches
- * anything, so `阿姨，您是说…吗？` passes on a turn that says `阿姨，您是说要加水吗？`: each part
- * between slots must occur, in order.
- */
-export function occursVerbatim(hanzi: string, kind: PhraseKind, turnKey: string): boolean {
-  if (!hasHanzi(hanziKey(hanzi))) return false;
-  const parts = (kind === "frame" ? hanzi.split(SLOT) : [hanzi])
-    .map((p) => hanziKey(p))
-    .filter((p) => p !== "");
-  let from = 0;
-  for (const part of parts) {
-    const at = turnKey.indexOf(part, from);
-    if (at < 0) return false;
-    from = at + part.length;
-  }
-  return true;
-}
+// `cleanHanzi`, `turnTextKey` and `occursVerbatim` moved to @bamboo/shared in M4 (the worker's
+// eval uses them too); re-exported so callers and tests keep importing them from here.
+export { cleanHanzi, occursVerbatim, turnTextKey };
 
 const squash = (s: string) => s.toLowerCase().replace(/\s+/gu, "");
 

@@ -373,6 +373,10 @@ On `extract_turn` completion, for each raw item:
      cards, so its reviewed cards would never come back (§10 #29).
 5. Else, create a `queued` phrase with its cards (§4.8), `last_asked_import_id = import`.
 
+The verbatim check itself (`occursVerbatim`, `cleanHanzi`, `turnTextKey`) lives in
+`shared/src/verbatim.ts` (since M4), so the worker's eval measures exactly what the engine drops;
+`queue.ts` re-exports it.
+
 All of this is `validateExtraction` and `planMerge` (pure, in `queue.ts`), applied by
 `completeJob` in `web/lib/repo/capture.ts` in the same batch as the job and turn updates.
 
@@ -671,6 +675,35 @@ that fails `ExtractTurnResult` (422), or a lease that runs out uses it up. Below
 repair turn happens inside one attempt. The worker should send `latency_ms` and `repaired` with
 each result for the `extraction` event.
 
+**The worker** (`worker/src/`, M4; tunables in `sharedConfig.worker`):
+
+- **Prompt file format.** `extract_turn.v{N}.md` has three parts, each after a marker line:
+  `<!-- system -->` (the system message), `<!-- user -->` (the user message, with
+  `{{conversation_title}}`, `{{user_text}}` and `{{reply_text}}` filled in one pass) and
+  `<!-- repair -->` (the repair turn, with `{{errors}}`: the Zod issues as `path: message` lines,
+  never values). An empty `user_text` (pasted answer, image-only prompt) and a missing title get
+  a short stand-in. The reply is cut to `maxReplyCharsForModel` (6,000) characters for the
+  model, so prompt plus reply fit `num_ctx` 8192; the engine still checks verbatim against the
+  whole turn (§10 #40).
+- **Loop** (concurrency 1): heartbeat, then claim → run → `complete` → claim again at once; on
+  204, wait `POLL_INTERVAL_SECONDS`. Claim errors back off, doubling up to 5 min. While the model
+  isn't pulled or Ollama doesn't answer, it doesn't claim and re-checks every 60 s (logging the
+  problem once). The heartbeat (startup, then every 10 min, between jobs) carries `version`, the
+  checkout's short `sha`, `model` and `ollama_ok`.
+- **Reporting.** Ollama failing mid-job (down, HTTP error, 180 s timeout) is reported as
+  `failed` and stops claims until the model check passes again. 409 `stale_attempt` and 404 drop
+  the job; 422 is logged (the engine already counted it). A `complete` that fails on the network
+  or with a 5xx is retried after 5, 20 and 60 s, inside the 10-min lease; after that the lease
+  runs out and the engine requeues it.
+- **Logs** are one timestamped line per event (start, heartbeat, model state, one line per job:
+  id, attempt, item count, repaired, seconds, the engine's answer). Never turn text, model output
+  or tokens.
+- **Eval** (opt-in, `BAMBOO_EVAL_OLLAMA=1`, `pnpm --filter @bamboo/worker test:ollama`): the synthetic
+  turns in `worker/tests/fixtures/turns.json` through the real model; it requires every result
+  to be contract-valid and an item verbatim rate ≥ `EVAL_MIN_VERBATIM` (0.8), and reports turn-kind
+  agreement and example verbatim counts. The verbatim check it uses is the engine's
+  (`shared/src/verbatim.ts`).
+
 ## 6. Web UI (PWA)
 
 Mobile-first; tested at a 390×844 viewport. Dark mode follows the system, since this is used at
@@ -761,7 +794,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `AGENT_API_TOKEN`, `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file. Never in OpenClaw's gateway env, which holds PandaBase's `AGENT_API_TOKEN` (§5.1) |
-| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` |
+| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path) and the process env wins over the file |
 
 ### 8.2 Deploy
 
@@ -791,10 +824,24 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   Ollama with `qwen3.5:9b` pulled (already there for PandaBase). No browser: share links are read
   over HTTPS (§5.2). The `bamboo-tools` wrapper puts `/opt/homebrew/bin` on its PATH, since
   OpenClaw's command automations run `sh -lc` with whatever PATH the gateway has.
-- **Worker**: a LaunchAgent `ops/launchd/com.bamboo.worker.plist` runs
-  `pnpm --filter @bamboo/worker start` with `KeepAlive`, logs to `~/Library/Logs/bamboo/`.
-  It sends a heartbeat at startup and every 10 min, and claims jobs only if the model is pulled
-  (`GET /api/tags`). SIGTERM finishes the current job, then exits.
+- **Worker**: everything below runs as `openclaw-agent`, from its own checkout (`~/Code/bamboo`).
+  `make worker-install` (`ops/scripts/worker-install.sh`) is idempotent, and `DRY_RUN=1` prints
+  what it would do. It runs `pnpm install --frozen-lockfile`; creates `~/.config/bamboo/` (700)
+  and, **only if it is missing**, `~/.config/bamboo/worker.env` (600) from
+  `ops/worker.env.example` (an existing file is never overwritten or printed; its mode is reset
+  to 600); renders the LaunchAgent `ops/launchd/com.bamboo.worker.plist` into
+  `~/Library/LaunchAgents/` (repo, home, `node` path, env-file path and log dir filled in; no
+  secret in it) and loads it with `launchctl bootstrap gui/<uid>`, re-loading only when the
+  rendered plist changed. While `WORKER_API_TOKEN` is empty it stops before loading and says so.
+  The plist runs `node --import tsx src/main.ts` in `worker/` directly, not through pnpm, so
+  launchd's SIGTERM reaches the worker (§10 #38); `KeepAlive`, `ThrottleInterval` 30 s,
+  `ExitTimeOut` 300 s (room to finish a job), logs to `~/Library/Logs/bamboo/worker.log`. The
+  worker sends a heartbeat at startup and every 10 min, and claims jobs only if the model is
+  pulled (`GET /api/tags`). SIGTERM finishes and reports the current job, then exits; a second
+  SIGTERM exits at once. A missing or incomplete `worker.env` exits 78 after 5 min (so `KeepAlive`
+  doesn't spin), with the missing variable names in the log.
+  `make worker-logs` prints the launchd state and the last heartbeat line, then
+  `tail -F`s the log (`FOLLOW=0` prints and exits).
 - **Agent**: `make agent-install` (`agent/install.sh`, as `openclaw-agent`) is idempotent and
   additive, and `DRY_RUN=1` prints what it would do. It runs `pnpm install --frozen-lockfile`;
   links `~/.local/bin/bamboo-tools` to `agent/tools/bin/bamboo-tools` (a wrapper that runs the CLI
@@ -811,8 +858,10 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   allowlist: it checks that `#bamboo` is enabled for the bot and, if not, prints the
   `openclaw config set channels.discord.guilds.<guild>.channels.<channel> …` command for Will
   (copy `#pandabase`'s entry: `enabled`, `requireMention: false`, the same `users`).
-- `make mac-update` runs `git pull --ff-only`, `pnpm install --frozen-lockfile`, then
-  `launchctl kickstart -k`; `make worker-logs` tails the logs.
+- `make mac-update` (as `openclaw-agent`) runs `git pull --ff-only`,
+  `pnpm install --frozen-lockfile`, then `worker-install` again: it reloads the LaunchAgent if
+  the plist changed, and otherwise `launchctl kickstart -k`s the worker only if the pull brought
+  new commits. `worker.env` is never touched.
 
 ### 8.4 Private data
 
@@ -834,12 +883,14 @@ bamboo/
   db/         @bamboo/db — src/schema/*, migrations/, migrate script
   shared/     @bamboo/shared — src/contracts/*, text.ts, turns.ts, segment.ts, config.ts;
               tests/fixtures/ (synthetic PDF text + expected turns)
-  worker/     @bamboo/worker — src/ (claim loop, ollama client), prompts/
+  worker/     @bamboo/worker — src/ (claim loop, engine and ollama clients, config, eval),
+              prompts/, tests/fixtures/ (synthetic turns, recorded Ollama responses)
   agent/      skills/bamboo/SKILL.md; install.sh (`make agent-install`);
               tools/ (@bamboo/tools → bin/bamboo-tools; src/ cli, share, pdf, importer, api, env;
               tests/fixtures/ synthetic share page, fake-openclaw); bamboo.config.example.json
   private/    gitignored
-  ops/launchd/
+  ops/        launchd/com.bamboo.worker.plist; scripts/ (worker-install, worker-logs, mac-update);
+              worker.env.example
   .github/workflows/ci.yml
 ```
 
@@ -884,6 +935,10 @@ bamboo/
 | 35 | `bamboo-tools import` prints the skill's reply text (`reply`), and the skill posts it verbatim | Keeps every user-visible line ("Nothing new" plus the public-link line, the failure asks) in tested code instead of the reply model's wording |
 | 36 | Everything Bamboo installs on the Mac lives in the `openclaw-agent` account, checkout at `~/Code/bamboo` | That user owns OpenClaw, Ollama and PandaBase's checkout; its home isn't readable from Will's account, and the gateway can only run what that user can read |
 | 37 | Command automations are added only once `AGENT_API_TOKEN` is set | Otherwise they would run every 5 and 30 minutes and fail; re-running `make agent-install` after filling the token adds them |
+| 38 | The worker's LaunchAgent runs `node --import tsx src/main.ts` directly, with `ExitTimeOut` 300 s; it reads `worker.env` itself | Through `pnpm … start`, launchd's SIGTERM would hit pnpm, not the worker, so "finish the current job" couldn't be relied on; launchd's default 20 s before SIGKILL is shorter than one model call. Reading the file in the worker keeps the token out of the plist and lets `worker-install` render it without secrets |
+| 39 | The verbatim check moved from `web/lib/domain/queue.ts` to `shared/src/verbatim.ts` | The worker's eval must measure exactly what the engine drops; one implementation, re-exported by `queue.ts` |
+| 40 | The worker cuts the reply to 6,000 characters for the model (`maxReplyCharsForModel`) | Prompt plus reply must fit `num_ctx` 8192, which stays at PandaBase's value so the shared model isn't reloaded; the engine checks verbatim against the whole turn either way, so nothing invented gets in |
+| 41 | Ollama failing mid-job is reported as `failed` and pauses claims until the model check passes; `worker-install` doesn't load the worker until `WORKER_API_TOKEN` is set | Reporting uses one attempt either way (an unreported job's lease would expire too) and gets the job retried sooner; pausing stops a down Ollama from burning every queued job's attempts. A worker without a token would only restart in a loop |
 
 ## Appendix A — Synthetic fixtures
 
