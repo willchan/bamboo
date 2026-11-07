@@ -340,6 +340,20 @@ describe("bamboo-tools nudge", () => {
   });
 });
 
+// Regression: one network blip posted "bamboo-tools replies: GET …: fetch failed" to #bamboo
+// (OpenClaw announces stderr when stdout is empty). Transient errors must post nothing.
+describe("automations stay quiet on a transient error", () => {
+  for (const cmd of ["replies", "nudge"]) {
+    it(`${cmd}: fetch failed → NO_REPLY, exit 0, nothing on stderr`, async () => {
+      const d = deps();
+      d.fetch = (async () => {
+        throw new TypeError("fetch failed");
+      }) as typeof fetch;
+      expect(await run([cmd], d)).toEqual({ code: 0, out: NO_REPLY });
+    });
+  }
+});
+
 // A 401 names where the token came from (file and key, or env var), never the token itself.
 describe("401: where the token came from", () => {
   const WRONG = "wrong-token-value-9f8e7d";
