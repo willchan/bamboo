@@ -320,7 +320,8 @@ describe("bamboo-tools replies", () => {
   it("fails clearly without a token", async () => {
     const r = await run(["replies"], deps({ BAMBOO_AGENT_API_TOKEN: "" }));
     expect(r.code).toBe(1);
-    expect(r.err).toContain("BAMBOO_AGENT_API_TOKEN");
+    expect(r.out).toContain("BAMBOO_AGENT_API_TOKEN");
+    expect(r.err).toBeUndefined();
   });
 });
 
@@ -335,9 +336,23 @@ describe("bamboo-tools nudge", () => {
     engine.nudgeStatus = 404;
     const r = await run(["nudge"], deps());
     expect(r.code).toBe(1);
-    expect(r.out).toBe("");
-    expect(r.err).toContain("404");
+    expect(r.out).toContain("404");
+    expect(r.err).toBeUndefined();
   });
+});
+
+// Regression: one network blip posted "bamboo-tools replies: GET …: fetch failed" to #bamboo
+// (OpenClaw announces stderr when stdout is empty). Transient errors must post nothing.
+describe("automations stay quiet on a transient error", () => {
+  for (const cmd of ["replies", "nudge"]) {
+    it(`${cmd}: fetch failed → NO_REPLY, exit 0, nothing on stderr`, async () => {
+      const d = deps();
+      d.fetch = (async () => {
+        throw new TypeError("fetch failed");
+      }) as typeof fetch;
+      expect(await run([cmd], d)).toEqual({ code: 0, out: NO_REPLY });
+    });
+  }
 });
 
 // A 401 names where the token came from (file and key, or env var), never the token itself.
@@ -368,8 +383,9 @@ describe("401: where the token came from", () => {
       const r = await run(argv, d);
       expect(r.code).toBe(1);
       const all = `${r.out}\n${r.err ?? ""}`;
-      expect(r.err).toContain("401");
-      expect(r.err).toContain(`BAMBOO_AGENT_API_TOKEN in ${envFile()}`);
+      // import: on stderr (the skill posts `reply`); automations: on stdout (OpenClaw posts it).
+      expect(all).toContain("401");
+      expect(all).toContain(`BAMBOO_AGENT_API_TOKEN in ${envFile()}`);
       expect(all).not.toContain(WRONG);
     });
 
@@ -377,15 +393,16 @@ describe("401: where the token came from", () => {
       const r = await run(argv, deps({ BAMBOO_AGENT_API_TOKEN: WRONG }));
       expect(r.code).toBe(1);
       const all = `${r.out}\n${r.err ?? ""}`;
-      expect(r.err).toContain("environment variable BAMBOO_AGENT_API_TOKEN");
+      expect(all).toContain("environment variable BAMBOO_AGENT_API_TOKEN");
       expect(all).not.toContain(WRONG);
     });
   }
 
   it("never names the source for other errors", async () => {
-    engine.nudgeStatus = 500;
+    engine.nudgeStatus = 403;
     const r = await run(["nudge"], deps());
-    expect(r.err).not.toContain("token from");
+    expect(r.out).toContain("403");
+    expect(r.out).not.toContain("token from");
   });
 });
 

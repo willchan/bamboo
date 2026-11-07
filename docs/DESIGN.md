@@ -547,7 +547,34 @@ Imports page." when jobs failed, and the public-link line for links. Retry faile
 import but doesn't reply in Discord a second time once it has been notified.
 
 **Reminder**: a second command automation runs `bamboo-tools nudge` (§4.9) and posts the text or
-`NO_REPLY`. Until M6 deploys `GET /api/agent/nudge`, its 404 is treated as `NO_REPLY`.
+`NO_REPLY`. (M5's stopgap of treating a 404 as `NO_REPLY` ended in M6.)
+
+**Automation errors** (`agent/tools/src/automation.ts`, §10 #51). OpenClaw posts a command
+automation's stdout; when stdout is empty it posts **stderr** instead (both: a `stdout:`/`stderr:`
+block); a bare `NO_REPLY` posts nothing; a non-zero exit records the run as an error and feeds
+OpenClaw's own failure alerts (by default after 2 consecutive failures). So `replies` and `nudge`
+never write stderr and handle errors themselves:
+
+- **Transient** (a network error such as `fetch failed`, `ECONNRESET` or a timeout, or a 5xx or
+  429 from the engine, after `Api`'s retries): `NO_REPLY`, exit 0, and a line in the local log.
+  Once the engine has been unreachable for `tools.automation.outageAlertMinutes` (30), one
+  message: "⚠️ Bamboo can't reach its server from the Mac (since 10:50). I'll keep trying." (the
+  first failure's time, Mac local). Then nothing until a run succeeds, which adds "✅ Bamboo can
+  reach its server again." (after its own reply, if it has one; `announceRecovery`). A blip that
+  clears before the threshold posts nothing at all. A gap of more than `outageResetMinutes` (60)
+  since the last failing run (the Mac was off) starts a new outage clock. The outage is shared by
+  both commands, so it's announced once.
+- **Anything else** (401/403 and other 4xx, a response that fails its contract schema, missing
+  settings): misconfiguration, so it is reported: `⚠️ bamboo-tools <command>: <message>` on
+  stdout with exit 1, the first time that command sees that exact error. While the same error
+  repeats: `NO_REPLY`, exit 0 (so OpenClaw's failure alert doesn't post it a second time). A
+  different error is reported again; a success clears it.
+
+State: `~/.config/bamboo/automation-state.json` (`{outage: {since, last, alerted} | null,
+reported: {command: message}}`; unreadable means empty). Log:
+`~/Library/Logs/bamboo/bamboo-tools.log` (as the worker's; rolls to `.1` past `logMaxBytes`).
+Neither holds conversation text. `import` is unchanged: the skill posts its `reply`, and the
+diagnostic goes to stderr.
 
 **Replies in Discord**: with one finished import, `replies` prints
 `[[reply_to:<message id>]] <summary>` (OpenClaw threads it under Will's message, as PandaBase's
@@ -1116,6 +1143,7 @@ bamboo/
 | 48 | Discord replies show pinyin next to every hanzi, from the phrase's stored pinyin plus overrides; a long summary trims Next up, never the pinyin | New phrases use characters Will can't read yet, so hanzi with English alone isn't readable. Reusing the stored, computed reading (never an LLM's) keeps Discord and the PWA identical, overrides included. Fewer named phrases loses little (the queue is in the PWA); hanzi without pinyin would defeat the point |
 | 49 | The tutor evaluation reads its sample through a read-only agent-token route (`GET /api/agent/eval/turns`), sampled on the engine; its harness is `bamboo-eval`, separate from `bamboo-tools`; its prompt's one copy is in docs/PROMPTS.md, not `worker/prompts/` | The engine owns the data and the sampling rule, and the Mac already holds the agent token, so no new secret or DB access. Returning only the sampled turns keeps the export minimal. A separate entry point keeps model calls out of the CLI OpenClaw invokes. The prompt isn't a worker job prompt (no `prompt_version` on jobs); a run records its hash instead |
 | 50 | `#bamboo` is served by a dedicated OpenClaw agent, `bamboo` (thinking off, the skill's body inline in its workspace `AGENTS.md`, bound to the channel ahead of main's Discord binding); `make agent-install` applies it and `make agent-check` verifies it | The shared `main` agent took 75–120 s per message, nearly all thinking; the same model with thinking off answers in ~5–25 s, and OpenClaw sets thinking per agent, not per channel. With thinking off the model doesn't open `SKILL.md` and guessed flags; inline, it chose right every time. Generating `AGENTS.md` from `SKILL.md` keeps one source of truth. Routing is applied, not just printed: the merge only prepends one binding and keeps every other, refuses an unreadable `bindings`, leaves a non-`main` systemAgent alone, and is backed up and idempotent; the Discord ids come from `bamboo.config.json` |
+| 51 | `replies` and `nudge` swallow transient engine errors (network, timeout, 5xx, 429): one alert only after 30 min of outage, one line on recovery; other errors are reported once per distinct error; they never write stderr | One network blip posted `bamboo-tools replies: GET /api/agent/notifications: fetch failed` to `#bamboo`, because OpenClaw announces stderr when stdout is empty. Polls every 5 minutes make a blip routine and self-healing, so Will should hear only about a real outage. Auth and contract errors don't heal by themselves, so they're still posted, but once rather than every 5 minutes. Exiting 0 while quiet keeps OpenClaw's own failure alerts out of the channel too |
 
 ## Appendix A — Synthetic fixtures
 

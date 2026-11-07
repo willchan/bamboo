@@ -61,6 +61,19 @@ export const sharedConfig = {
     /** `segment` prints this many prompts from each end, cut to `previewChars`. */
     previewPrompts: 5,
     previewChars: 60,
+    /**
+     * `replies` and `nudge` under OpenClaw's command automations (DESIGN §5.1 *Automation
+     * errors*). Transient engine errors (network, timeout, 5xx, 429) post nothing until the
+     * engine has been unreachable this long; then one alert, and one line on recovery.
+     */
+    automation: {
+      outageAlertMinutes: 30,
+      /** A gap this long with no failing run (the Mac was off) starts a new outage. */
+      outageResetMinutes: 60,
+      announceRecovery: true,
+      /** The local log (`~/Library/Logs/bamboo/bamboo-tools.log`) rolls to `.1` past this size. */
+      logMaxBytes: 1024 * 1024,
+    },
   },
   /** The Mac worker (DESIGN §1.2, §5.3, §8.3). Env vars override `defaults`. */
   worker: {
