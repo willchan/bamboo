@@ -716,6 +716,22 @@ idempotency, backup, additive extraDirs, automations, no token in any output or 
   `agent/tools/src/install.test.ts`. DESIGN §5.1, §8.3, §10 #43. **Will:** `git pull --ff-only &&
   make agent-install` as `openclaw-agent`, then start a new session in `#bamboo` (`/new`) so the
   agent picks up the pin and the new description.
+- **Dedicated `bamboo` agent (post-merge, 2026-11-06).** Through the shared `main` agent a
+  `#bamboo` message took 75–120 s, almost all of it the model (`ollama/qwen3.5:27b`) thinking;
+  with thinking off the same model answers in ~5–25 s. OpenClaw sets thinking per agent, so the
+  orchestrator set up a `bamboo` agent by hand on the Mac (thinking off, `skills: ["bamboo"]`, the
+  skill's body inline in its workspace `AGENTS.md`, `#bamboo` bound to it ahead of main's Discord
+  binding, systemAgent `main`). With thinking off the model didn't open `SKILL.md` and guessed
+  flags; inline, it chose right for a link, a PDF, pasted text and chit-chat every time. A
+  follow-up PR makes it reproducible: `make agent-install` applies it (the workspace `AGENTS.md`
+  is generated from `SKILL.md`; `BOOTSTRAP.md` goes to `.orig/`; the binding is merged, keeping
+  every other one), the new `make agent-check` verifies it, and `make mac-update` now ends with
+  `agent-install` so a pulled `SKILL.md` reaches the agent. Routing is applied rather than
+  printed because the merge only prepends one binding, refuses a `bindings` it can't read as a
+  list, and leaves a non-`main` systemAgent alone. Tests: `agent/tools/src/openclaw/agent.test.ts`
+  (generator on a synthetic skill, binding merge, routing) and `install.test.ts` (fake OpenClaw).
+  DESIGN §5.1, §8.3, §10 #50. **Will:** `make mac-update` as `openclaw-agent`; it should end
+  with `agent-check: ok`.
 - **`import` prints the reply.** Its JSON has a `reply` field the skill posts verbatim: "📥 Got
   it…", "✅ Nothing new since last time." (plus the public-link line for links), or a failure
   line (`share_parse_failed` asks for the PDF; `pdftotext_missing` / `pdf_unreadable` ask for the

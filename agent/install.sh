@@ -17,9 +17,14 @@
 #  5. pin the #bamboo channel to the bamboo skill: merge skills ["bamboo"], a systemPrompt and a
 #     tools.deny of the media/link readers into its existing entry (nothing else in it, and no
 #     other channel, changes); if the entry is missing, print the command for Will instead;
-#  6. once BAMBOO_AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
+#  6. the dedicated `bamboo` agent (thinking off, instructions inline): keep every other message
+#     on `main` (agents.defaults.systemAgent.agentId, set only if unset), add the agent if it's
+#     missing, set its thinkingDefault "off" and skills ["bamboo"], write its workspace AGENTS.md
+#     from SKILL.md (moving OpenClaw's generated AGENTS.md / BOOTSTRAP.md to .orig/), and route
+#     #bamboo to it: one binding, first in `bindings`, every other binding kept in order;
+#  7. once BAMBOO_AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
 #     and bamboo-nudge (no model call), announcing to #bamboo;
-#  7. openclaw skills check.
+#  8. openclaw skills check, then agent/check.sh (make agent-check).
 #
 #   DRY_RUN=1            print what would change, change nothing
 #   SKIP_PNPM_INSTALL=1  skip step 1 (tests)
@@ -218,7 +223,108 @@ if [ -n "$channel_id" ] && [ -n "$guild_id" ]; then
   fi
 fi
 
-# 6. Command automations (no model call), once the token is there.
+# 6. The bamboo agent (DESIGN §5.1, §10 #50). With thinking on, the shared `main` agent took
+# 75–120 s per #bamboo message; a dedicated agent has thinking off and the skill inline in its
+# AGENTS.md (with thinking off, the model doesn't open SKILL.md). Every change goes through
+# `openclaw config set` after the backup and is a no-op when already in place.
+# shellcheck source=agent/openclaw-agent.sh
+. "$ROOT/agent/openclaw-agent.sh"
+if [ -z "$channel_id" ]; then
+  warn "skipped the bamboo agent: no discord.channel_id in $CONFIG"
+else
+  [ -x "$SETUP_TSX" ] || die "missing $SETUP_TSX: run make agent-install without SKIP_PNPM_INSTALL"
+  # Everything else stays on main.
+  system_agent="$(cfg_get agents.defaults.systemAgent.agentId | jq -r '. // empty' 2>/dev/null || true)"
+  if [ -z "$system_agent" ]; then
+    backup "$config_file"
+    run openclaw config set agents.defaults.systemAgent.agentId "\"$SYSTEM_AGENT_ID\"" --strict-json >/dev/null
+    info "set agents.defaults.systemAgent.agentId to $SYSTEM_AGENT_ID (every other message stays there)"
+  elif [ "$system_agent" = "$SYSTEM_AGENT_ID" ]; then
+    note "kept agents.defaults.systemAgent.agentId $SYSTEM_AGENT_ID"
+  else
+    warn "agents.defaults.systemAgent.agentId is '$system_agent', not $SYSTEM_AGENT_ID; left as it is"
+  fi
+
+  entry="$(cfg_get "agents.entries.$AGENT_ID")"
+  if [ -z "$entry" ]; then
+    backup "$config_file"
+    run openclaw agents add "$AGENT_ID" --workspace "$DEFAULT_WORKSPACE" \
+      --model "$agent_model" --non-interactive >/dev/null
+    info "added the $AGENT_ID agent ($agent_model, workspace $DEFAULT_WORKSPACE)"
+    if [ "$DRY_RUN" = 1 ]; then
+      entry='{}'
+    else
+      entry="$(cfg_get "agents.entries.$AGENT_ID")"
+      [ -n "$entry" ] || die "openclaw agents add $AGENT_ID didn't create agents.entries.$AGENT_ID"
+    fi
+  else
+    note "kept the $AGENT_ID agent"
+  fi
+  if [ "$(printf '%s' "$entry" | jq -r '.thinkingDefault // empty')" = off ]; then
+    note "kept $AGENT_ID thinkingDefault off"
+  else
+    backup "$config_file"
+    run openclaw config set "agents.entries.$AGENT_ID.thinkingDefault" '"off"' --strict-json >/dev/null
+    info "set $AGENT_ID thinkingDefault off"
+  fi
+  if [ "$(printf '%s' "$entry" | jq -c '.skills')" = '["bamboo"]' ]; then
+    note "kept $AGENT_ID skills [\"bamboo\"]"
+  else
+    backup "$config_file"
+    run openclaw config set "agents.entries.$AGENT_ID.skills" '["bamboo"]' --strict-json >/dev/null
+    info "set $AGENT_ID skills [\"bamboo\"]"
+  fi
+
+  # The workspace's AGENTS.md is generated from SKILL.md (one source of truth). OpenClaw's own
+  # AGENTS.md and BOOTSTRAP.md (which starts an identity chat on the first message) go to .orig/.
+  workspace="$(agent_workspace "$entry")"
+  stash() { # move $workspace/$1 into .orig/, never over an earlier copy
+    local dest="$workspace/.orig/$1"
+    [ ! -e "$dest" ] || dest="$dest.$(date +%Y%m%d-%H%M%S)"
+    run mkdir -p "$workspace/.orig"
+    run mv "$workspace/$1" "$dest"
+    info "moved $workspace/$1 → $dest"
+  }
+  agents_md="$(agents_md_file)" || die "can't generate AGENTS.md from $SKILL_FILE"
+  if [ -f "$workspace/BOOTSTRAP.md" ]; then stash BOOTSTRAP.md; fi
+  if [ -f "$workspace/AGENTS.md" ] && cmp -s "$agents_md" "$workspace/AGENTS.md"; then
+    note "kept $workspace/AGENTS.md (matches SKILL.md)"
+  else
+    if [ -f "$workspace/AGENTS.md" ] && [ "$(head -n 1 "$workspace/AGENTS.md")" != "# Bamboo agent" ]; then
+      stash AGENTS.md
+    fi
+    if [ "$DRY_RUN" = 1 ]; then
+      info "[dry-run] would write $workspace/AGENTS.md from SKILL.md"
+    else
+      mkdir -p "$workspace"
+      cp "$agents_md" "$workspace/AGENTS.md"
+      info "wrote $workspace/AGENTS.md from SKILL.md"
+    fi
+  fi
+  rm -f "$agents_md"
+
+  # Route #bamboo to the agent. The current bindings must read as a list: anything else (an
+  # error, nothing) could lose main's binding, so then the command is printed instead.
+  current="$(cfg_get bindings)"
+  if ! printf '%s' "$current" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    warn "can't read OpenClaw's bindings as a list, so they're unchanged. Put this binding first:"
+    warn "  $(jq -cn --arg a "$AGENT_ID" --arg acct "$account_id" --arg c "$channel_id" \
+      '{agentId: $a, match: {channel: "discord", accountId: $acct, peer: {kind: "channel", id: $c}}}')"
+    warn "  (openclaw config get bindings --json; openclaw config set bindings '<array>' --strict-json)"
+  else
+    wanted="$(printf '%s' "$current" | setup bindings "$channel_id" "$account_id")" \
+      || die "can't merge OpenClaw's bindings"
+    if [ "$(printf '%s' "$current" | jq -cS .)" = "$(printf '%s' "$wanted" | jq -cS .)" ]; then
+      note "kept the binding #bamboo ($channel_id) → $AGENT_ID"
+    else
+      backup "$config_file"
+      run openclaw config set bindings "$wanted" --strict-json >/dev/null
+      info "bound #bamboo ($channel_id) → $AGENT_ID, first; kept the other $(printf '%s' "$wanted" | jq 'length - 1') binding(s)"
+    fi
+  fi
+fi
+
+# 7. Command automations (no model call), once the token is there.
 if ! grep -Eq '^BAMBOO_AGENT_API_TOKEN=.+' "$AGENT_ENV" 2>/dev/null; then
   warn "skipped the automations: BAMBOO_AGENT_API_TOKEN is empty in $AGENT_ENV (fill it in, then re-run)"
 elif [ -z "$channel_id" ]; then
@@ -251,10 +357,11 @@ else
   upsert bamboo-nudge "$nudge_cron" "$bin nudge"
 fi
 
-# 7. Report
+# 8. Report
 if [ "$DRY_RUN" = 1 ]; then
   info "[dry-run] would run: openclaw skills check"
 else
   openclaw skills check || warn "openclaw skills check reported problems (see above)"
+  "$ROOT/agent/check.sh" || warn "make agent-check reported problems (see above)"
 fi
 info "New OpenClaw sessions pick the skill up; existing ones keep their snapshot."

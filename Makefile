@@ -1,6 +1,6 @@
 # Thin wrappers over pnpm. Targets marked "stub" are filled in by the milestone named.
 .PHONY: install dev lint typecheck test build check db-migrate \
-	worker-install worker-logs agent-install mac-update tutor-eval
+	worker-install worker-logs agent-install agent-check mac-update tutor-eval
 
 install:
 	pnpm install
@@ -35,12 +35,16 @@ worker-logs: # launchd state, last heartbeat, tail -F ~/Library/Logs/bamboo/work
 	ops/scripts/worker-logs.sh
 
 # Run as the OpenClaw gateway's user (openclaw-agent on the Mac mini), from its Bamboo checkout:
-# bamboo-tools on PATH, ~/.config/bamboo, skills.load.extraDirs (backed up first) and the command
+# bamboo-tools on PATH, ~/.config/bamboo, skills.load.extraDirs (backed up first), the #bamboo
+# pin, the dedicated bamboo agent (its AGENTS.md from SKILL.md, its binding) and the command
 # automations. Idempotent; DRY_RUN=1 prints what it would change (agent/install.sh).
 agent-install:
 	agent/install.sh
 
-mac-update: # git pull --ff-only, pnpm install --frozen-lockfile, worker-install (reload/kickstart)
+agent-check: # read-only: bamboo agent, thinking off, #bamboo binding, AGENTS.md in step (agent/check.sh)
+	agent/check.sh
+
+mac-update: # git pull, pnpm install, worker-install (reload/kickstart), then agent-install
 	ops/scripts/mac-update.sh
 
 # Local tutor evaluation (DESIGN §5.4), as openclaw-agent: bamboo-eval with ARGS, e.g.
