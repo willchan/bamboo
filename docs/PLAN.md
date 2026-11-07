@@ -784,6 +784,16 @@ idempotency, backup, additive extraDirs, automations, no token in any output or 
   gateway's); it can be deleted. Read-only `ssh agent` probes (config get, automations list) ran
   before the orchestrator said not to ssh; nothing was changed there.
 
+- **Later fix: quiet automation errors.** A single network blip posted
+  `bamboo-tools replies: GET /api/agent/notifications: fetch failed` to `#bamboo`: OpenClaw posts
+  stderr when stdout is empty, so M6's "exit 1 with nothing on stdout posts nothing" was wrong.
+  `replies` and `nudge` now post nothing on transient errors and alert once after 30 min of
+  outage (one line on recovery); other errors are posted once per distinct error (DESIGN §5.1
+  *Automation errors*, §10 #51). Regression test committed first, failing (`automations stay
+  quiet on a transient error`). For these two commands the 401 token-source message (§10 #46)
+  now goes to stdout, not stderr. Deploy: `make mac-update` (the CLI is a symlink into the
+  checkout; no automation change).
+
 *Manual steps for Will (after merge; as `openclaw-agent` unless noted):*
 1. `ssh agent`, then `git clone https://github.com/willchan/bamboo.git ~/Code/bamboo`.
 2. `cd ~/Code/bamboo && BAMBOO_API_URL=https://bamboo-panda.vercel.app
@@ -868,7 +878,8 @@ clamp; the 04:00 day boundary); stats queries on fixture data.
   two overlapping polls wins), then a `nudge_sent {local_time, nudge_at}` event.
 - **`bamboo-tools nudge` no longer treats 404 as NO_REPLY** (M5's stopgap): the route exists now,
   and a 404 would more likely mean a wrong `BAMBOO_API_URL`. Errors exit 1 with nothing on stdout,
-  so the automation posts nothing either way.
+  so the automation posts nothing either way. *(Wrong: OpenClaw posts stderr when stdout is
+  empty. Fixed later; see M5 Notes, "Later fix: quiet automation errors".)*
 - **Stats definitions** (DESIGN §7): rolling 7-day weeks of household days ending today; true
   retention = Review-state `session` grades above Again; Not useful = `not_useful` drops over
   (those + introduced), split by kind and usefulness; extraction drop rate =

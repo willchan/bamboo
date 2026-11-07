@@ -126,6 +126,9 @@ The behavior:
   (Settings → Public links). When nothing in it is new, the acknowledgement itself says
   "✅ Nothing new since last time." (with the same reminder for a link), and no second reply
   follows. If a link can't be read, it asks for the PDF; if a PDF can't be read, for the link.
+- Brief network blips between the Mac and Bamboo's server are silent in `#bamboo`. Only if the
+  Mac can't reach the server for half an hour does one message say so ("I'll keep trying"),
+  followed by one line when it's back. A setup problem (a wrong token, say) is posted once.
 - He shares a **whole conversation** whenever convenient, as often as he likes, from any number of
   conversations. Bamboo processes only questions it hasn't seen before. The first share is the
   backlog and becomes his starter material. The conversation's title ("Yuesao…", "Toddler…") is

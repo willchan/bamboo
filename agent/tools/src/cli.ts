@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { sharedConfig, type ImportKind, type Notification } from "@bamboo/shared";
 import { Api, ApiCallError, type Fetch } from "./api";
+import { automation, NO_REPLY } from "./automation";
 import { loadSettings, type Settings } from "./env";
 import { uploadConversation, type Conversation } from "./importer";
 import { PdfError, readPdf } from "./pdf";
@@ -33,7 +34,7 @@ export const COMMANDS = {
   nudge: [],
 } as const satisfies Record<string, readonly string[]>;
 
-export const NO_REPLY = "NO_REPLY";
+export { NO_REPLY };
 
 /** Replies the skill posts when an import can't go ahead (DESIGN §5.1, §5.2). */
 export const FAILURE_REPLIES = {
@@ -64,6 +65,8 @@ export interface Deps {
   readText: (file: string) => string;
   fetch?: Fetch;
   retryDelayMs?: number;
+  /** The clock for `replies`/`nudge` outage tracking (tests). */
+  now?: () => Date;
 }
 
 export const defaultDeps: Deps = {
@@ -234,24 +237,36 @@ export function repliesText(notes: Notification[], guildId: string | null | unde
     .join("\n\n");
 }
 
-async function cmdReplies(args: readonly string[], deps: Deps): Promise<CliResult> {
-  parse("replies", args);
+const automationCtx = (deps: Deps) => ({ env: deps.env, now: deps.now ?? (() => new Date()) });
+
+/** The engine client for an automation command; missing settings are an error to report. */
+function automationClient(deps: Deps) {
   const settings = loadSettings(deps.env);
   const client = api(settings, deps);
-  if (typeof client === "string") return { code: 1, out: "", err: `bamboo-tools: ${client}` };
-  const notes = await client.notifications();
-  const text = repliesText(notes, settings.config?.discord.guild_id);
-  // Mark before printing: OpenClaw posts stdout after the command exits (as PandaBase does).
-  for (const n of notes) await client.markNotified(n.import_id);
-  return { code: 0, out: text };
+  if (typeof client === "string") throw new Error(client);
+  return { settings, client };
+}
+
+// `replies` and `nudge` run under OpenClaw command automations: errors are reported by
+// `automation()` (transient ones not at all until they persist), never on stderr.
+async function cmdReplies(args: readonly string[], deps: Deps): Promise<CliResult> {
+  parse("replies", args);
+  return automation("replies", automationCtx(deps), async () => {
+    const { settings, client } = automationClient(deps);
+    const notes = await client.notifications();
+    const text = repliesText(notes, settings.config?.discord.guild_id);
+    // Mark before printing: OpenClaw posts stdout after the command exits (as PandaBase does).
+    for (const n of notes) await client.markNotified(n.import_id);
+    return text;
+  });
 }
 
 async function cmdNudge(args: readonly string[], deps: Deps): Promise<CliResult> {
   parse("nudge", args);
-  const client = api(loadSettings(deps.env), deps);
-  if (typeof client === "string") return { code: 1, out: "", err: `bamboo-tools: ${client}` };
-  // On an error the automation gets exit 1 and nothing on stdout, so nothing is posted.
-  return { code: 0, out: (await client.nudge()) ?? NO_REPLY };
+  return automation("nudge", automationCtx(deps), async () => {
+    const { client } = automationClient(deps);
+    return (await client.nudge()) ?? NO_REPLY;
+  });
 }
 
 export async function run(argv: readonly string[], deps: Deps = defaultDeps): Promise<CliResult> {
