@@ -93,7 +93,14 @@ client id and that callback; and every machine route (`/api/imports*`, `/api/age
 ## Mac mini: Discord intake (once)
 
 OpenClaw, Ollama and PandaBase's agent run as the `openclaw-agent` user, and Bamboo's Mac side
-does too (DESIGN §8.3). From your own account, `ssh agent`, then:
+does too (DESIGN §8.3).
+
+Bamboo shares that Mac's Ollama and never changes its settings or pulls models: the host owns
+those, along with the memory budget. What Bamboo needs from it: the worker's text model
+(`OLLAMA_TEXT_MODEL`, `qwen3.5:9b`, ~7–8GB while loaded, briefly per extraction job) and
+OpenClaw's reply model for the `bamboo` agent (`agent.model`, default `ollama/qwen3.5:27b`,
+the same one PandaBase's agent uses). Change either with the host's memory budget in mind:
+Ollama keeps one model loaded, so a worker job evicts the reply model for a while. From your own account, `ssh agent`, then:
 
 ```
 git clone https://github.com/willchan/bamboo.git ~/Code/bamboo && cd ~/Code/bamboo
