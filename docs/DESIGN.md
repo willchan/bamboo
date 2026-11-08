@@ -296,6 +296,12 @@ cards, in this order:
 3. **new cards**, interleaved one per `config.session.newEvery` (3) cards (d d N d d N …; extras
    go at the end). New cards are limited by `config.session.newPerDay` (3) minus those already
    introduced today. Due cards take priority: new cards only fill the slots the due cards leave.
+   **Learn more**: `buildRound(…, { learnMore: true })` (Start with `learnMore=1`), once
+   today's cap is used up, allows `config.session.extraNewBatch` (3) more new cards in that round
+   and reserves room for them (due cards beyond the rest of the round wait). While the cap still
+   has room it's an ordinary round, so a stale button can't stack extras on the daily 3. Nothing
+   new is stored: the cap is still `newPerDay` minus today's introductions, so after a Learn-more
+   round the count is past the cap and only another opt-in adds more (§10 #61).
    They come first from `active` phrases whose second card is still New, then from the queue
    (§4.6): the top phrase's first card (Listen before Say), one phrase at a time.
 
@@ -316,7 +322,9 @@ evening, and "Another round" disappears once nothing is due.
 
 **After a round**: the daily goal is met by one finished round, or by having nothing to do, and
 the screen says "✓ Done for today". If something is still waiting (due cards, or new cards under
-the cap), it also offers "Another round (N due)".
+the cap), it also offers "Another round (N due)". Once the cap is used up and new phrases are
+waiting, Today and the round's end also offer **Learn N more** (`Workload.learnMore`, N =
+min(`extraNewBatch`, waiting phrases)). It doesn't count toward the reminder's "something to do".
 
 **First sight of a new card** shows, besides the grades:
 
@@ -868,7 +876,8 @@ Today, Up next, Phrases and Imports share a bottom tab bar (`app/(main)/`); Revi
 full-screen.
 
 - **Today** (`/`): "1 round · N due · M new", **Start**, or "✓ Done for today" (plus "Another
-  round (N due)" when more is waiting, §4.4); "⏳ N questions waiting for the Mac worker (last
+  round (N due)" when more is waiting, §4.4); **Learn N more** once today's new cards are used up
+  and more are waiting (§4.4); "⏳ N questions waiting for the Mac worker (last
   seen …)" when jobs are queued or leased and no heartbeat came in the last
   `worker.offlineAfterMinutes` (25; the worker beats every 10).
 - **Review** (`/review/[id]`): one card at a time. **Start** is a server action that builds the
@@ -885,11 +894,14 @@ full-screen.
     card's grade buttons wait for its own save (they need its new state). A tap within
     `config.review.revealGuardMs` (400 ms) of a grade doesn't reveal the next card, so a double
     tap can't show the next answer.
+  - The whole front is a button (`aria-label` "Show answer") and there's a **Show** button below;
+    the front carries no "Tap to show" label (it duplicated Show).
   - *Say*: the front shows the English intent and an addressee chip ("→ 阿姨"). Tap to reveal the
     hanzi with ruby pinyin; audio plays; for terms, the example sentence (with pinyin) and its
     English appear below.
-  - *Listen*: the front autoplays audio and shows a 🔊 button and an optional "you heard:
-    *podafen*" hint. Tap to reveal the meaning, hanzi and example.
+  - *Listen*: the front autoplays audio and shows only 🔊. Tap to reveal the hanzi with pinyin,
+    then, small and muted, "you first heard: *podafen*" when the phrase has `heard_as`, then the
+    meaning and example. `heard_as` is never on the front (§10 #59).
   - The back has 4 grade buttons (with their next interval shown) and slow-replay. A new card's
     first back also shows **Not useful** and **Already know**.
 - **Up next** (`/queue`): the ranked queue; each row shows hanzi, English, "heard: …",
@@ -905,10 +917,11 @@ full-screen.
 - Today also shows the **reminder toggle** (§4.9).
 
 **Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN`, preferring an
-"Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.45 for slow replay
+"Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.3 for slow replay
 (`config.audio`). iOS Safari hands the rate to AVSpeechSynthesizer, which compresses the range:
-0.6 sounded almost the same as 0.9 on an iPhone, so slow replay is half the normal rate (lower
-than ~0.4 sounds smeared on desktop voices). Each play builds a fresh utterance with voice, lang
+0.6 sounded almost the same as 0.9 on an iPhone, and 0.45 (half) was better but still not slow
+enough by Will's ear, so slow replay is 0.3, a third of the normal rate (§10 #60). Desktop
+voices sound smeared that low; the iPhone is what matters. Each play builds a fresh utterance with voice, lang
 and rate set before `speak()`, and calls `cancel()` only when something is speaking or queued
 (a `cancel()` right before `speak()` can drop the new utterance on WebKit). Speak the hanzi,
 with `…` replaced by a short pause; examples have their own play button. iOS needs a user gesture
@@ -1212,6 +1225,9 @@ bamboo/
 | 56 | Slow replay is 0.45 (was 0.6); `cancel()` only when busy | iOS compresses Web Speech rates (WebKit → AVSpeechSynthesizer), so 0.6 vs 0.9 was barely audible. Half the normal rate stays clear on desktop voices too. Must be checked by ear on an iPhone |
 | 57 | Learning cards in a round come in a per-round seeded order; review cards stay most overdue first, new cards stay in queue order | With all-Good answers, a new card rated Good is due again in 10 minutes (the second learning step, inside learn-ahead), so it's in the next round; ordered by due, the card graded first always led that round, which Will noticed as "the same card first every round". The shuffle is seeded by the round's start, so `buildRound` stays pure and testable. It changes no scheduling: whether a card answered right should come back the same evening at all (the 10-minute step) is a separate question for Will |
 | 58 | Keep Gemini as the tutor after the local evaluation (2026-11-06); no local "Ask" page yet | Judged blind with `make tutor-eval` (§5.4), one local model was much worse than Gemini Flash and the other, though closer, still clearly worse. Confirms #1 with a measurement; re-run the evaluation when a stronger local model fits the Mac |
+| 59 | `heard_as` is shown only on a Listen card's back, as "you first heard: …" under the answer; the front is the audio alone | On the front, Will's own misheard spelling (often one run-together guess for a whole phrase) was the first thing he read, which reinforced the mistake, and when one question became two cards both showed the same guess. Under the correct pinyin it becomes a contrast instead. `heard_as` is still stored and still used for ranking and dedupe |
+| 60 | Slow replay is 0.3 (was 0.45, #56) | Will's iPhone feedback: 0.45 was better than 0.6 but still not slow enough, because iOS compresses the rate range. Still to be checked by ear on the iPhone |
+| 61 | "Learn N more" is a start-round option (`learnMore`), granted by the engine only once today's `newPerDay` is used up; no new column | The round's card ids are stored when it's built, so the extra allowance only matters at build time: a reload resumes the same cards, and the next round counts today's introductions (now past the cap) as usual. Deciding on the server keeps the cap authoritative (a stale button gives an ordinary round). Opt-in, not a higher `newPerDay`: each new card adds future reviews, so more is a choice for a day with spare time. The round reserves room for the extras, or a long due list would leave the button doing nothing |
 
 ## Appendix A — Synthetic fixtures
 

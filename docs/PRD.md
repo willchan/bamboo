@@ -85,8 +85,10 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 - Each phrase has one or two **cards**:
   - **Say**: the front shows the English intent and who it's for; he says it; the back shows hanzi
     with pinyin above it, plays audio, and (for terms) shows an example sentence.
-  - **Listen**: the front plays audio (and shows "you heard: *podafen*" as a hint if available); he
-    recalls the meaning; the back shows everything including the example.
+  - **Listen**: the front only plays audio; he recalls the meaning; the back shows everything
+    including the example, and, if he typed what he heard when he asked, a small "you first heard:
+    *podafen*" under the answer, so he sees his guess next to the real thing. (On the front it
+    reinforced the mishearing.)
   - Defaults: decoded terms get **Listen**; everything else gets **Say**. A toggle adds the other
     type.
 - He can add or edit a phrase by hand. Hand-added phrases go to the front of the queue. Pinyin
@@ -98,6 +100,11 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 - A **round** is ~10 cards: due cards first, with up to 3 new cards a day mixed in. After a round:
   "✓ Done for today" (one round is the daily goal), plus an optional "Another round (N due)" if
   more is waiting.
+- **Learn 3 more**: once today's new cards are used up and new phrases are waiting, Today and the
+  end of a round offer a button that starts a round with up to 3 more new cards (plus anything
+  due), for today only; he can tap it again later. It's opt-in because each new card adds reviews
+  on the days after, and the daily 3 stays the default.
+- A card's front is just the prompt; tap it or the **Show** button to see the answer.
 - Phrases are added and edited on a **Phrases** page; **Up next** shows the ranked queue with
   Move to top and Remove.
 - Grades: Again / Hard / Good / Easy (FSRS). Big buttons, one hand. The next card appears as
@@ -109,7 +116,7 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   - **Not useful**: the phrase is dropped, and the drop teaches the ranking.
   - **Already know**: graded Easy, so it comes back much later.
 - Audio comes from the device's Mandarin voice (`zh-CN`). There is a replay button and a slow-replay
-  button (about half speed, so it's clearly slower on an iPhone too). Earphones are recommended at night.
+  button (about a third of normal speed, so it's clearly slower on an iPhone too). Earphones are recommended at night.
 
 ### 5.3 Capture: send conversations to OpenClaw in Discord
 

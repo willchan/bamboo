@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import { finishRoundAction, gradeAction, notUsefulAction } from "@/app/actions";
-import { StartButton } from "@/components/start-button";
+import { LearnMoreButton, StartButton } from "@/components/start-button";
 import { Ruby } from "@/components/ruby";
 import { addresseeChip } from "@/lib/addressee";
 import { speak } from "@/lib/audio";
@@ -66,7 +66,7 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
         return;
       }
       const today = await finishRoundAction(roundId);
-      setFinished(today ?? { status: { kind: "done", another: null }, queueSize: 0 });
+      setFinished(today ?? { status: { kind: "done", another: null }, queueSize: 0, learnMore: 0 });
     });
   }, [roundId, saves]);
 
@@ -229,21 +229,20 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
             </p>
           </>
         ) : (
-          <>
-            <span className="text-5xl" aria-hidden>
-              🔊
-            </span>
-            {current.heardAs ? (
-              <p className="text-muted">
-                you heard: <i>{current.heardAs}</i>
-              </p>
-            ) : null}
-          </>
+          // No "you heard" hint on the front: it repeats Will's own mishearing (DESIGN §10 #59).
+          <span className="text-5xl" aria-hidden data-testid="card-front">
+            🔊
+          </span>
         )}
 
         {revealed ? (
           <div className="flex w-full flex-col items-center gap-4" data-testid="card-back">
             <Ruby pairs={current.pinyin} className="justify-center text-4xl" />
+            {current.type === "listen" && current.heardAs ? (
+              <p className="-mt-2 text-sm text-muted" data-testid="heard-as">
+                you first heard: <i>{current.heardAs}</i>
+              </p>
+            ) : null}
             {current.type === "listen" ? (
               <p className="text-xl font-semibold">{current.english}</p>
             ) : null}
@@ -255,9 +254,7 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
               </div>
             ))}
           </div>
-        ) : (
-          <span className="text-sm text-muted">Tap to show</span>
-        )}
+        ) : null}
       </button>
 
       {error ? (
@@ -369,6 +366,7 @@ function RoundDone({ today, alert }: { today: Today | null; alert: ReactNode }) 
           ) : status?.kind === "start" ? (
             <StartButton primary={false} label="Another round" />
           ) : null}
+          {today.learnMore > 0 ? <LearnMoreButton n={today.learnMore} /> : null}
           <Link href="/" className="text-primary underline underline-offset-4">
             Back to Today
           </Link>

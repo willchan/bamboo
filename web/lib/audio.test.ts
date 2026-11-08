@@ -42,12 +42,13 @@ describe("outside a browser", () => {
 });
 
 describe("speechRate", () => {
-  it("slow replay is half the normal rate or less, so iOS's compressed range still hears it", () => {
+  it("slow replay is about a third of the normal rate, so iOS's compressed range still hears it", () => {
     expect(speechRate()).toBe(config.audio.rate);
     expect(speechRate({ slow: false })).toBe(config.audio.rate);
     expect(speechRate({ slow: true })).toBe(config.audio.slowRate);
-    expect(config.audio.slowRate).toBeLessThanOrEqual(config.audio.rate / 2);
-    expect(config.audio.slowRate).toBeGreaterThanOrEqual(0.4);
+    // 0.45 (half) was better on an iPhone but still not slow enough (DESIGN §10 #60).
+    expect(config.audio.slowRate).toBeLessThanOrEqual(0.3);
+    expect(config.audio.slowRate).toBeGreaterThan(0);
   });
 });
 

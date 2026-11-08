@@ -36,6 +36,11 @@ export interface RoundOptions {
   session?: SessionConfig;
   /** Seeds the order of the learning cards; defaults to `now`, so each round differs. */
   seed?: number;
+  /**
+   * "Learn N more" (§4.4): once today's `newPerDay` is used up, allow `extraNewBatch` more new
+   * cards in this round, with room reserved for them. No effect while the daily cap has room.
+   */
+  learnMore?: boolean;
 }
 
 const isLearning = (c: SchedCard) => c.state === State.Learning || c.state === State.Relearning;
@@ -45,7 +50,10 @@ interface Candidates {
   learning: SchedCard[];
   review: SchedCard[];
   fresh: SchedCard[];
+  /** New cards still allowed today under `newPerDay`. */
   newAllowance: number;
+  /** New cards Learn more would add (0 while `newAllowance` > 0 or nothing is waiting). */
+  extraNew: number;
 }
 
 /**
@@ -69,11 +77,17 @@ function candidates(now: number, state: RoundState, opts: RoundOptions): Candida
   const onePerPhrase = (cards: SchedCard[]) =>
     cards.filter((c) => (seen.has(c.phraseId) ? false : (seen.add(c.phraseId), true)));
 
+  // In this order: a phrase's learning card wins over its review card, which wins over a new one.
+  const learningOnes = onePerPhrase(learning);
+  const reviewOnes = onePerPhrase(review);
+  const fresh = onePerPhrase([...activeNew, ...queuedNew]);
+  const newAllowance = Math.max(0, s.newPerDay - state.introducedToday);
   return {
-    learning: onePerPhrase(learning),
-    review: onePerPhrase(review),
-    fresh: onePerPhrase([...activeNew, ...queuedNew]),
-    newAllowance: Math.max(0, s.newPerDay - state.introducedToday),
+    learning: learningOnes,
+    review: reviewOnes,
+    fresh,
+    newAllowance,
+    extraNew: newAllowance > 0 ? 0 : Math.min(s.extraNewBatch, fresh.length),
   };
 }
 
@@ -83,7 +97,8 @@ const byDue = (a: SchedCard, b: SchedCard) => a.due - b.due;
  * Build a round of up to `roundSize` cards: learning cards whose step is due (in a per-round
  * order), then review cards due today (most overdue first), with new cards interleaved roughly one
  * per `newEvery` cards. Due cards take priority over new ones; new cards are capped by `newPerDay`
- * minus today's.
+ * minus today's. With `learnMore` and the cap used up, up to `extraNewBatch` new cards come in
+ * instead, and due cards make room for them.
  */
 export function buildRound(now: number, state: RoundState, opts: RoundOptions): RoundSlot[] {
   const s = opts.session ?? config.session;
@@ -92,11 +107,16 @@ export function buildRound(now: number, state: RoundState, opts: RoundOptions): 
   // Learning cards: the earliest-due ones if there are too many, then in a per-round order
   // (§10 #57). By due alone, the card graded first in one round always led the next one.
   const learning = seededShuffle(c.learning.slice(0, s.roundSize), opts.seed ?? now);
-  const due: RoundSlot[] = [
+  const allDue: RoundSlot[] = [
     ...learning.map((x) => slot(x, "learning")),
     ...c.review.map((x) => slot(x, "review")),
-  ].slice(0, s.roundSize);
-  const nNew = Math.min(c.newAllowance, c.fresh.length, s.roundSize - due.length);
+  ];
+  const extra = opts.learnMore ? c.extraNew : 0;
+  const nNew =
+    extra > 0
+      ? Math.min(extra, s.roundSize)
+      : Math.min(c.newAllowance, c.fresh.length, Math.max(0, s.roundSize - allDue.length));
+  const due = allDue.slice(0, s.roundSize - nNew);
   const fresh = c.fresh.slice(0, nNew).map((x) => slot(x, "new"));
 
   return interleave(due, fresh, s.newEvery);
@@ -146,6 +166,8 @@ export interface Workload {
   newAvailable: number;
   /** Cards the next round would hold. */
   roundCards: number;
+  /** "Learn N more": new cards a Learn-more round would add beyond the cap (0: don't offer it). */
+  learnMore: number;
 }
 
 /** What a round started now would contain, in counts (Today's "1 round · N due · M new"). */
@@ -154,7 +176,12 @@ export function workload(now: number, state: RoundState, opts: RoundOptions): Wo
   const c = candidates(now, state, opts);
   const due = c.learning.length + c.review.length;
   const newAvailable = Math.min(c.newAllowance, c.fresh.length);
-  return { due, newAvailable, roundCards: buildRound(now, state, { ...opts, session: s }).length };
+  return {
+    due,
+    newAvailable,
+    roundCards: buildRound(now, state, { ...opts, session: s, learnMore: false }).length,
+    learnMore: c.extraNew,
+  };
 }
 
 export type TodayStatus =

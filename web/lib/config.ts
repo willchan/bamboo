@@ -4,6 +4,7 @@
 export interface SessionConfig {
   roundSize: number;
   newPerDay: number;
+  extraNewBatch: number;
   newEvery: number;
   learnAheadMinutes: number;
   secondsPerCard: number;
@@ -56,6 +57,11 @@ export const config = {
   session: {
     roundSize: 10,
     newPerDay: 3,
+    /**
+     * "Learn N more" (opt-in, once today's new cards are used up): a round may introduce this many
+     * new cards beyond `newPerDay`. Each new card adds future reviews, so it's never automatic.
+     */
+    extraNewBatch: 3,
     /** One new card per this many cards in a round (DESIGN: "roughly one per 3"). */
     newEvery: 3,
     /** Learning cards due within this many minutes count as due now (Anki's "learn ahead"). */
@@ -165,9 +171,9 @@ export const config = {
     rate: 0.9,
     /**
      * Slow replay. iOS (WebKit → AVSpeechSynthesizer) compresses the rate range, so 0.6 sounded
-     * almost like 0.9 there; 0.45 is half the normal rate (DESIGN §6 *Audio*).
+     * almost like 0.9 there, and 0.45 was better but still not slow enough (DESIGN §6 *Audio*).
      */
-    slowRate: 0.45,
+    slowRate: 0.3,
     /** Voices whose names contain these sound best on iOS. */
     preferredVoiceHints: ["Enhanced", "Premium", "Tingting", "Ting-Ting"],
   },
