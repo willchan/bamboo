@@ -9,6 +9,7 @@ import {
   introducedSince,
   isFirstSight,
   reinsertIndex,
+  seededShuffle,
   siblingsToBury,
   todayStatus,
   workload,
@@ -65,8 +66,47 @@ describe("buildRound", () => {
     const round = buildRound(NOW, state({ activeCards: [r1, r2, r3, l1, l2] }), {
       dayEnd: DAY_END,
     });
-    expect(ids(round)).toEqual([l2.id, l1.id, r2.id, r1.id, r3.id]);
+    expect(ids(round).slice(0, 2).sort()).toEqual([l1.id, l2.id].sort());
+    expect(ids(round).slice(2)).toEqual([r2.id, r1.id, r3.id]);
     expect(kinds(round)).toBe("llrrr");
+  });
+
+  it("varies the order of learning cards from round to round (§10 #57)", () => {
+    // Will's evening: three cards rated Good in one round, all on their 10-minute step, graded
+    // a few seconds apart. By due alone the first one graded led every next round.
+    const learning = [0, 1, 2].map((i) =>
+      card({ state: State.Learning, due: NOW + 10 * MIN + i * 15_000 }),
+    );
+    const leaders = new Map<string, number>();
+    for (let k = 0; k < 300; k++) {
+      const now = NOW + k * 37_000;
+      const round = buildRound(now, state({ activeCards: learning }), { dayEnd: DAY_END });
+      expect(ids(round).sort()).toEqual(learning.map((c) => c.id).sort());
+      leaders.set(round[0]!.cardId, (leaders.get(round[0]!.cardId) ?? 0) + 1);
+    }
+    expect(leaders.size).toBe(3);
+    for (const count of leaders.values()) expect(count).toBeGreaterThan(50);
+  });
+
+  it("orders learning cards the same way for the same seed, and keeps due before new", () => {
+    const learning = Array.from({ length: 4 }, () => card({ state: State.Learning, due: NOW }));
+    const st = state({ activeCards: learning, queue: queued(fresh()) });
+    const a = buildRound(NOW, st, { dayEnd: DAY_END, seed: 7 });
+    expect(buildRound(NOW + MIN, st, { dayEnd: DAY_END, seed: 7 })).toEqual(a);
+    expect(kinds(a)).toBe("llnll");
+  });
+
+  it("keeps the earliest-due learning cards when there are more than fit", () => {
+    const learning = Array.from({ length: 12 }, (_, i) =>
+      card({ state: State.Learning, due: NOW - (i + 1) * MIN }),
+    );
+    const round = buildRound(NOW, state({ activeCards: learning }), { dayEnd: DAY_END });
+    expect(ids(round).sort()).toEqual(
+      learning
+        .slice(2)
+        .map((c) => c.id)
+        .sort(),
+    );
   });
 
   it("leaves out review cards due tomorrow and learning steps not yet due", () => {
@@ -290,5 +330,16 @@ describe("asked again", () => {
     for (const status of ["queued", "dropped", "expired"]) {
       expect(askedAgainCards({ status }, cards, false)).toEqual([]);
     }
+  });
+});
+
+describe("seededShuffle", () => {
+  it("is a permutation, deterministic per seed", () => {
+    const xs = [1, 2, 3, 4, 5, 6];
+    const a = seededShuffle(xs, 42);
+    expect([...a].sort()).toEqual(xs);
+    expect(seededShuffle(xs, 42)).toEqual(a);
+    expect(xs).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(seededShuffle([], 1)).toEqual([]);
   });
 });

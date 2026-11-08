@@ -3,8 +3,9 @@ import { ImportRequest, sharedConfig, type ImportResponse } from "@bamboo/shared
 import { apiError, checkBearer, readBody } from "@/lib/api/http";
 import { receiveImport } from "@/lib/repo/capture";
 import { getDb } from "@/lib/repo/db";
+import { timedRoute } from "@/lib/timing";
 
-export async function POST(req: Request): Promise<Response> {
+export const POST = timedRoute("POST /api/imports", async (req: Request): Promise<Response> => {
   const denied = checkBearer(req, "agent");
   if (denied) return denied;
   const body = await readBody(req, ImportRequest, sharedConfig.imports.maxBodyBytes);
@@ -17,4 +18,4 @@ export async function POST(req: Request): Promise<Response> {
     turns_new: res.turnsNew,
     turns_added: res.turnsAdded,
   } satisfies ImportResponse);
-}
+});

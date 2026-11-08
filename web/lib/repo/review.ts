@@ -12,7 +12,8 @@ import {
   type PinyinPairs,
 } from "@bamboo/db";
 import { and, count, eq, gte, inArray, isNull, sql } from "drizzle-orm";
-import type { BatchItem } from "drizzle-orm/batch";
+import type { BatchItem, BatchResponse } from "drizzle-orm/batch";
+import { alias } from "drizzle-orm/sqlite-core";
 import { dayStart, nextDayStart } from "../domain/day";
 import {
   formatInterval,
@@ -34,7 +35,8 @@ import {
   type TodayStatus,
 } from "../domain/session";
 import { eventRow, newId, runBatch } from "./db";
-import { dropPhrase, listQueue } from "./phrases";
+import { orderQueue } from "../domain/queue";
+import { dropPhrase, listQueue, queuedPhrasesQuery } from "./phrases";
 
 export interface Clock {
   now: number;
@@ -77,47 +79,55 @@ interface LoadedState {
   finishedRoundToday: boolean;
 }
 
-export async function loadRoundState(db: Db, clock: Clock): Promise<LoadedState> {
-  const start = dayStart(clock.now, dayOpts(clock));
-  const dayEnd = nextDayStart(clock.now, dayOpts(clock));
-
-  const [activeCards, queue, [introduced], [finished]] = await Promise.all([
+/** The reads behind `LoadedState`, independent of each other, for one libSQL batch. */
+function roundStateQueries(db: Db, start: number) {
+  return [
     db
-      .select({ card })
+      .select({ card, status: phrase.status })
       .from(card)
       .innerJoin(phrase, eq(card.phraseId, phrase.id))
-      .where(and(eq(phrase.status, "active"), isNull(card.suspendedAt))),
-    listQueue(db, clock.now),
+      .where(and(inArray(phrase.status, ["active", "queued"]), isNull(card.suspendedAt)))
+      .orderBy(card.createdAt, card.id),
+    queuedPhrasesQuery(db),
     db
       .select({ n: count() })
       .from(reviewLog)
       .where(and(gte(reviewLog.reviewedAt, start), eq(reviewLog.stateBefore, 0))),
     db.select({ n: count() }).from(round).where(gte(round.finishedAt, start)),
-  ]);
+  ] as const;
+}
 
-  const queueIds = queue.map((p) => p.id);
-  const queueCards = queueIds.length
-    ? await db
-        .select()
-        .from(card)
-        .where(and(inArray(card.phraseId, queueIds), isNull(card.suspendedAt)))
-    : [];
+type RoundStateRows = BatchResponse<ReturnType<typeof roundStateQueries>>;
+
+function toLoadedState(
+  [cards, queued, [introduced], [finished]]: RoundStateRows,
+  clock: Clock,
+): LoadedState {
+  const queue = orderQueue(queued, clock.now);
   const byPhrase = new Map<string, Card[]>();
-  for (const c of queueCards) byPhrase.set(c.phraseId, [...(byPhrase.get(c.phraseId) ?? []), c]);
-
+  for (const r of cards) {
+    if (r.status !== "queued") continue;
+    byPhrase.set(r.card.phraseId, [...(byPhrase.get(r.card.phraseId) ?? []), r.card]);
+  }
   return {
     state: {
-      activeCards: activeCards.map((r) => schedCard(r.card)),
+      activeCards: cards.filter((r) => r.status === "active").map((r) => schedCard(r.card)),
       queue: queue.map((p) => ({
         phraseId: p.id,
         cards: (byPhrase.get(p.id) ?? []).sort(cardOrder).map(schedCard),
       })),
       introducedToday: introduced?.n ?? 0,
     },
-    dayStart: start,
-    dayEnd,
+    dayStart: dayStart(clock.now, dayOpts(clock)),
+    dayEnd: nextDayStart(clock.now, dayOpts(clock)),
     finishedRoundToday: (finished?.n ?? 0) > 0,
   };
+}
+
+/** Everything a round is built from, in one round trip (DESIGN §8.5). */
+export async function loadRoundState(db: Db, clock: Clock): Promise<LoadedState> {
+  const rows = await db.batch(roundStateQueries(db, dayStart(clock.now, dayOpts(clock))));
+  return toLoadedState(rows, clock);
 }
 
 export interface Today {
@@ -126,7 +136,10 @@ export interface Today {
 }
 
 export async function getToday(db: Db, clock: Clock): Promise<Today> {
-  const loaded = await loadRoundState(db, clock);
+  return todayFrom(await loadRoundState(db, clock), clock);
+}
+
+function todayFrom(loaded: LoadedState, clock: Clock): Today {
   const w = workload(clock.now, loaded.state, { dayEnd: loaded.dayEnd });
   return {
     status: todayStatus(loaded.finishedRoundToday, w),
@@ -166,11 +179,24 @@ export interface ReviewCardView {
   note: string | null;
   /** Grade → label of the next interval ("10m", "4d"). */
   intervals: Record<Grade, string>;
+  /**
+   * Grade → ms until the card would be due again. The client decides an in-round re-insert
+   * (§4.4) from this at once, without waiting for the grade to be saved.
+   */
+  dueInMsByGrade: Record<Grade, number>;
 }
 
-async function intervalLabels(c: Card, now: number): Promise<Record<Grade, string>> {
+export type IntervalPreview = Pick<ReviewCardView, "intervals" | "dueInMsByGrade">;
+
+async function intervalPreview(c: Card, now: number): Promise<IntervalPreview> {
   const ms = await previewIntervals(c.id, fsrsColumns(c), now);
-  return Object.fromEntries(GRADES.map((g) => [g, formatInterval(ms[g])])) as Record<Grade, string>;
+  return {
+    intervals: Object.fromEntries(GRADES.map((g) => [g, formatInterval(ms[g])])) as Record<
+      Grade,
+      string
+    >,
+    dueInMsByGrade: ms,
+  };
 }
 
 async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView> {
@@ -191,7 +217,7 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
       pinyin: computePinyin(e.hanzi),
     })),
     note: p.note,
-    intervals: await intervalLabels(c, now),
+    ...(await intervalPreview(c, now)),
   };
 }
 
@@ -205,21 +231,24 @@ export interface RoundView {
 
 /** The round with the cards still to do (so a reload resumes where Will left off). */
 export async function getRound(db: Db, roundId: string, clock: Clock): Promise<RoundView | null> {
-  const r = await db.query.round.findFirst({ where: eq(round.id, roundId) });
+  // One round trip: the round, what's been graded in it, and its cards (via json_each).
+  const [[r], done, rows] = await db.batch([
+    db.select().from(round).where(eq(round.id, roundId)),
+    db.select({ cardId: reviewLog.cardId }).from(reviewLog).where(eq(reviewLog.roundId, roundId)),
+    db
+      .select({ card, phrase })
+      .from(card)
+      .innerJoin(phrase, eq(card.phraseId, phrase.id))
+      .where(
+        inArray(
+          card.id,
+          sql`(select j.value from ${round}, json_each(${round.cardIds}) as j where ${round.id} = ${roundId})`,
+        ),
+      ),
+  ]);
   if (!r) return null;
-  const done = await db
-    .select({ cardId: reviewLog.cardId })
-    .from(reviewLog)
-    .where(eq(reviewLog.roundId, roundId));
   const doneIds = new Set(done.map((d) => d.cardId));
   const todo = r.cardIds.filter((id) => !doneIds.has(id));
-  const rows = todo.length
-    ? await db
-        .select({ card, phrase })
-        .from(card)
-        .innerJoin(phrase, eq(card.phraseId, phrase.id))
-        .where(inArray(card.id, todo))
-    : [];
   const live = new Map(
     rows
       .filter((x) => x.card.suspendedAt === null && x.phrase.status !== "dropped")
@@ -240,13 +269,17 @@ export interface GradeInput {
   grade: Grade;
   source: "session" | "already_know";
   durationMs: number | null;
+  /**
+   * The client's id for this grade, stored as the review log's id: a retried grade whose first
+   * attempt was saved is answered without grading the card twice.
+   */
+  reviewId?: string;
 }
 
-export interface GradeResult {
-  /** How long until the card is due again: the client re-inserts it if that's inside the round. */
+/** The saved grade; `intervals`/`dueInMsByGrade` are fresh, in case the card comes back. */
+export interface GradeResult extends IntervalPreview {
+  /** How long until the card is due again. */
   dueInMs: number;
-  /** Fresh grade-button labels, in case the card comes back in this round. */
-  intervals: Record<Grade, string>;
 }
 
 /**
@@ -258,23 +291,40 @@ export async function gradeCard(
   input: GradeInput,
   clock: Clock,
 ): Promise<GradeResult | null> {
-  const row = await db
-    .select({ card, phrase })
-    .from(card)
-    .innerJoin(phrase, eq(card.phraseId, phrase.id))
-    .where(eq(card.id, input.cardId))
-    .get();
+  const now = clock.now;
+  const target = alias(card, "target");
+  // One round trip: the card with all its siblings and the phrase, and whether this grade was
+  // already saved (a retry from the client after a lost response).
+  const [rows, saved] = await db.batch([
+    db
+      .select({ card, phrase })
+      .from(card)
+      .innerJoin(phrase, eq(card.phraseId, phrase.id))
+      .where(
+        inArray(
+          card.phraseId,
+          db.select({ id: target.phraseId }).from(target).where(eq(target.id, input.cardId)),
+        ),
+      ),
+    db
+      .select({ id: reviewLog.id })
+      .from(reviewLog)
+      .where(eq(reviewLog.id, input.reviewId ?? "")),
+  ]);
+  const row = rows.find((r) => r.card.id === input.cardId);
   if (!row || row.phrase.status === "dropped") return null;
   const { card: c, phrase: p } = row;
-  const now = clock.now;
+  if (saved.length > 0) {
+    return { dueInMs: c.due - now, ...(await intervalPreview(c, now)) };
+  }
   const outcome = await reviewCard(c.id, fsrsColumns(c), input.grade, now);
   const dayEnd = nextDayStart(now, dayOpts(clock));
-  const siblings = await db.select().from(card).where(eq(card.phraseId, p.id));
+  const siblings = rows.map((r) => r.card);
 
   const writes: BatchItem<"sqlite">[] = [
     db.update(card).set(outcome.next).where(eq(card.id, c.id)),
     db.insert(reviewLog).values({
-      id: newId(),
+      id: input.reviewId ?? newId(),
       cardId: c.id,
       rating: input.grade,
       source: input.source,
@@ -330,7 +380,7 @@ export async function gradeCard(
   await runBatch(db, writes);
 
   const next = { ...c, ...outcome.next };
-  return { dueInMs: outcome.next.due - now, intervals: await intervalLabels(next, now) };
+  return { dueInMs: outcome.next.due - now, ...(await intervalPreview(next, now)) };
 }
 
 /** Not useful (first sight only): the phrase is dropped and the drop teaches the ranking. */
@@ -342,8 +392,13 @@ export async function markNotUseful(db: Db, cardId: string, clock: Clock): Promi
 
 /** Close the round (idempotent) and say what's next. */
 export async function finishRound(db: Db, roundId: string, clock: Clock): Promise<Today | null> {
-  const r = await db.query.round.findFirst({ where: eq(round.id, roundId) });
+  // Read the round and Today's state together; finishing changes only "finished a round today".
+  const [[r], ...rest] = await db.batch([
+    db.select().from(round).where(eq(round.id, roundId)),
+    ...roundStateQueries(db, dayStart(clock.now, dayOpts(clock))),
+  ]);
   if (!r) return null;
+  const loaded = toLoadedState(rest, clock);
   if (r.finishedAt === null) {
     await runBatch(db, [
       db.update(round).set({ finishedAt: clock.now }).where(eq(round.id, roundId)),
@@ -353,6 +408,7 @@ export async function finishRound(db: Db, roundId: string, clock: Clock): Promis
           eventRow("round_finished", { cards: r.cards, ms: clock.now - r.startedAt }, clock.now),
         ),
     ]);
+    loaded.finishedRoundToday = true;
   }
-  return getToday(db, clock);
+  return todayFrom(loaded, clock);
 }

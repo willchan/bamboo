@@ -34,6 +34,8 @@ export interface RoundOptions {
   /** Start of the next household day (§4.3): "due today" means due before this. */
   dayEnd: number;
   session?: SessionConfig;
+  /** Seeds the order of the learning cards; defaults to `now`, so each round differs. */
+  seed?: number;
 }
 
 const isLearning = (c: SchedCard) => c.state === State.Learning || c.state === State.Relearning;
@@ -78,22 +80,44 @@ function candidates(now: number, state: RoundState, opts: RoundOptions): Candida
 const byDue = (a: SchedCard, b: SchedCard) => a.due - b.due;
 
 /**
- * Build a round of up to `roundSize` cards: learning cards whose step is due, then review cards due
- * today (most overdue first), with new cards interleaved roughly one per `newEvery` cards. Due
- * cards take priority over new ones; new cards are capped by `newPerDay` minus today's.
+ * Build a round of up to `roundSize` cards: learning cards whose step is due (in a per-round
+ * order), then review cards due today (most overdue first), with new cards interleaved roughly one
+ * per `newEvery` cards. Due cards take priority over new ones; new cards are capped by `newPerDay`
+ * minus today's.
  */
 export function buildRound(now: number, state: RoundState, opts: RoundOptions): RoundSlot[] {
   const s = opts.session ?? config.session;
   const c = candidates(now, state, opts);
 
+  // Learning cards: the earliest-due ones if there are too many, then in a per-round order
+  // (§10 #57). By due alone, the card graded first in one round always led the next one.
+  const learning = seededShuffle(c.learning.slice(0, s.roundSize), opts.seed ?? now);
   const due: RoundSlot[] = [
-    ...c.learning.map((x) => slot(x, "learning")),
+    ...learning.map((x) => slot(x, "learning")),
     ...c.review.map((x) => slot(x, "review")),
   ].slice(0, s.roundSize);
   const nNew = Math.min(c.newAllowance, c.fresh.length, s.roundSize - due.length);
   const fresh = c.fresh.slice(0, nNew).map((x) => slot(x, "new"));
 
   return interleave(due, fresh, s.newEvery);
+}
+
+/** A deterministic shuffle (Fisher–Yates driven by mulberry32, seeded by `seed`). */
+export function seededShuffle<T>(items: readonly T[], seed: number): T[] {
+  let a = (seed ^ Math.floor(seed / 2 ** 32)) >>> 0;
+  const random = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 2 ** 32;
+  };
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
 }
 
 const slot = (c: SchedCard, kind: SlotKind): RoundSlot => ({

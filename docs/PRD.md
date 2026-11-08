@@ -100,12 +100,16 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   more is waiting.
 - Phrases are added and edited on a **Phrases** page; **Up next** shows the ranked queue with
   Move to top and Remove.
-- Grades: Again / Hard / Good / Easy (FSRS). Big buttons, one hand.
+- Grades: Again / Hard / Good / Easy (FSRS). Big buttons, one hand. The next card appears as
+  soon as he taps a grade; saving happens in the background, and if it can't save (no signal) the
+  screen says so with a Retry button instead of losing the answer.
+- A new card he gets right comes back once more later that evening (a ~10-minute learning step),
+  then not for weeks. Cards on a learning step come in a different order each round.
 - The **first time** a new card appears, two more buttons:
   - **Not useful**: the phrase is dropped, and the drop teaches the ranking.
   - **Already know**: graded Easy, so it comes back much later.
 - Audio comes from the device's Mandarin voice (`zh-CN`). There is a replay button and a slow-replay
-  button. Earphones are recommended at night.
+  button (about half speed, so it's clearly slower on an iPhone too). Earphones are recommended at night.
 
 ### 5.3 Capture: send conversations to OpenClaw in Discord
 

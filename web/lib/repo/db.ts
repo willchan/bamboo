@@ -3,11 +3,17 @@
 import { createDb, event, type Db } from "@bamboo/db";
 import type { BatchItem } from "drizzle-orm/batch";
 import { monotonicFactory } from "ulid";
+import { instrumentClient } from "../timing";
 
 const holder = globalThis as unknown as { __bambooDb?: Db };
 
 export function getDb(): Db {
-  holder.__bambooDb ??= createDb();
+  if (!holder.__bambooDb) {
+    const db = createDb();
+    // Request timing (DESIGN §8.5): count and time this client's calls per request.
+    instrumentClient(db.$client);
+    holder.__bambooDb = db;
+  }
   return holder.__bambooDb;
 }
 
