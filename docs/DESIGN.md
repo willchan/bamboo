@@ -806,7 +806,9 @@ each result for the `extraction` event.
 ### 5.4 Tutor evaluation (`bamboo-eval`)
 
 A one-off measurement for docs/ROADMAP.md › Tutor: is a local model a good enough Mandarin tutor
-to replace asking Gemini? Not product behavior. `bamboo-eval` (`agent/tools/src/eval/`, run with
+to replace asking Gemini? Not product behavior. **Outcome (2026-11-06):** no. In Will's blind judging,
+Gemini Flash was clearly better than both local models, so Gemini stays the tutor (§10 #58); the
+harness stays for a re-run with a stronger local model. `bamboo-eval` (`agent/tools/src/eval/`, run with
 `make tutor-eval ARGS="…"`) is a separate entry point from `bamboo-tools`, so the OpenClaw skill
 can't reach it; like the worker it calls only the local Ollama.
 
@@ -1209,6 +1211,7 @@ bamboo/
 | 55 | Grading shows the next card at once and saves in the background (ordered queue, retries, idempotent `reviewId`) | The round's cards and each grade's interval preview are already on the client, so nothing about the next card depends on the save. Ordered saves keep a card's repeated grades in sequence; the client id makes a retry safe when only the response was lost; a stuck save is shown with Retry and blocks finishing, so Today never counts a round with lost answers |
 | 56 | Slow replay is 0.45 (was 0.6); `cancel()` only when busy | iOS compresses Web Speech rates (WebKit → AVSpeechSynthesizer), so 0.6 vs 0.9 was barely audible. Half the normal rate stays clear on desktop voices too. Must be checked by ear on an iPhone |
 | 57 | Learning cards in a round come in a per-round seeded order; review cards stay most overdue first, new cards stay in queue order | With all-Good answers, a new card rated Good is due again in 10 minutes (the second learning step, inside learn-ahead), so it's in the next round; ordered by due, the card graded first always led that round, which Will noticed as "the same card first every round". The shuffle is seeded by the round's start, so `buildRound` stays pure and testable. It changes no scheduling: whether a card answered right should come back the same evening at all (the 10-minute step) is a separate question for Will |
+| 58 | Keep Gemini as the tutor after the local evaluation (2026-11-06); no local "Ask" page yet | Judged blind with `make tutor-eval` (§5.4), one local model was much worse than Gemini Flash and the other, though closer, still clearly worse. Confirms #1 with a measurement; re-run the evaluation when a stronger local model fits the Mac |
 
 ## Appendix A — Synthetic fixtures
 
