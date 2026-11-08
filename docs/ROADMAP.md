@@ -13,7 +13,11 @@
   (`bamboo-eval`, DESIGN §5.4): on the Mac as `openclaw-agent`, `make tutor-eval ARGS="run"`
   replays a seeded sample through `qwen3.5:9b` and `qwen3.5:27b`, `ARGS="serve --out <dir> --host
   <tailscale ip>"` puts the blind judging page on Will's iPhone, and `ARGS="score --out <dir>"`
-  prints the per-model table. Outputs stay in `~/bamboo-eval/`. Results: not yet run.
+  prints the per-model table. Outputs stay in `~/bamboo-eval/`.
+  **Result (2026-11-06):** Will judged both local models blind against Gemini Flash. One was much
+  worse; the other was closer, but Gemini Flash was still clearly better. Decision: keep asking
+  Gemini (and sharing conversations by public link); no local tutor or "Ask" page yet (DESIGN §10
+  #58). Re-run the evaluation when a clearly stronger local model fits the Mac.
 - **Tutor that reuses what's due.** When answering "how do I say X", prefer phrasing that
   reuses due or recently introduced frames and words.
 
@@ -36,6 +40,14 @@
 
 - **Quiz mode in Discord.** "Quiz me": a few Say cards as messages, graded with reactions; the
   results go to Bamboo as reviews.
+- **Instant `#bamboo` replies without a model.** Today the channel's OpenClaw agent runs
+  `qwen3.5:27b`, which cold-loads after idle, so a reply can take ~35–70 s. Will accepts that for
+  now. Option: an OpenClaw plugin (or similar deterministic handler) that recognises a share link
+  or PDF in `#bamboo` and calls `bamboo-tools` directly, so no LLM is in the path and replies are
+  near-instant. Deferred, not planned.
+- **Reminder to clear old share links.** Gemini share links are public URLs, and Will means to
+  delete them now and then. Bamboo could occasionally remind him (in the evening `#bamboo`
+  message, or on Today) to delete share links that have already been imported. Deferred.
 
 ## Languages and people
 
