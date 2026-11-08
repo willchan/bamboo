@@ -147,11 +147,27 @@ export const config = {
     longChars: 20,
   },
 
+  /** The review screen (DESIGN §6 *Review*). */
+  review: {
+    /** A grade that fails to save is retried this many times (backoff doubling from saveRetryMs). */
+    saveRetries: 3,
+    saveRetryMs: 1000,
+    /**
+     * The next card shows as soon as a grade is tapped; taps on it within this long don't reveal
+     * it (a double tap on Good would otherwise show the next answer).
+     */
+    revealGuardMs: 400,
+  },
+
   /** Device TTS (DESIGN §6 *Audio*). */
   audio: {
     lang: "zh-CN",
     rate: 0.9,
-    slowRate: 0.6,
+    /**
+     * Slow replay. iOS (WebKit → AVSpeechSynthesizer) compresses the rate range, so 0.6 sounded
+     * almost like 0.9 there; 0.45 is half the normal rate (DESIGN §6 *Audio*).
+     */
+    slowRate: 0.45,
     /** Voices whose names contain these sound best on iOS. */
     preferredVoiceHints: ["Enhanced", "Premium", "Tingting", "Ting-Ting"],
   },

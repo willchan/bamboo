@@ -245,6 +245,28 @@ describe("rounds", () => {
     expect(await getRound(db, "nope", clock())).toBeNull();
   });
 
+  it("a retried grade (same reviewId) is saved once", async () => {
+    await add();
+    const roundId = (await startRound(db, clock()))!;
+    const c = (await getRound(db, roundId, clock()))!.cards[0]!;
+    const g = {
+      roundId,
+      cardId: c.cardId,
+      grade: 3 as const,
+      source: "session" as const,
+      durationMs: 1,
+      reviewId: "client-review-1",
+    };
+    const first = (await gradeCard(db, g, clock(T0 + MIN)))!;
+    const retry = (await gradeCard(db, g, clock(T0 + MIN + 500)))!;
+    const logs = await db.select().from(reviewLog);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]!.id).toBe("client-review-1");
+    expect((await db.select().from(round))[0]!.cards).toBe(1);
+    expect(retry.intervals).toEqual(first.intervals);
+    expect(retry.dueInMs).toBe(first.dueInMs - 500);
+  });
+
   it("buries the sibling once one card of a phrase is shown", async () => {
     const id = await add({ cardTypes: ["say", "listen"] });
     const roundId = (await startRound(db, clock()))!;

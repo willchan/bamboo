@@ -3,9 +3,10 @@
 import { checkBearer } from "@/lib/api/http";
 import { runDaily } from "@/lib/repo/capture";
 import { getDb } from "@/lib/repo/db";
+import { timedRoute } from "@/lib/timing";
 
-export async function GET(req: Request): Promise<Response> {
+export const GET = timedRoute("GET /api/cron/daily", async (req: Request): Promise<Response> => {
   const denied = checkBearer(req, "cron");
   if (denied) return denied;
   return Response.json(await runDaily(getDb(), Date.now()));
-}
+});

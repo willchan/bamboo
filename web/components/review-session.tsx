@@ -1,16 +1,27 @@
 "use client";
-// The review screen (DESIGN §6 *Review*): one card at a time, front → tap → back → grade.
+// The review screen (DESIGN §6 *Review*): one card at a time, front → tap → back → grade. Grading
+// shows the next card at once and saves in the background (lib/save-queue.ts).
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useTransition,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { finishRoundAction, gradeAction, notUsefulAction } from "@/app/actions";
 import { StartButton } from "@/components/start-button";
 import { Ruby } from "@/components/ruby";
 import { addresseeChip } from "@/lib/addressee";
 import { speak } from "@/lib/audio";
-import type { SessionConfig } from "@/lib/config";
+import { config, type SessionConfig } from "@/lib/config";
 import { reinsertIndex } from "@/lib/domain/session";
 import type { Grade } from "@/lib/domain/fsrs";
 import type { ReviewCardView, Today } from "@/lib/repo/review";
+import { SaveQueue, type SaveState } from "@/lib/save-queue";
 
 const GRADE_BUTTONS: { grade: Grade; label: string; className: string }[] = [
   { grade: 1, label: "Again", className: "bg-danger/15 text-danger" },
@@ -26,38 +37,54 @@ interface Props {
   session: SessionConfig;
 }
 
+/** A card on screen; `savingAs` marks an in-round repeat waiting for its grade to be saved. */
+type ClientCard = ReviewCardView & { savingAs?: string };
+
 export function ReviewSession({ roundId, total, initialCards, session }: Props) {
-  const [cards, setCards] = useState(initialCards);
+  const router = useRouter();
+  const [cards, setCards] = useState<ClientCard[]>(initialCards);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [finished, setFinished] = useState<Today | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [saveState, setSaveState] = useState<SaveState>({ pending: 0, failed: false });
+  const [saves] = useState(() => new SaveQueue({ onChange: setSaveState }));
+  const [, startTransition] = useTransition();
   const shownAt = useRef<number>(0);
+  const advancedAt = useRef<number>(-Infinity);
   const finishing = useRef(false);
 
   const current = cards[index];
 
+  // Finish once every grade is saved; if a save is stuck, wait for Retry.
   const finish = useCallback(() => {
     if (finishing.current) return;
     finishing.current = true;
     startTransition(async () => {
+      if (!(await saves.idle())) {
+        finishing.current = false;
+        return;
+      }
       const today = await finishRoundAction(roundId);
       setFinished(today ?? { status: { kind: "done", another: null }, queueSize: 0 });
     });
-  }, [roundId]);
+  }, [roundId, saves]);
 
-  // A new card: start its timer; Listen cards play straight away.
+  // A new card: start its timer; Listen cards play straight away. Keyed by position and card, so
+  // a repeat's labels arriving from its save don't replay it or restart its timer.
+  const currentKey = current ? `${index}:${current.cardId}` : null;
+  const autoplay = current?.type === "listen" ? current.hanzi : null;
   useEffect(() => {
-    if (!current) {
+    if (currentKey === null) {
       finish();
       return;
     }
     shownAt.current = performance.now();
-    if (current.type === "listen") void speak(current.hanzi);
-  }, [current, finish]);
+    if (autoplay !== null) void speak(autoplay);
+  }, [currentKey, autoplay, finish]);
 
-  const advance = (next: ReviewCardView[]) => {
+  const advance = (next: ClientCard[]) => {
+    advancedAt.current = performance.now();
     setCards(next);
     setIndex((i) => i + 1);
     setRevealed(false);
@@ -65,48 +92,102 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
 
   const reveal = () => {
     if (!current || revealed) return;
+    // The next card appears under the finger that just graded: ignore an accidental second tap.
+    if (performance.now() - advancedAt.current < config.review.revealGuardMs) return;
     setRevealed(true);
     if (current.type === "say") void speak(current.hanzi);
   };
 
+  /**
+   * Grade and move on at once; the grade is saved in the background, in order (DESIGN §6). An
+   * in-round repeat (§4.4) is decided from the card's own preview, and gets fresh interval labels
+   * when its save comes back.
+   */
   const grade = (g: Grade, alreadyKnow = false) => {
-    if (!current || pending) return;
+    if (!current || current.savingAs) return;
     const durationMs = performance.now() - shownAt.current;
-    startTransition(async () => {
+    const reviewId = crypto.randomUUID();
+    const effective: Grade = alreadyKnow ? 4 : g;
+    const rest = cards.length - index - 1;
+    const at = reinsertIndex(rest, current.dueInMsByGrade[effective], session);
+    const next = [...cards];
+    if (at !== null) {
+      next.splice(index + 1 + at, 0, { ...current, firstSight: false, savingAs: reviewId });
+    }
+    advance(next);
+    const { cardId } = current;
+    saves.push(async () => {
       const res = await gradeAction({
         roundId,
-        cardId: current.cardId,
+        cardId,
         grade: g,
         alreadyKnow,
         durationMs,
+        reviewId,
       });
       if (!res) {
         setError("That card couldn't be saved. It was skipped.");
-        advance(cards);
+        setCards((cs) => cs.filter((c) => c.savingAs !== reviewId));
         return;
       }
-      setError(null);
-      // Again inside the round: the card comes back after its learning step if that fits.
-      const rest = cards.length - index - 1;
-      const at = reinsertIndex(rest, res.dueInMs, session);
-      const next = [...cards];
-      if (at !== null) {
-        next.splice(index + 1 + at, 0, { ...current, firstSight: false, intervals: res.intervals });
-      }
-      advance(next);
+      setCards((cs) =>
+        cs.map((c) =>
+          c.savingAs === reviewId
+            ? {
+                ...c,
+                savingAs: undefined,
+                intervals: res.intervals,
+                dueInMsByGrade: res.dueInMsByGrade,
+              }
+            : c,
+        ),
+      );
     });
   };
 
   const notUseful = () => {
-    if (!current || pending) return;
-    startTransition(async () => {
-      await notUsefulAction(current.cardId);
-      advance(cards);
+    if (!current) return;
+    const { cardId } = current;
+    advance(cards);
+    saves.push(async () => {
+      await notUsefulAction(cardId);
     });
   };
 
+  const retrySaves = () => {
+    saves.retry();
+    if (!current) {
+      finishing.current = false;
+      finish();
+    }
+  };
+
+  // Leaving mid-round: let the last grades land first, so Today counts them.
+  const leave = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (saves.state.pending === 0) return;
+    e.preventDefault();
+    void saves.idle().then((drained) => {
+      if (drained) router.push("/");
+    });
+  };
+
+  const saveAlert = saveState.failed ? (
+    <div role="alert" className="mb-2 flex items-center justify-center gap-3 text-sm text-danger">
+      <span>
+        Couldn&apos;t save {saveState.pending === 1 ? "an answer" : `${saveState.pending} answers`}.
+      </span>
+      <button
+        type="button"
+        onClick={retrySaves}
+        className="rounded-md border border-danger/40 px-2 py-1"
+      >
+        Retry
+      </button>
+    </div>
+  ) : null;
+
   if (finished || !current) {
-    return <RoundDone today={finished} />;
+    return <RoundDone today={finished} alert={saveAlert} />;
   }
 
   const chip = addresseeChip(current.addressee);
@@ -115,7 +196,12 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col px-5 pt-4 pb-6">
       <header className="flex items-center justify-between text-sm text-muted">
-        <Link href="/" className="-ml-2 rounded-md px-2 py-1" aria-label="Leave the round">
+        <Link
+          href="/"
+          onClick={leave}
+          className="-ml-2 rounded-md px-2 py-1"
+          aria-label="Leave the round"
+        >
           ✕
         </Link>
         <span data-testid="progress">
@@ -179,6 +265,7 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
           {error}
         </p>
       ) : null}
+      {saveAlert}
 
       <div className="flex flex-col gap-3">
         <div className="flex justify-center gap-3">
@@ -220,7 +307,6 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
-                  disabled={pending}
                   onClick={notUseful}
                   className="h-12 rounded-2xl border border-border text-muted disabled:opacity-60"
                 >
@@ -228,7 +314,6 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
                 </button>
                 <button
                   type="button"
-                  disabled={pending}
                   onClick={() => grade(4, true)}
                   className="h-12 rounded-2xl border border-border text-muted disabled:opacity-60"
                 >
@@ -241,13 +326,13 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
                 <button
                   key={b.grade}
                   type="button"
-                  disabled={pending}
+                  disabled={current.savingAs !== undefined}
                   onClick={() => grade(b.grade)}
                   className={`flex h-16 flex-col items-center justify-center rounded-2xl font-semibold disabled:opacity-60 ${b.className}`}
                 >
                   <span>{b.label}</span>
                   <span className="text-xs font-normal opacity-80">
-                    {current.intervals[b.grade]}
+                    {current.savingAs ? "…" : current.intervals[b.grade]}
                   </span>
                 </button>
               ))}
@@ -267,10 +352,11 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
   );
 }
 
-function RoundDone({ today }: { today: Today | null }) {
+function RoundDone({ today, alert }: { today: Today | null; alert: ReactNode }) {
   const status = today?.status;
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-5 px-5 text-center">
+      {alert}
       {!today ? (
         <p className="text-muted">Saving…</p>
       ) : (

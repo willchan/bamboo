@@ -289,7 +289,9 @@ A **round** is up to `config.session.roundSize` (10) cards. `buildRound(now, sta
 cards, in this order:
 
 1. learning/relearning cards whose step is due, counting steps due within
-   `config.session.learnAheadMinutes` (20, Anki's "learn ahead");
+   `config.session.learnAheadMinutes` (20, Anki's "learn ahead"), in a **per-round order** (a
+   shuffle seeded by the round's start time; if more are due than fit, the earliest-due ones are
+   kept). By due alone, the card graded first in one round always led the next (§10 #57);
 2. review cards due today, most overdue first;
 3. **new cards**, interleaved one per `config.session.newEvery` (3) cards (d d N d d N …; extras
    go at the end). New cards are limited by `config.session.newPerDay` (3) minus those already
@@ -306,6 +308,11 @@ reload resumes it without the cards already graded.
 round, judged as `config.session.secondsPerCard` (15 s) per remaining card: a 1-minute step comes
 back after 4 more cards if at least 4 remain; otherwise it waits for the next round or day. The
 same rule applies to any grade whose next step is that short.
+
+**Same evening**: a new card rated Good goes to its 10-minute learning step, which is inside
+learn-ahead, so it comes back in the next round even a minute later; Good again graduates it
+(FSRS-7 then schedules it weeks out). So with all-Good answers a card is seen at most twice in an
+evening, and "Another round" disappears once nothing is due.
 
 **After a round**: the daily goal is met by one finished round, or by having nothing to do, and
 the screen says "✓ Done for today". If something is still waiting (due cards, or new cards under
@@ -865,6 +872,17 @@ full-screen.
 - **Review** (`/review/[id]`): one card at a time. **Start** is a server action that builds the
   round, stores it and opens `/review/<round id>`; reloading resumes it. Grading, Not useful and
   finishing are server actions; Again's re-insertion (§4.4) happens in the client.
+  - **Grading doesn't wait for the server.** The round's cards are already on the client, each
+    with its interval preview per grade (`dueInMsByGrade`), so a grade shows the next card at once
+    and decides any in-round repeat locally. Saves go through a client queue
+    (`web/lib/save-queue.ts`): one at a time, in order, retried `config.review.saveRetries` (3)
+    times with backoff from `saveRetryMs` (1 s). Each grade carries a client `reviewId`, stored as
+    the review log's id, so a retry whose first attempt did land isn't graded twice. If a save
+    still fails, the screen says "Couldn't save N answers" with **Retry**, and later saves wait
+    behind it. Finishing the round (and ✕ to leave) waits until every save has landed. A repeated
+    card's grade buttons wait for its own save (they need its new state). A tap within
+    `config.review.revealGuardMs` (400 ms) of a grade doesn't reveal the next card, so a double
+    tap can't show the next answer.
   - *Say*: the front shows the English intent and an addressee chip ("→ 阿姨"). Tap to reveal the
     hanzi with ruby pinyin; audio plays; for terms, the example sentence (with pinyin) and its
     English appear below.
@@ -885,7 +903,12 @@ full-screen.
 - Today also shows the **reminder toggle** (§4.9).
 
 **Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN`, preferring an
-"Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.6 for slow replay. Speak the hanzi,
+"Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.45 for slow replay
+(`config.audio`). iOS Safari hands the rate to AVSpeechSynthesizer, which compresses the range:
+0.6 sounded almost the same as 0.9 on an iPhone, so slow replay is half the normal rate (lower
+than ~0.4 sounds smeared on desktop voices). Each play builds a fresh utterance with voice, lang
+and rate set before `speak()`, and calls `cancel()` only when something is speaking or queued
+(a `cancel()` right before `speak()` can drop the new utterance on WebKit). Speak the hanzi,
 with `…` replaced by a short pause; examples have their own play button. iOS needs a user gesture
 before the first utterance; the Start tap counts (it speaks a silent utterance to unlock speech,
 and the round opens by client-side navigation, so the unlock carries over). Cantonese (`zh-HK`)
@@ -954,6 +977,12 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 
 - **Vercel** Git integration: `main` → production; PRs → previews. The project's Root Directory
   is `web` (with files outside it included in the build).
+- **Function region**: `"regions": ["pdx1"]` in `web/vercel.json` is the one setting. It
+  **must match the Turso databases' region** (AWS `us-west-2`, Oregon; `pdx1` is Portland): every
+  page and action makes database round trips, and from Vercel's default `iad1` each crossed the
+  country (~70 ms). If the databases move, change `regions` with them
+  (`web/lib/vercel-config.test.ts` pins it). The file's value overrides the dashboard's Function
+  Region setting on each deploy.
 - **Turso**: two databases, `bamboo` (prod) and `bamboo-preview`. Vercel env vars are scoped
   per environment; previews get their own `AUTH_SECRET` and machine tokens.
 - **Migrations**: the Vercel build command (`web/vercel.json`) is
@@ -1065,6 +1094,36 @@ in docs, PRs or commit messages (counts only). Test fixtures are synthetic (Appe
 tutor evaluation's outputs (real questions, Gemini's and the models' answers, ratings) live only in
 `~/bamboo-eval/` in the account that ran it (§5.4).
 
+### 8.5 Request timing
+
+`web/lib/timing.ts` measures each page render (`page /…`), server action (`action …`) and API
+route (`GET /api/…`): total ms, database ms (summed), database calls (one per libSQL `execute` or
+`batch`) and `db_serial`, the calls started with nothing else in flight (≈ sequential round
+trips, what distance to the database multiplies). The one DB client (`repo/db.ts`) is wrapped
+once; an `AsyncLocalStorage` (one per process, shared by Next's bundles) ties calls to the
+request. Each request logs one JSON line, visible in Vercel's logs:
+
+```
+{"msg":"timing","route":"page /","status":200,"total_ms":9,"db_ms":5.2,"db_queries":5,"db_serial":1}
+```
+
+Only these fixed fields are logged: no ids, phrase text or anything Will typed. API routes also
+send `Server-Timing: total;dur=…, db;dur=…;desc="N queries"`. Pages and server actions can't
+set response headers in Next.js, so they have the log line only. Redirects and `notFound()` log
+their status; Next's own render bailouts aren't logged.
+
+Reads that don't depend on each other go in one libSQL `batch` (one round trip).
+`web/lib/repo/query-count.test.ts` pins the calls per request in the review flow:
+
+| Request | Calls (sequential) |
+|---|---|
+| Today | 5 (1) |
+| Start (`startRound`) | 2 (2) |
+| Review page (`getRound`) | 1 (1) |
+| Grade a new card | 3 (3) |
+| Grade any other card | 2 (2) |
+| Finish the round | 2 (2) |
+
 ## 9. Repository layout
 
 ```
@@ -1144,6 +1203,12 @@ bamboo/
 | 49 | The tutor evaluation reads its sample through a read-only agent-token route (`GET /api/agent/eval/turns`), sampled on the engine; its harness is `bamboo-eval`, separate from `bamboo-tools`; its prompt's one copy is in docs/PROMPTS.md, not `worker/prompts/` | The engine owns the data and the sampling rule, and the Mac already holds the agent token, so no new secret or DB access. Returning only the sampled turns keeps the export minimal. A separate entry point keeps model calls out of the CLI OpenClaw invokes. The prompt isn't a worker job prompt (no `prompt_version` on jobs); a run records its hash instead |
 | 50 | `#bamboo` is served by a dedicated OpenClaw agent, `bamboo` (thinking off, the skill's body inline in its workspace `AGENTS.md`, bound to the channel ahead of main's Discord binding); `make agent-install` applies it and `make agent-check` verifies it | The shared `main` agent took 75–120 s per message, nearly all thinking; the same model with thinking off answers in ~5–25 s, and OpenClaw sets thinking per agent, not per channel. With thinking off the model doesn't open `SKILL.md` and guessed flags; inline, it chose right every time. Generating `AGENTS.md` from `SKILL.md` keeps one source of truth. Routing is applied, not just printed: the merge only prepends one binding and keeps every other, refuses an unreadable `bindings`, leaves a non-`main` systemAgent alone, and is backed up and idempotent; the Discord ids come from `bamboo.config.json` |
 | 51 | `replies` and `nudge` swallow transient engine errors (network, timeout, 5xx, 429): one alert only after 30 min of outage, one line on recovery; other errors are reported once per distinct error; they never write stderr | One network blip posted `bamboo-tools replies: GET /api/agent/notifications: fetch failed` to `#bamboo`, because OpenClaw announces stderr when stdout is empty. Polls every 5 minutes make a blip routine and self-healing, so Will should hear only about a real outage. Auth and contract errors don't heal by themselves, so they're still posted, but once rather than every 5 minutes. Exiting 0 while quiet keeps OpenClaw's own failure alerts out of the channel too |
+| 52 | Functions run in `pdx1` (`regions` in `web/vercel.json`), next to Turso in `us-west-2` | Vercel's default `iad1` put every DB round trip across the country; a page with a few sequential reads took seconds on Will's phone. One documented setting, pinned by a test, that must follow the database |
+| 53 | Request timing is our own: a wrapped libSQL client, an `AsyncLocalStorage` per request, one JSON log line, `Server-Timing` on API routes | No dependency or tracing backend for a one-user app. Wrapping the client counts what Drizzle actually sends. Next.js offers no response headers for pages or actions, so the log line is the common denominator. Fixed fields only, so logs never carry Will's data |
+| 54 | Independent reads go in one libSQL `batch`; a grade reads the card, its siblings and the retry check in one batch | Round trips, not query cost, dominate latency to a remote DB. A batch is one request with no new API; in the review flow (Today / Start with the review page / grade a new card / grade another / finish) calls went from 9/9/4/3/6 to 5/3/3/2/2 and sequential trips from 2/6/4/3/3 to 1/3/3/2/2 |
+| 55 | Grading shows the next card at once and saves in the background (ordered queue, retries, idempotent `reviewId`) | The round's cards and each grade's interval preview are already on the client, so nothing about the next card depends on the save. Ordered saves keep a card's repeated grades in sequence; the client id makes a retry safe when only the response was lost; a stuck save is shown with Retry and blocks finishing, so Today never counts a round with lost answers |
+| 56 | Slow replay is 0.45 (was 0.6); `cancel()` only when busy | iOS compresses Web Speech rates (WebKit → AVSpeechSynthesizer), so 0.6 vs 0.9 was barely audible. Half the normal rate stays clear on desktop voices too. Must be checked by ear on an iPhone |
+| 57 | Learning cards in a round come in a per-round seeded order; review cards stay most overdue first, new cards stay in queue order | With all-Good answers, a new card rated Good is due again in 10 minutes (the second learning step, inside learn-ahead), so it's in the next round; ordered by due, the card graded first always led that round, which Will noticed as "the same card first every round". The shuffle is seeded by the round's start, so `buildRound` stays pure and testable. It changes no scheduling: whether a card answered right should come back the same evening at all (the 10-minute step) is a separate question for Will |
 
 ## Appendix A — Synthetic fixtures
 

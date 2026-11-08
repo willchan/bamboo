@@ -369,6 +369,21 @@ lines (`pnpm test` in `/web` fails below 90% on any of them).
   `review`, `round_finished`.
 - Server actions are in `web/app/actions.ts`; each calls `requireUser()`.
 
+*Follow-up PR: review speed (2026-11-07).* From Will's iPhone report (slow pages and next card;
+slow replay not slower; the same card first in several rounds):
+- Functions pinned to `pdx1` next to Turso `us-west-2` (DESIGN §8.2, §10 #52). Request timing
+  log lines and `Server-Timing` on API routes (§8.5, #53). Independent reads batched; the counts
+  per request are pinned by `web/lib/repo/query-count.test.ts` (§8.5, #54).
+- Grading no longer waits for the server: background saves with retry and an idempotent
+  `reviewId` (§6, #55). New e2e test with a dropped save request.
+- Slow replay 0.6 → 0.45, `cancel()` only when busy (§6 *Audio*, #56). Regression tests first.
+- "Same card first": not a scheduling bug. A new card rated Good is due again in 10 minutes
+  (inside learn-ahead), so it's in the next round, and by due it led because it was graded first
+  (`web/lib/repo/evening.test.ts` replays it). Learning cards now come in a per-round order
+  (§4.4, #57); scheduling is unchanged. Regression test first (fails on due order).
+- *For Will:* on the iPhone, check that 🐢 Slow is clearly slower than Replay, and that pages and
+  the next card feel fast. Vercel logs now show one `"msg":"timing"` line per request.
+
 ---
 
 ## M3 — Capture: engine

@@ -283,9 +283,12 @@ export async function pinPhrase(db: Db, id: string, now: number): Promise<boolea
 export type QueueRow = Phrase & { effectiveScore: number; rank: number };
 
 /** The ranked queue (DESIGN §4.6). */
+/** The queued phrases, unordered (for `orderQueue`, or a batch of reads). */
+export const queuedPhrasesQuery = (db: Db) =>
+  db.select().from(phrase).where(eq(phrase.status, "queued"));
+
 export async function listQueue(db: Db, now: number): Promise<QueueRow[]> {
-  const rows = await db.select().from(phrase).where(eq(phrase.status, "queued"));
-  return orderQueue(rows, now);
+  return orderQueue(await queuedPhrasesQuery(db), now);
 }
 
 export interface PhraseFilter {

@@ -68,16 +68,26 @@ export function loadVoices(): Promise<SpeechSynthesisVoice[]> {
 
 let chosen: SpeechSynthesisVoice | null | undefined;
 
-/** Speak hanzi in Mandarin; `slow` uses the slow-replay rate. Cancels anything already speaking. */
+/** The utterance rate: normal, or slow replay (DESIGN §6 *Audio*: iOS compresses the range). */
+export function speechRate(opts: { slow?: boolean } = {}): number {
+  return opts.slow ? config.audio.slowRate : config.audio.rate;
+}
+
+/**
+ * Speak hanzi in Mandarin; `slow` uses the slow-replay rate. Stops anything already speaking.
+ * Each call builds a fresh utterance with voice, lang and rate all set before `speak()` (WebKit
+ * reads them when the utterance is queued), and only cancels when something is actually speaking
+ * or queued: on iOS a `cancel()` right before `speak()` can swallow the new utterance.
+ */
 export async function speak(hanzi: string, opts: { slow?: boolean } = {}): Promise<void> {
   const s = synth();
   if (!s) return;
   if (chosen === undefined) chosen = pickVoice(await loadVoices());
   const u = new SpeechSynthesisUtterance(speechText(hanzi));
-  u.lang = config.audio.lang;
   if (chosen) u.voice = chosen;
-  u.rate = opts.slow ? config.audio.slowRate : config.audio.rate;
-  s.cancel();
+  u.lang = config.audio.lang;
+  u.rate = speechRate(opts);
+  if (s.speaking || s.pending) s.cancel();
   s.speak(u);
 }
 

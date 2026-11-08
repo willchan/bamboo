@@ -5,11 +5,17 @@ import { describe, expect, it } from "vitest";
 import { MACHINE_ROUTES } from "./smoke";
 
 const vercel = JSON.parse(readFileSync(join(import.meta.dirname, "..", "vercel.json"), "utf8")) as {
+  regions?: string[];
   crons?: unknown;
   schedules?: Record<string, { schedule: string; path?: string; requestMethod?: string }>;
 };
 
 describe("vercel.json", () => {
+  it("runs functions in pdx1, next to the Turso database in aws-us-west-2 (DESIGN §8.2)", () => {
+    // Every page and action makes several DB round trips; across the country each costs ~70 ms.
+    expect(vercel.regions).toEqual(["pdx1"]);
+  });
+
   it("schedules GET /api/cron/daily at 11:17 UTC", () => {
     expect(vercel.schedules?.daily).toEqual({
       schedule: "17 11 * * *",
