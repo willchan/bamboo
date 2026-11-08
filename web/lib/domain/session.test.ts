@@ -209,6 +209,49 @@ describe("buildRound", () => {
     });
   });
 
+  describe("Learn more (extra new cards beyond the cap)", () => {
+    const queue = queued(fresh(), fresh(), fresh(), fresh(), fresh());
+    const opts = { dayEnd: DAY_END, learnMore: true };
+
+    it("adds extraNewBatch new cards once today's cap is used up", () => {
+      const slots = buildRound(NOW, state({ queue, introducedToday: 3 }), opts);
+      expect(kinds(slots)).toBe("nnn");
+      expect(ids(slots)).toEqual(queue.slice(0, 3).map((q) => q.cards[0]!.id));
+    });
+
+    it("can be repeated: the batch doesn't depend on how many extra were learned", () => {
+      expect(buildRound(NOW, state({ queue, introducedToday: 7 }), opts)).toHaveLength(3);
+    });
+
+    it("adds nothing while the daily cap still has room (a normal round)", () => {
+      expect(buildRound(NOW, state({ queue, introducedToday: 1 }), opts)).toHaveLength(2);
+      expect(buildRound(NOW, state({ queue }), opts)).toHaveLength(3);
+    });
+
+    it("is limited by what's waiting", () => {
+      const short = queued(fresh(), fresh());
+      expect(buildRound(NOW, state({ queue: short, introducedToday: 3 }), opts)).toHaveLength(2);
+    });
+
+    it("keeps due cards, and reserves room for the new cards in a full round", () => {
+      const due = Array.from({ length: 12 }, (_, i) => review(-DAY + i * MIN));
+      const slots = buildRound(NOW, state({ activeCards: due, queue, introducedToday: 3 }), opts);
+      expect(slots).toHaveLength(config.session.roundSize);
+      expect(kinds(slots)).toBe("rrnrrnrrnr");
+      // The most overdue due cards stay.
+      expect(slots.filter((x) => x.kind === "review").map((x) => x.cardId)).toEqual(
+        due.slice(0, 7).map((c) => c.id),
+      );
+    });
+
+    it("respects a custom batch size", () => {
+      const session = { ...config.session, extraNewBatch: 1 };
+      expect(
+        buildRound(NOW, state({ queue, introducedToday: 3 }), { ...opts, session }),
+      ).toHaveLength(1);
+    });
+  });
+
   describe("sibling burying", () => {
     it("skips buried cards until the bury ends", () => {
       const buried = review(-HOUR, { buriedUntil: DAY_END });
@@ -279,16 +322,36 @@ describe("workload and done-for-today", () => {
       due: 2,
       newAvailable: 2,
       roundCards: 4,
+      learnMore: 0,
     });
   });
 
+  it("offers Learn more once the cap is used up and new phrases are waiting", () => {
+    const queue = queued(fresh(), fresh(), fresh(), fresh());
+    const w = workload(NOW, state({ queue, introducedToday: 3 }), { dayEnd: DAY_END });
+    expect(w).toEqual({ due: 0, newAvailable: 0, roundCards: 0, learnMore: 3 });
+    // Fewer waiting than a batch: offer what's there.
+    const two = workload(NOW, state({ queue: queued(fresh(), fresh()), introducedToday: 4 }), {
+      dayEnd: DAY_END,
+    });
+    expect(two.learnMore).toBe(2);
+  });
+
+  it("doesn't offer Learn more with nothing waiting or while the cap has room", () => {
+    expect(workload(NOW, state({ introducedToday: 3 }), { dayEnd: DAY_END }).learnMore).toBe(0);
+    const queue = queued(fresh(), fresh());
+    expect(workload(NOW, state({ queue, introducedToday: 2 }), { dayEnd: DAY_END }).learnMore).toBe(
+      0,
+    );
+  });
+
   it("asks to start when no round is finished and there is something to do", () => {
-    const w = { due: 3, newAvailable: 1, roundCards: 4 };
+    const w = { due: 3, newAvailable: 1, roundCards: 4, learnMore: 0 };
     expect(todayStatus(false, w)).toEqual({ kind: "start", workload: w });
   });
 
   it("is done for today with nothing due and the new cap used up", () => {
-    const w = { due: 0, newAvailable: 0, roundCards: 0 };
+    const w = { due: 0, newAvailable: 0, roundCards: 0, learnMore: 3 };
     expect(todayStatus(false, w)).toEqual({ kind: "done", another: null });
     expect(todayStatus(true, w)).toEqual({ kind: "done", another: null });
   });
@@ -299,7 +362,7 @@ describe("workload and done-for-today", () => {
   });
 
   it("offers another round after a finished round when more is waiting", () => {
-    const w = { due: 4, newAvailable: 0, roundCards: 4 };
+    const w = { due: 4, newAvailable: 0, roundCards: 4, learnMore: 3 };
     expect(todayStatus(true, w)).toEqual({ kind: "done", another: w });
   });
 });

@@ -30,11 +30,15 @@ import { timed } from "@/lib/timing";
 
 // --- Review ---------------------------------------------------------------------------------
 
-/** Start a round and open it; back to Today if there's nothing to review. */
-export async function startRoundAction(): Promise<void> {
+/**
+ * Start a round and open it; back to Today if there's nothing to review. A `learnMore=1` field
+ * asks for extra new cards (§4.4); the engine decides whether they're allowed.
+ */
+export async function startRoundAction(fd?: FormData): Promise<void> {
   return timed("action startRound", async () => {
     await requireUser();
-    const id = await startRound(getDb(), serverClock());
+    const learnMore = fd?.get("learnMore") === "1";
+    const id = await startRound(getDb(), serverClock(), { learnMore });
     redirect(id ? `/review/${id}` : "/");
   });
 }

@@ -133,6 +133,8 @@ export async function loadRoundState(db: Db, clock: Clock): Promise<LoadedState>
 export interface Today {
   status: TodayStatus;
   queueSize: number;
+  /** "Learn N more" (§4.4): N, or 0 when it isn't offered. */
+  learnMore: number;
 }
 
 export async function getToday(db: Db, clock: Clock): Promise<Today> {
@@ -144,13 +146,24 @@ function todayFrom(loaded: LoadedState, clock: Clock): Today {
   return {
     status: todayStatus(loaded.finishedRoundToday, w),
     queueSize: loaded.state.queue.length,
+    learnMore: w.learnMore,
   };
 }
 
-/** Build a round now and record it. Null when there's nothing to review. */
-export async function startRound(db: Db, clock: Clock): Promise<string | null> {
+/**
+ * Build a round now and record it. Null when there's nothing to review. `learnMore` asks for
+ * extra new cards beyond today's cap; the engine grants them only once the cap is used up (§4.4).
+ */
+export async function startRound(
+  db: Db,
+  clock: Clock,
+  opts: { learnMore?: boolean } = {},
+): Promise<string | null> {
   const loaded = await loadRoundState(db, clock);
-  const slots = buildRound(clock.now, loaded.state, { dayEnd: loaded.dayEnd });
+  const slots = buildRound(clock.now, loaded.state, {
+    dayEnd: loaded.dayEnd,
+    learnMore: opts.learnMore ?? false,
+  });
   if (slots.length === 0) return null;
   const id = newId();
   await db.insert(round).values({ id, startedAt: clock.now, cardIds: slots.map((s) => s.cardId) });

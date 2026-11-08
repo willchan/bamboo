@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { signOut } from "@/auth";
 import { BambooMark } from "@/components/bamboo-mark";
-import { StartButton } from "@/components/start-button";
+import { LearnMoreButton, StartButton } from "@/components/start-button";
 import { VoiceHint } from "@/components/voice-hint";
 import { APP_NAME } from "@/lib/app";
 import { requireUser } from "@/lib/auth/current";
@@ -30,7 +30,10 @@ export default async function TodayPage() {
   return timed("page /", async () => {
     const user = await requireUser();
     const clock = serverClock();
-    const { status, queueSize, worker, nudgeOn, nudgeAt } = await loadTodayPage(getDb(), clock);
+    const { status, queueSize, learnMore, worker, nudgeOn, nudgeAt } = await loadTodayPage(
+      getDb(),
+      clock,
+    );
 
     return (
       <>
@@ -70,6 +73,7 @@ export default async function TodayPage() {
               ) : null}
             </>
           )}
+          {learnMore > 0 ? <LearnMoreButton n={learnMore} /> : null}
           {worker.kind === "offline" ? (
             <p className="text-sm text-muted" data-testid="worker-offline">
               ⏳ {plural(worker.waiting, "question")} waiting for the Mac worker (

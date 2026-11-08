@@ -87,3 +87,62 @@ test("grading moves on at once and a failed save is retried", async ({ page }) =
   await page.getByRole("link", { name: "Back to Today" }).click();
   await expect(page.getByRole("button", { name: /^Another round \(2 due\)/ })).toBeVisible();
 });
+
+// Will's iPhone feedback: a Listen card's front is just the audio (no "you heard" hint, no "Tap
+// to show"); the back shows what he first heard under the answer. Once today's new cards are used
+// up (3, by the tests above), "Learn N more" starts a round with extra new cards (DESIGN §4.4).
+test("Learn more adds new cards past the cap; a Listen card's hint is on the back", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expect(page.getByTestId("done-for-today")).toBeVisible();
+  // Nothing new waiting: no Learn more.
+  await expect(page.getByRole("button", { name: /^Learn \d+ more/ })).toHaveCount(0);
+
+  await page.goto("/phrases/new");
+  await page.getByRole("radio", { name: "term" }).check({ force: true });
+  await page.getByLabel("Chinese", { exact: true }).fill("泡打粉");
+  await page.getByLabel("English meaning", { exact: true }).fill("baking powder");
+  await page.getByLabel("What you heard (optional)").fill("podafen");
+  await page.getByRole("checkbox", { name: /^Say it/ }).uncheck();
+  await page.getByRole("checkbox", { name: /^Listen/ }).check();
+  await page.getByRole("button", { name: "Add phrase" }).click();
+  await expect(page.getByTestId("saved")).toBeVisible();
+
+  await page.goto("/phrases/new");
+  await page.getByRole("radio", { name: "sentence" }).check({ force: true });
+  await page.getByLabel("Chinese", { exact: true }).fill("穿鞋。");
+  await page.getByLabel("English intent", { exact: true }).fill("Put on your shoes.");
+  await page.getByRole("button", { name: "Add phrase" }).click();
+  await expect(page.getByTestId("saved")).toBeVisible();
+
+  // Today's 3 new cards are used, so the new phrases wait for an opt-in.
+  await page.goto("/");
+  await page.getByRole("button", { name: "Learn 2 more" }).click();
+
+  // The 2 cards still on their learning step, plus the 2 extra new ones.
+  const progress = page.getByTestId("progress");
+  let sawListen = false;
+  for (const i of [1, 2, 3, 4]) {
+    await expect(progress).toHaveText(`${i} / 4`);
+    await expect(page.getByText("Tap to show")).toHaveCount(0);
+    await expect(page.getByText(/you (first )?heard/)).toHaveCount(0);
+    // Tapping the card itself reveals it (past the reveal guard).
+    await expect(async () => {
+      await page.getByRole("button", { name: "Show answer" }).click();
+      await expect(page.getByRole("button", { name: /^Good/ })).toBeVisible({ timeout: 300 });
+    }).toPass();
+    const back = page.getByTestId("card-back");
+    if (await back.getByText("baking powder").isVisible()) {
+      sawListen = true;
+      await expect(back.getByTestId("heard-as")).toHaveText("you first heard: podafen");
+    } else {
+      await expect(back.getByTestId("heard-as")).toHaveCount(0);
+    }
+    await page.getByRole("button", { name: /^Good/ }).click();
+  }
+  expect(sawListen).toBe(true);
+  await expect(page.getByTestId("done-for-today")).toBeVisible();
+  // Nothing new left to learn.
+  await expect(page.getByRole("button", { name: /^Learn \d+ more/ })).toHaveCount(0);
+});
