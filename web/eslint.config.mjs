@@ -9,6 +9,10 @@ export default defineConfig([
   prettier,
   globalIgnores([
     ".next/**",
+    ".next-seeded/**",
+    ".next-e2e-seeded/**",
+    ".next-prod-copy/**",
+    ".shots/**",
     "coverage/**",
     "playwright-report/**",
     "test-results/**",

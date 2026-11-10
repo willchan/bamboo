@@ -11,6 +11,9 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "dev:seeded": "tsx scripts/dev-server.ts --mode seeded",
+    "dev:prod-copy": "tsx scripts/dev-server.ts --mode prod-copy",
+    "shot": "tsx scripts/shot.ts",
     "seed": "tsx scripts/seed.ts",
     "smoke": "tsx scripts/smoke.ts"
   },

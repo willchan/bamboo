@@ -16,6 +16,7 @@
     "db:check": "pnpm --filter @bamboo/db check",
     "db:migrate": "pnpm --filter @bamboo/db migrate",
     "db:seed": "pnpm --filter web seed",
+    "db:prod-copy": "pnpm --filter @bamboo/db prod-copy",
     "smoke": "pnpm --filter web smoke"
   },
   "devDependencies": {

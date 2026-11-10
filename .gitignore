@@ -1,5 +1,13 @@
 node_modules/
 .next/
+.next-seeded/
+.next-e2e-seeded/
+.next-prod-copy/
+# pnpm --filter web shot output (web/.shots; prod-copy shots under it never leave the machine)
+.shots/
+
+# make prod-copy: the local copy of production (real conversations — never commit)
+/.scratch/
 .env*
 !.env.example
 *.db

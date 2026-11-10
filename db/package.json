@@ -12,7 +12,8 @@
     "test": "vitest run",
     "generate": "drizzle-kit generate",
     "check": "drizzle-kit check",
-    "migrate": "tsx src/migrate.ts"
+    "migrate": "tsx src/migrate.ts",
+    "prod-copy": "NODE_USE_ENV_PROXY=1 tsx src/prod-copy.ts"
   },
   "dependencies": {
     "@libsql/client": "0.18.0",

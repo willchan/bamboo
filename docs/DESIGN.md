@@ -1139,6 +1139,73 @@ Reads that don't depend on each other go in one libSQL `batch` (one round trip).
 | Grade any other card | 2 (2) |
 | Finish the round | 2 (2) |
 
+### 8.6 Verification loops
+
+Two ways to see a change working before calling it done, beyond the tests. Neither gates merges.
+`.claude/skills/verify/SKILL.md` says which one a change needs; `.claude/settings.json` allows
+the seeded-loop commands, asks before `make prod-copy`, and denies production deploys and
+remote-database writes. Ported from PandaBase (its PRs #41, #47, #50, #52).
+
+**Seeded app** (works anywhere: locally, in cloud sessions, in CI).
+
+- `pnpm --filter web dev:seeded` (`.claude/launch.json` → `dev-seeded`, port 3000): `next dev`
+  on a throwaway `db/dev-seeded.db`, freshly migrated and seeded on every start
+  (`web/scripts/seed-data.ts`, synthetic only), signed in through `DEV_AUTH_BYPASS` as the fake
+  `dev@example.com`. Its own build directory (`.next-seeded`, `NEXT_DIST_DIR`), so it runs beside
+  `pnpm dev`. Real-service secrets are set to `""`, which Next keeps over any `.env` file.
+- The seed is relative to *now*: review cards due now, three phrases introduced a few minutes ago
+  (on their learning step, which uses up today's new cards, so Today offers "Learn 3 more"), six
+  new phrases waiting in Up next, finished rounds and reviews on past days (Stats), three imports
+  with turns, extraction events and one failed job (Imports), and a recent worker heartbeat.
+  `pnpm db:seed` adds the same data to `db/dev.db`.
+- `pnpm --filter web shot [paths…]`: Playwright phone screenshots (390×844 @2x) of each path in
+  light and dark, into the gitignored `web/.shots/`. It starts its own seeded server on port 3211
+  unless `--base-url` / `SHOT_BASE_URL` points at a running one. Two pseudo-paths drive a round:
+  `/review/start` (Start, then the first card) and `/review/back` (the same, then Show). It prints
+  every console error, page error, failed request and HTTP status ≥ 400, and exits 1 if there were
+  any.
+- `pnpm --filter web test:e2e` runs a second Playwright project, `seeded` (`web/e2e/seeded/`), on
+  its own seeded server (port 3101, `db/e2e-seeded.db`), for checks that need data in every state.
+
+**Prod copy** (real data, on demand, read-only).
+
+Bamboo's data is Will's real Gemini conversations. **Prod data and prod-copy screenshots never go
+in commits, PRs, fixtures, CI logs or chat**; report counts and pass/fail only (§8.4).
+
+- `make prod-copy` (`db/src/prod-copy.ts`) copies production into the gitignored
+  `.scratch/prod-copy.db` (schema, rows, indexes, migration journal), writing a temp file and
+  renaming it, so a failed copy leaves the old one. The source connection is wrapped so only a
+  single plain `SELECT` is ever sent; anything else throws before it reaches the client. It prints
+  row counts per table, never the token, the database host or any row. Nothing is scheduled: copy
+  fresh when needed, and **delete it when done** with `make prod-copy-clean`.
+- Credentials: `PROD_RO_TURSO_URL` + `PROD_RO_TURSO_TOKEN`, a **read-only** token. Never the
+  read-write `TURSO_AUTH_TOKEN`. Create the token once (Turso CLI, signed in):
+
+  ```
+  turso db show bamboo --url                          # → PROD_RO_TURSO_URL (libsql://…)
+  turso db tokens create bamboo --read-only           # → PROD_RO_TURSO_TOKEN
+  ```
+
+  Locally they go in `~/.config/bamboo/prod-ro.env` (outside the repo; `PROD_RO_ENV_FILE`
+  overrides), as `KEY=value` lines; `chmod 600` it. The process env wins over the file.
+- **In a cloud session** the token is a **network secret**, so it never enters the session's VM.
+  At claude.ai/code: the environment selector → the Bamboo environment's settings → **Network
+  secrets** → **Add secret**: type **Bearer**, **Allowed websites** = the database's exact Turso
+  host (the host part of `PROD_RO_TURSO_URL`, shaped `<db>-<org>.<region>.turso.io`), header
+  `Authorization`, prefix `Bearer`, value = the read-only token. Then, in the environment's
+  variables (plain text, readable by anyone using the environment, so no token):
+  `PROD_RO_TURSO_URL=libsql://…` and `PROD_RO_TOKEN_FROM_PROXY=1`. A host with a network secret
+  is reachable whatever the network level, so no allowlist entry is needed. With the flag set,
+  `make prod-copy` sends no token of its own and talks HTTPS (`libsql://` → `https://`), since the
+  proxy adds secrets to HTTP(S) requests only; it refuses a token in the env as well. Node's
+  built-in `fetch` ignores `HTTPS_PROXY` on its own, so the script runs with
+  `NODE_USE_ENV_PROXY=1`. The real host stays in the environment settings, never in the repo.
+- `pnpm --filter web dev:prod-copy` (`.claude/launch.json` → `dev-prod-copy`, port 3001): `next
+  dev` on the copy under the dev sign-in. It refuses to start unless `TURSO_DATABASE_URL`
+  (default: the copy) is an existing `file:` URL, and blanks every real-service secret. Writes made
+  while clicking around land in the copy only. `pnpm --filter web shot --prod-copy …` shoots it
+  into `web/.shots/prod-copy/`: look locally; those shots never leave the machine.
+
 ## 9. Repository layout
 
 ```
@@ -1146,9 +1213,10 @@ bamboo/
   CLAUDE.md  README.md  Makefile  package.json  pnpm-workspace.yaml  tsconfig.base.json
   docs/       PRD.md DESIGN.md PLAN.md ROADMAP.md
   web/        Next.js app — app/, components/, lib/domain/ (pure), lib/repo/ (DB), lib/config.ts,
-              lib/api/ (machine-route auth and bodies), scripts/seed.ts (`pnpm db:seed`),
-              scripts/smoke.ts (`pnpm smoke`), e2e/ (Playwright)
-  db/         @bamboo/db — src/schema/*, migrations/, migrate script
+              lib/api/ (machine-route auth and bodies), scripts/seed.ts (`pnpm db:seed`) and
+              seed-data.ts, scripts/dev-server.ts + shot.ts (§8.6), scripts/smoke.ts
+              (`pnpm smoke`), e2e/ (Playwright; e2e/seeded/ on the seeded server)
+  db/         @bamboo/db — src/schema/*, migrations/, migrate script, prod-copy.ts (§8.6)
   shared/     @bamboo/shared — src/contracts/*, text.ts, turns.ts, segment.ts, config.ts;
               tests/fixtures/ (synthetic PDF text + expected turns)
   worker/     @bamboo/worker — src/ (claim loop, engine and ollama clients, config, eval),
@@ -1228,6 +1296,7 @@ bamboo/
 | 59 | `heard_as` is shown only on a Listen card's back, as "you first heard: …" under the answer; the front is the audio alone | On the front, Will's own misheard spelling (often one run-together guess for a whole phrase) was the first thing he read, which reinforced the mistake, and when one question became two cards both showed the same guess. Under the correct pinyin it becomes a contrast instead. `heard_as` is still stored and still used for ranking and dedupe |
 | 60 | Slow replay is 0.3 (was 0.45, #56) | Will's iPhone feedback: 0.45 was better than 0.6 but still not slow enough, because iOS compresses the rate range. Still to be checked by ear on the iPhone |
 | 61 | "Learn N more" is a start-round option (`learnMore`), granted by the engine only once today's `newPerDay` is used up; no new column | The round's card ids are stored when it's built, so the extra allowance only matters at build time: a reload resumes the same cards, and the next round counts today's introductions (now past the cap) as usual. Deciding on the server keeps the cap authoritative (a stale button gives an ordinary round). Opt-in, not a higher `newPerDay`: each new card adds future reviews, so more is a choice for a day with spare time. The round reserves room for the extras, or a long due list would leave the button doing nothing |
+| 62 | Verification loops: a seeded app with phone screenshots, and an on-demand read-only prod copy (§8.6), ported from PandaBase | Tests passed while checks Will did by hand on the iPhone stayed pending for days. A seeded server with data in every state lets a session look at each screen in both themes; the prod copy answers "does it hold on real data?" without touching prod. Read-only token, SELECT-only wrapper and counts-only output, because the data is Will's own conversations |
 
 ## Appendix A — Synthetic fixtures
 
