@@ -7,7 +7,14 @@ export default defineConfig({
   },
   test: {
     include: ["**/*.test.ts", "**/*.test.tsx"],
-    exclude: ["node_modules/**", ".next/**", "e2e/**"],
+    exclude: [
+      "node_modules/**",
+      ".next/**",
+      ".next-seeded/**",
+      ".next-e2e-seeded/**",
+      ".next-prod-copy/**",
+      "e2e/**",
+    ],
     setupFiles: ["./vitest.setup.ts"],
     // next-auth imports `next/server` without an extension; let Vite resolve it.
     server: { deps: { inline: ["next-auth", "@auth/core"] } },

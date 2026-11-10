@@ -1,5 +1,5 @@
 # Thin wrappers over pnpm. Targets marked "stub" are filled in by the milestone named.
-.PHONY: install dev lint typecheck test build check db-migrate \
+.PHONY: install dev lint typecheck test build check db-migrate prod-copy prod-copy-clean \
 	worker-install worker-logs agent-install agent-check mac-update tutor-eval
 
 install:
@@ -25,6 +25,15 @@ check: lint typecheck test build
 
 db-migrate:
 	pnpm db:migrate
+
+# Production → .scratch/prod-copy.db (gitignored) with a READ-ONLY token; prints row counts only.
+# PROD_RO_TURSO_URL / PROD_RO_TURSO_TOKEN, else ~/.config/bamboo/prod-ro.env (DESIGN §8.6).
+prod-copy:
+	pnpm db:prod-copy
+
+# Delete the prod copy (and its SQLite side files) once you're done with it.
+prod-copy-clean:
+	rm -f .scratch/prod-copy.db .scratch/prod-copy.db-journal .scratch/prod-copy.db-wal .scratch/prod-copy.db-shm
 
 # --- Mac mini (DESIGN §8.3) ---------------------------------------------------------------------
 

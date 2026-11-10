@@ -53,6 +53,10 @@ Read only the sections your task needs.
   copies go in the gitignored `private/`. Children's names and health details must not appear in
   the repo. Fixtures are synthetic.
 - **Bug fixes start with a regression test** that fails before the fix.
+- **Done means seen working.** Before finishing a UI, data or scheduling change, follow
+  `.claude/skills/verify/SKILL.md`: seeded screenshots first, the read-only prod copy when real
+  data matters. Prod data and prod-copy screenshots never go in commits, PRs, fixtures, CI logs
+  or chat (counts and pass/fail only). Ask Will before `make prod-copy`; delete the copy when done.
 - **Opened a PR?** Turn on its Auto-fix (the app's PR monitor) so CI failures, merge conflicts
   and review comments wake you.
 
@@ -64,11 +68,16 @@ Read only the sections your task needs.
 pnpm install
 pnpm dev                                   # web on localhost:3000 (DEV_AUTH_BYPASS=1 for local sign-in)
 pnpm lint && pnpm typecheck && pnpm test   # what CI runs (web test enforces ≥ 90% coverage on lib/domain), plus: pnpm --filter web build
-pnpm --filter web test:e2e                 # Playwright, phone viewport; own server on :3100 and fresh db/e2e.db
+pnpm --filter web test:e2e                 # Playwright, phone viewport; servers on :3100 (fresh db/e2e.db) and :3101 (seeded)
 pnpm --filter web exec playwright install chromium   # once, before the first e2e run
 pnpm db:generate                           # after editing db/src/schema/*: new migration (commit it)
 pnpm db:migrate                            # apply migrations to TURSO_DATABASE_URL (default file:db/dev.db)
 pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
+pnpm --filter web dev:seeded               # next dev on a throwaway seeded db/dev-seeded.db (dev sign-in)
+pnpm --filter web shot / /review/back /imports /stats   # phone shots, light + dark → web/.shots; nonzero on console/request errors
+make prod-copy                             # ask Will first: prod → .scratch/prod-copy.db, READ-ONLY token, counts only (DESIGN §8.6)
+pnpm --filter web dev:prod-copy            # next dev on the prod copy (refuses non-file: DBs)
+make prod-copy-clean                       # delete the copy when you're done
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
 pnpm smoke <url>                           # after each deploy: public, read-only checks of a deployment (no secrets)
 make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
