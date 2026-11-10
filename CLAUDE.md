@@ -53,6 +53,8 @@ Read only the sections your task needs.
   copies go in the gitignored `private/`. Children's names and health details must not appear in
   the repo. Fixtures are synthetic.
 - **Bug fixes start with a regression test** that fails before the fix.
+- **Opened a PR?** Turn on its Auto-fix (the app's PR monitor) so CI failures, merge conflicts
+  and review comments wake you.
 
 ## Commands
 
