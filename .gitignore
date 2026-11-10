@@ -27,6 +27,7 @@ test-results/
 *.db-wal
 
 # misc
+.claude/worktrees/
 .DS_Store
 *.pem
 *.log

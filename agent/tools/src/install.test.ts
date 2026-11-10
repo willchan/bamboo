@@ -222,6 +222,10 @@ describe("agent/install.sh", () => {
     install();
     expect(automations()).toHaveLength(2);
     const calls = readFileSync(join(home, "openclaw-calls.log"), "utf8");
+    // Regression: OpenClaw refuses `automations add` without --agent once a second agent exists.
+    const adds = calls.split("\n").filter((l) => l.includes("automations add"));
+    expect(adds).toHaveLength(2);
+    for (const l of adds) expect(l).toContain("--agent main");
     expect(calls).not.toContain(TOKEN);
     expect(calls).not.toMatch(/gateway (stop|restart)/u);
     // Nothing touched PandaBase's gateway env.

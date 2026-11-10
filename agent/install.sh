@@ -342,7 +342,9 @@ else
   }
   upsert() {
     local name="$1" cron="$2" command="$3" id
-    local args=(--cron "$cron" --tz "$tz" --command "$command" --announce --channel discord --to "channel:$channel_id")
+    # --agent: with more than one OpenClaw agent, `automations add` refuses a job without one
+    # (PandaBase hit it live, 2026-11-07). Default main, where these command jobs already run.
+    local args=(--cron "$cron" --tz "$tz" --command "$command" --announce --channel discord --to "channel:$channel_id" --agent "${OPENCLAW_AGENT:-main}")
     id="$(job_id "$name")"
     if [ -n "$id" ]; then
       run openclaw automations edit "$id" "${args[@]}" >/dev/null
