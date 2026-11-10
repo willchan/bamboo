@@ -73,3 +73,18 @@ make worker-install / worker-logs / agent-install / agent-check / mac-update   #
 pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model
 make tutor-eval ARGS="run | serve | score …"   # Mac, as openclaw-agent: local tutor evaluation (DESIGN §5.4); output in ~/bamboo-eval/
 ```
+
+## Working on the live Mac mini
+
+Lessons from live runs (November 2026). Ask before anything that changes production.
+
+- **Two accounts.** Claude sessions run as the admin user; Bamboo's Mac side belongs to
+  `openclaw-agent`. Run there with `ssh agent '<cmd>'` from `~/Code/bamboo`. Its token lives in
+  that account's `~/.config/bamboo/agent.env` as `BAMBOO_AGENT_API_TOKEN` (Vercel's stays
+  `AGENT_API_TOKEN`), never in the admin's home.
+- **After a PR merges,** run `make mac-update` there.
+- **Shared with PandaBase:** the OpenClaw gateway and Ollama. Ollama's settings, models and memory
+  budget belong to the host's runbook, not to Bamboo: don't change them from here. New
+  automations need `--agent` (the installer passes `main`).
+- **"ok" isn't proof.** An automation can finish "ok" without doing its work. Check the run
+  (`openclaw automations runs <id> --json`) and the output it should have produced.
