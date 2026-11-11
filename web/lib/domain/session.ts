@@ -212,6 +212,15 @@ export function reinsertIndex(
 }
 
 /**
+ * Hard on a card that's still learning (§4.4, §10 #63): FSRS repeats the step (5–10 m), which is
+ * inside learn-ahead, so the card would be due again at once and "Another round" would offer it
+ * all evening. Instead it keeps its step and waits for tomorrow (buried until the next day start).
+ * Again still comes back tonight; a card in Review isn't affected.
+ */
+export const holdUntilTomorrow = (grade: number, nextState: number): boolean =>
+  grade === 2 && (nextState === State.Learning || nextState === State.Relearning);
+
+/**
  * Sibling burying: once a card of a phrase has been shown today, its other cards wait until
  * tomorrow. Cards mid-learning keep their steps.
  */

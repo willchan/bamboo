@@ -78,6 +78,14 @@ describe("fsrs", () => {
     expect(p[2]).toBeGreaterThan(p[1]);
   });
 
+  it("previews Hard on a learning card as held until the day ends, when given one", async () => {
+    const dayEnd = T0 + 8 * 60 * MIN;
+    const p = await previewIntervals("c1", newCardColumns(T0), T0, dayEnd);
+    expect(p[2]).toBe(dayEnd - T0);
+    expect(p[1]).toBe(1 * MIN); // Again still comes back tonight
+    expect(p[3]).toBe(10 * MIN);
+  });
+
   it("formats intervals compactly", () => {
     expect(formatInterval(10_000)).toBe("<1m");
     expect(formatInterval(10 * MIN)).toBe("10m");

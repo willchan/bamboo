@@ -94,3 +94,49 @@ it("replays an evening of all-Good rounds a few minutes apart", async () => {
     another: null,
   });
 });
+
+/** One round started at `now`, every card rated `grade` ~10 s apart. Cards shown, by English. */
+async function roundAll(now: number, grade: 1 | 2 | 3 | 4): Promise<string[] | null> {
+  const id = await startRound(db, clock(now));
+  if (!id) return null;
+  const cards = (await getRound(db, id, clock(now)))!.cards;
+  for (const [k, c] of cards.entries()) {
+    await gradeCard(
+      db,
+      { roundId: id, cardId: c.cardId, grade, source: "session", durationMs: 5000 },
+      clock(now + (k + 1) * 10_000),
+    );
+  }
+  await finishRound(db, id, clock(now + (cards.length + 1) * 10_000));
+  return cards.map((c) => c.english);
+}
+
+it("Hard on a learning card holds it until tomorrow instead of looping all evening", async () => {
+  // Will's report: two words rated Hard came back in every "Another round". Hard repeats a
+  // learning step (5–10 m), inside learn-ahead, so the card was due again at once, forever.
+  await queued("喝水", "water", 4);
+  await queued("吃饭", "eat", 3);
+
+  expect(await roundAll(T0, 3)).toEqual(["water", "eat"]); // Good: 10-minute step
+  expect((await roundAll(T0 + 5 * MIN, 2))?.sort()).toEqual(["eat", "water"]); // Hard
+
+  // No more rounds tonight for those two: they wait for tomorrow.
+  expect((await getToday(db, clock(T0 + 7 * MIN))).status).toEqual({
+    kind: "done",
+    another: null,
+  });
+  expect(await startRound(db, clock(T0 + 30 * MIN))).toBeNull();
+
+  // Tomorrow they're still learning cards, due, and in the first round.
+  for (const c of await db.select().from(card)) expect(c.state).toBe(State.Learning);
+  expect((await roundAll(T0 + DAY, 3))?.sort()).toEqual(["eat", "water"]);
+});
+
+it("Again on a learning card still brings it back tonight", async () => {
+  await queued("喝水", "water", 4);
+  expect(await roundAll(T0, 1)).toEqual(["water"]);
+  expect((await getToday(db, clock(T0 + 2 * MIN))).status).toMatchObject({
+    kind: "done",
+    another: { due: 1 },
+  });
+});

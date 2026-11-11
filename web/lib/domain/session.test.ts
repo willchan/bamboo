@@ -5,6 +5,7 @@ import { State } from "./fsrs";
 import {
   askedAgainCards,
   buildRound,
+  holdUntilTomorrow,
   interleave,
   introducedSince,
   isFirstSight,
@@ -404,5 +405,18 @@ describe("seededShuffle", () => {
     expect(seededShuffle(xs, 42)).toEqual(a);
     expect(xs).toEqual([1, 2, 3, 4, 5, 6]);
     expect(seededShuffle([], 1)).toEqual([]);
+  });
+});
+
+describe("holdUntilTomorrow", () => {
+  it("holds Hard on a learning or relearning card", () => {
+    expect(holdUntilTomorrow(2, State.Learning)).toBe(true);
+    expect(holdUntilTomorrow(2, State.Relearning)).toBe(true);
+  });
+
+  it("leaves other grades and graduated cards alone", () => {
+    expect(holdUntilTomorrow(1, State.Learning)).toBe(false);
+    expect(holdUntilTomorrow(3, State.Learning)).toBe(false);
+    expect(holdUntilTomorrow(2, State.Review)).toBe(false);
   });
 });

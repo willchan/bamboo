@@ -27,6 +27,7 @@ import { computePinyin, displayPinyin } from "../domain/pinyin";
 import {
   buildRound,
   isFirstSight,
+  holdUntilTomorrow,
   siblingsToBury,
   todayStatus,
   workload,
@@ -201,8 +202,13 @@ export interface ReviewCardView {
 
 export type IntervalPreview = Pick<ReviewCardView, "intervals" | "dueInMsByGrade">;
 
-async function intervalPreview(c: Card, now: number): Promise<IntervalPreview> {
-  const ms = await previewIntervals(c.id, fsrsColumns(c), now);
+async function intervalPreview(c: Card, clock: Clock): Promise<IntervalPreview> {
+  const ms = await previewIntervals(
+    c.id,
+    fsrsColumns(c),
+    clock.now,
+    nextDayStart(clock.now, dayOpts(clock)),
+  );
   return {
     intervals: Object.fromEntries(GRADES.map((g) => [g, formatInterval(ms[g])])) as Record<
       Grade,
@@ -212,7 +218,7 @@ async function intervalPreview(c: Card, now: number): Promise<IntervalPreview> {
   };
 }
 
-async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView> {
+async function cardView(c: Card, p: Phrase, clock: Clock): Promise<ReviewCardView> {
   return {
     cardId: c.id,
     phraseId: p.id,
@@ -230,7 +236,7 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
       pinyin: computePinyin(e.hanzi),
     })),
     note: p.note,
-    ...(await intervalPreview(c, now)),
+    ...(await intervalPreview(c, clock)),
   };
 }
 
@@ -270,7 +276,7 @@ export async function getRound(db: Db, roundId: string, clock: Clock): Promise<R
   const cards = await Promise.all(
     todo.flatMap((id) => {
       const x = live.get(id);
-      return x ? [cardView(x.card, x.phrase, clock.now)] : [];
+      return x ? [cardView(x.card, x.phrase, clock)] : [];
     }),
   );
   return { id: r.id, finished: r.finishedAt !== null, total: r.cardIds.length, cards };
@@ -328,14 +334,20 @@ export async function gradeCard(
   if (!row || row.phrase.status === "dropped") return null;
   const { card: c, phrase: p } = row;
   if (saved.length > 0) {
-    return { dueInMs: c.due - now, ...(await intervalPreview(c, now)) };
+    return { dueInMs: c.due - now, ...(await intervalPreview(c, clock)) };
   }
   const outcome = await reviewCard(c.id, fsrsColumns(c), input.grade, now);
   const dayEnd = nextDayStart(now, dayOpts(clock));
   const siblings = rows.map((r) => r.card);
 
   const writes: BatchItem<"sqlite">[] = [
-    db.update(card).set(outcome.next).where(eq(card.id, c.id)),
+    db
+      .update(card)
+      .set({
+        ...outcome.next,
+        ...(holdUntilTomorrow(input.grade, outcome.next.state) ? { buriedUntil: dayEnd } : {}),
+      })
+      .where(eq(card.id, c.id)),
     db.insert(reviewLog).values({
       id: input.reviewId ?? newId(),
       cardId: c.id,
@@ -393,7 +405,7 @@ export async function gradeCard(
   await runBatch(db, writes);
 
   const next = { ...c, ...outcome.next };
-  return { dueInMs: outcome.next.due - now, ...(await intervalPreview(next, now)) };
+  return { dueInMs: outcome.next.due - now, ...(await intervalPreview(next, clock)) };
 }
 
 /** Not useful (first sight only): the phrase is dropped and the drop teaches the ranking. */

@@ -8,6 +8,7 @@ export { Rating };
 export type Grade = 1 | 2 | 3 | 4;
 export const GRADES: readonly Grade[] = [1, 2, 3, 4];
 
+import { holdUntilTomorrow } from "./session";
 import { State } from "./state";
 export { State };
 
@@ -147,17 +148,24 @@ export async function reviewCard(
   return { next: fromSchedulerCard(result.card), log: serializeLog(result.revlog) };
 }
 
-/** For each grade, how long until the card would be due again (ms), for the grade buttons. */
+/**
+ * For each grade, how long until the card would be shown again (ms), for the grade buttons. With
+ * `dayEnd`, a grade that holds the card until tomorrow (`holdUntilTomorrow`) waits at least until
+ * then.
+ */
 export async function previewIntervals(
   cardId: string,
   current: FsrsColumns,
   now: number,
+  dayEnd?: number,
 ): Promise<Record<Grade, number>> {
   const s = await scheduler();
   const out = { 1: 0, 2: 0, 3: 0, 4: 0 } as Record<Grade, number>;
   for (const item of s.preview({ card: toSchedulerCard(cardId, current), now: new Date(now) })) {
     const grade = item.grade as Grade;
-    out[grade] = Math.max(0, fromSchedulerCard(item.card).due - now);
+    const next = fromSchedulerCard(item.card);
+    const held = dayEnd !== undefined && holdUntilTomorrow(grade, next.state);
+    out[grade] = Math.max(0, held ? Math.max(next.due, dayEnd) - now : next.due - now);
   }
   return out;
 }

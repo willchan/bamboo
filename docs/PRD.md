@@ -112,6 +112,8 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   screen says so with a Retry button instead of losing the answer.
 - A new card he gets right comes back once more later that evening (a ~10-minute learning step),
   then not for weeks. Cards on a learning step come in a different order each round.
+- **Hard** on a card he's still learning means "not sure yet": it waits until tomorrow instead
+  of coming back in every Another round tonight. **Again** still brings it back tonight.
 - The **first time** a new card appears, two more buttons:
   - **Not useful**: the phrase is dropped, and the drop teaches the ranking.
   - **Already know**: graded Easy, so it comes back much later.

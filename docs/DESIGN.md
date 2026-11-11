@@ -314,6 +314,11 @@ reload resumes it without the cards already graded.
 round, judged as `config.session.secondsPerCard` (15 s) per remaining card: a 1-minute step comes
 back after 4 more cards if at least 4 remain; otherwise it waits for the next round or day. The
 same rule applies to any grade whose next step is that short.
+**Hard while learning** (`holdUntilTomorrow`): FSRS's Hard repeats a learning step (5–10 min),
+which is inside learn-ahead, so the card would be due again at once and "Another round" would
+offer it all evening. So Hard on a card that stays Learning/Relearning also buries it until the
+next 04:00 (`buried_until`); it keeps its step and is due in tomorrow's first round. The Hard
+button's label shows that wait. Again still comes back the same evening (§10 #63).
 
 **Same evening**: a new card rated Good goes to its 10-minute learning step, which is inside
 learn-ahead, so it comes back in the next round even a minute later; Good again graduates it
@@ -1297,6 +1302,7 @@ bamboo/
 | 60 | Slow replay is 0.3 (was 0.45, #56) | Will's iPhone feedback: 0.45 was better than 0.6 but still not slow enough, because iOS compresses the rate range. Still to be checked by ear on the iPhone |
 | 61 | "Learn N more" is a start-round option (`learnMore`), granted by the engine only once today's `newPerDay` is used up; no new column | The round's card ids are stored when it's built, so the extra allowance only matters at build time: a reload resumes the same cards, and the next round counts today's introductions (now past the cap) as usual. Deciding on the server keeps the cap authoritative (a stale button gives an ordinary round). Opt-in, not a higher `newPerDay`: each new card adds future reviews, so more is a choice for a day with spare time. The round reserves room for the extras, or a long due list would leave the button doing nothing |
 | 62 | Verification loops: a seeded app with phone screenshots, and an on-demand read-only prod copy (§8.6), ported from PandaBase | Tests passed while checks Will did by hand on the iPhone stayed pending for days. A seeded server with data in every state lets a session look at each screen in both themes; the prod copy answers "does it hold on real data?" without touching prod. Read-only token, SELECT-only wrapper and counts-only output, because the data is Will's own conversations |
+| 63 | Hard on a learning card holds it until tomorrow | Will rated two new words Hard because he doubted he'd remember them, and they came back in every "Another round". Hard repeats the current learning step (5–10 min), always inside the 20-minute learn-ahead, so only Good ever moved them on. Burying until the next day start keeps FSRS's state untouched (the step repeats tomorrow) and stops the loop; Again, a clear "I forgot", still comes back tonight. Chosen over a cap on same-evening repeats and over making Hard advance the step |
 
 ## Appendix A — Synthetic fixtures
 
