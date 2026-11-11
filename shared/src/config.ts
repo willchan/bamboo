@@ -12,6 +12,8 @@ export const sharedConfig = {
     maxItems: 8,
     /** `english` is at most this long. */
     maxEnglishChars: 120,
+    /** `note` (who the wording is for, when that changes it) is at most this long. */
+    maxNoteChars: 120,
   },
   /** PDF-text segmentation (DESIGN §5.2 *PDF*), on `pdftotext -layout` output. */
   segment: {

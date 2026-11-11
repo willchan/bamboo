@@ -35,7 +35,6 @@ export const PhraseInput = z.object({
         .refine(hasHanzi, "The Chinese must contain at least one character."),
     ),
   english: z.string().trim().min(1, "Enter the English meaning or intent.").max(300),
-  addressee: optionalText(40),
   heardAs: optionalText(80),
   note: optionalText(500),
   tags: z

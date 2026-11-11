@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { addresseeChip } from "./addressee";
 import { phraseFormToInput, splitTags } from "./phrase-form";
 
 const form = (entries: [string, string][]) => {
@@ -15,7 +14,6 @@ describe("phraseFormToInput", () => {
         ["kind", "term"],
         ["hanzi", "我得走"],
         ["english", "I have to go"],
-        ["addressee", "nanny"],
         ["heardAs", ""],
         ["note", ""],
         ["tags", "household，baby、food, x"],
@@ -56,15 +54,5 @@ describe("phraseFormToInput", () => {
 
   it("splits tags on English and Chinese commas", () => {
     expect(splitTags("a,b，c、d")).toEqual(["a", "b", "c", "d"]);
-  });
-});
-
-describe("addresseeChip", () => {
-  it("shows who a Say card is for", () => {
-    expect(addresseeChip("yuesao")).toBe("→ 阿姨");
-    expect(addresseeChip("Toddler")).toBe("→ 宝宝");
-    expect(addresseeChip("anyone")).toBeNull();
-    expect(addresseeChip(null)).toBeNull();
-    expect(addresseeChip("grandma")).toBe("→ grandma");
   });
 });

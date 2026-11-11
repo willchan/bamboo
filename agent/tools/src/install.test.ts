@@ -145,7 +145,9 @@ function expectFirmPrompt(prompt: string | undefined) {
   expect(p.length).toBeLessThan(800);
 }
 
-describe("agent/install.sh", () => {
+// Each test runs the real installer (bash, jq, a fake OpenClaw) one to three times: 1–3 s
+// locally, and past vitest's 5 s default on a busy CI runner, where packages test in parallel.
+describe("agent/install.sh", { timeout: 20_000 }, () => {
   it("is additive and idempotent, backs up first, and waits for the token", () => {
     const first = install();
     expect(first.code, first.out).toBe(0);

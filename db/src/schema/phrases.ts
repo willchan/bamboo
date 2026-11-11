@@ -37,6 +37,7 @@ export const phrase = sqliteTable(
     hanzi: text("hanzi").notNull(),
     hanziKey: text("hanzi_key").notNull(),
     english: text("english").notNull(),
+    /** Unused since DESIGN §10 #63 (no longer written or shown); drop in a later PR. */
     addressee: text("addressee"),
     heardAs: text("heard_as"),
     examples: text("examples", { mode: "json" })

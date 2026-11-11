@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { savePhraseAction, type PhraseFormState } from "@/app/actions";
-import { ADDRESSEES } from "@/lib/addressee";
 import { MAX_EXAMPLE_ROWS } from "@/lib/phrase-form";
 
 type Pairs = [string, string | null][];
@@ -13,7 +12,6 @@ export interface PhraseFormValues {
   kind: "term" | "frame" | "sentence";
   hanzi: string;
   english: string;
-  addressee: string | null;
   heardAs: string | null;
   note: string | null;
   tags: string[];
@@ -139,25 +137,6 @@ export function PhraseForm({ values }: { values: PhraseFormValues }) {
       <label className={label}>
         {kind === "term" ? "English meaning" : "English intent"}
         <input name="english" required defaultValue={values.english} className={field} />
-      </label>
-
-      <label className={label}>
-        Who it&apos;s for
-        <input
-          name="addressee"
-          list="addressees"
-          defaultValue={values.addressee ?? ""}
-          placeholder="yuesao, toddler, nanny, anyone"
-          autoCapitalize="none"
-          className={field}
-        />
-        <datalist id="addressees">
-          {ADDRESSEES.map((a) => (
-            <option key={a.value} value={a.value}>
-              {a.label}
-            </option>
-          ))}
-        </datalist>
       </label>
 
       <label className={label}>

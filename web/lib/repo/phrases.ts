@@ -30,7 +30,6 @@ export interface NewPhraseFields {
   kind: PhraseKind;
   hanzi: string;
   english: string;
-  addressee?: string | null;
   heardAs?: string | null;
   examples?: PhraseExample[];
   note?: string | null;
@@ -66,7 +65,6 @@ export function phraseRows(f: NewPhraseFields, cardTypes: readonly CardType[], n
     hanzi: f.hanzi,
     hanziKey: derived.hanziKey,
     english: f.english,
-    addressee: f.addressee ?? null,
     heardAs: f.heardAs ?? null,
     examples,
     note: f.note ?? null,
@@ -123,7 +121,6 @@ export async function createManualPhrase(
       kind: input.kind,
       hanzi: input.hanzi,
       english: input.english,
-      addressee: input.addressee,
       heardAs: input.heardAs,
       examples: input.examples,
       note: input.note,
@@ -183,7 +180,6 @@ export async function updatePhrase(
         hanzi: input.hanzi,
         hanziKey: derived.hanziKey,
         english: input.english,
-        addressee: input.addressee,
         heardAs: input.heardAs,
         examples: examplesFor(input.kind, input.examples),
         note: input.note,

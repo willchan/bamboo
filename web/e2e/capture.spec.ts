@@ -44,7 +44,7 @@ test("paste an answer, the worker extracts it, the phrase tops Up next", async (
             kind: "term",
             hanzi: "高压锅",
             english: "pressure cooker",
-            addressee: "yuesao",
+            note: null,
             heard_as: null,
             example: { hanzi: "用高压锅煮二十分钟就好了。", english: "Twenty minutes in it." },
             usefulness: 5,

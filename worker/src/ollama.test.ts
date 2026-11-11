@@ -46,6 +46,11 @@ describe("OllamaClient", () => {
     });
     expect(body.format).toEqual(RESULT_SCHEMA);
     expect(RESULT_SCHEMA).toMatchObject({ type: "object", required: ["turn_kind", "items"] });
+    // v2: no addressee; the model always answers `note` (DESIGN §10 #63).
+    const items = (RESULT_SCHEMA.properties as Record<string, { items: Record<string, unknown> }>)
+      .items!.items;
+    expect(items.properties).not.toHaveProperty("addressee");
+    expect(items.required).toContain("note");
   });
 });
 

@@ -18,7 +18,13 @@ export const ExtractItem = z.object({
   /** Copied exactly from the turn; frames use `…` for the slot. */
   hanzi: z.string().min(1).max(200),
   english: z.string().min(1).max(sharedConfig.extraction.maxEnglishChars),
-  addressee: z.string().max(40).nullable(),
+  /**
+   * extract_turn.v1 only; v2 doesn't ask for it (DESIGN §10 #63). Accepted so a worker on v1 keeps
+   * working until it's updated, and ignored.
+   */
+  addressee: z.string().max(40).nullish(),
+  /** v2: a short English note, only when the wording depends on who hears it. */
+  note: z.string().max(sharedConfig.extraction.maxNoteChars).nullish(),
   /** Decode turns only: Will's guess, copied from his message. */
   heard_as: z.string().max(80).nullable(),
   /** Terms only: a sentence from the reply that uses the term, copied exactly. */
