@@ -10,9 +10,9 @@ const FILE = (n: string) =>
   `<!-- note ${n} -->\n<!-- system -->\nS${n}\n<!-- user -->\nU {{user_text}}\n<!-- repair -->\nR {{errors}}\n`;
 
 describe("prompt files", () => {
-  it("the shipped prompt loads as extract_turn.v1 with all three parts", () => {
+  it("the shipped prompt loads as extract_turn.v2 with all three parts", () => {
     const p = loadPrompt();
-    expect(p.version).toBe("extract_turn.v1");
+    expect(p.version).toBe("extract_turn.v2");
     expect(p.system).toContain("turn_kind");
     expect(p.user).toContain("{{user_text}}");
     expect(p.user).toContain("{{reply_text}}");

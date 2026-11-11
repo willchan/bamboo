@@ -81,10 +81,10 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `hanzi` | text | normalized (§4.1) |
 | `hanzi_key` | text **unique** | dedupe key (§4.1) |
 | `english` | text | meaning (term) or intent (frame/sentence) |
-| `addressee` | text null | `yuesao`, `toddler`, `nanny`, `anyone` (free text allowed) |
+| `addressee` | text null | **unused** since §10 #63: not written or shown; to be dropped in a later PR |
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
 | `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; verbatim from Gemini (§4.6) |
-| `note` | text null | short usage note |
+| `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
 | `pinyin` | json `[char, syllable \| null][]` | computed (§4.2), never from the LLM |
 | `pinyin_override` | json null | same shape; Will's per-syllable edits |
@@ -744,7 +744,9 @@ Input: `{turn_id, conversation_title, user_text, reply_text}`. Prompt:
     kind: 'term' | 'frame' | 'sentence',
     hanzi: string,                     // copied exactly from the turn
     english: string,                   // ≤ 120 chars
-    addressee: string | null,          // use the conversation title as a hint
+    note?: string | null,              // v2: English only, when the wording depends on who
+                                       // hears it ("polite, to an adult"); else null
+    addressee?: string | null,         // v1 only; accepted and ignored (§10 #63)
     heard_as: string | null,           // only for decode: Will's guess, copied from his message
     example: { hanzi: string, english: string | null } | null,  // terms only: a sentence from
                                        // the reply that uses the term, copied exactly
@@ -754,7 +756,7 @@ Input: `{turn_id, conversation_title, user_text, reply_text}`. Prompt:
 }
 ```
 
-Prompt guidance (v1):
+Prompt guidance (v2; v1 also asked for an `addressee`):
 
 - **decode**: Will is guessing a word he heard. Extract the decoded word(s) with `heard_as`.
 - **say**: extract the **shortest natural** sentence Gemini offered (prefer a "short/direct"
@@ -766,12 +768,16 @@ Prompt guidance (v1):
 - Copy hanzi **exactly** from the text. Never write Chinese that isn't in the turn. Skip items
   that are Cantonese-only (e.g. 肥仔水).
 - Keep `english` short.
+- **note**: usually null. Only when the Chinese would be worded differently for someone else
+  (baby talk to a small child, 您 to an adult), a few English words saying so. Never Chinese: a
+  note with Chinese in it is dropped (`englishNote`). The schema sent to Ollama requires `note`
+  (nullable) and leaves out `addressee`, so the model decides on the note every time.
 
 The worker calls Ollama with `format` set to the JSON schema of the result. It validates with Zod.
 On invalid output it sends one repair turn (the bad reply plus the validation error); a second
 failure fails the attempt. After 3 attempts the job is `failed` and counted in
 `import.jobs_failed`. The Imports page has a **Retry failed** button, which requeues with
-`attempt` reset. The job records `model` and `prompt_version` (`extract_turn.v1`).
+`attempt` reset. The job records `model` and `prompt_version` (e.g. `extract_turn.v2`).
 
 The engine, on completion: sets `turn.kind`/`extracted_at` and runs §4.6. When the import's last
 job finishes, it sets the import to `done`, builds its summary, and logs `import_finished`.
@@ -896,7 +902,7 @@ full-screen.
     tap can't show the next answer.
   - The whole front is a button (`aria-label` "Show answer") and there's a **Show** button below;
     the front carries no "Tap to show" label (it duplicated Show).
-  - *Say*: the front shows the English intent and an addressee chip ("→ 阿姨"). Tap to reveal the
+  - *Say*: the front shows the English intent (no addressee chip, §10 #63). Tap to reveal the
     hanzi with ruby pinyin; audio plays; for terms, the example sentence (with pinyin) and its
     English appear below.
   - *Listen*: the front autoplays audio and shows only 🔊. Tap to reveal the hanzi with pinyin,
@@ -1297,6 +1303,7 @@ bamboo/
 | 60 | Slow replay is 0.3 (was 0.45, #56) | Will's iPhone feedback: 0.45 was better than 0.6 but still not slow enough, because iOS compresses the rate range. Still to be checked by ear on the iPhone |
 | 61 | "Learn N more" is a start-round option (`learnMore`), granted by the engine only once today's `newPerDay` is used up; no new column | The round's card ids are stored when it's built, so the extra allowance only matters at build time: a reload resumes the same cards, and the next round counts today's introductions (now past the cap) as usual. Deciding on the server keeps the cap authoritative (a stale button gives an ordinary round). Opt-in, not a higher `newPerDay`: each new card adds future reviews, so more is a choice for a day with spare time. The round reserves room for the extras, or a long due list would leave the button doing nothing |
 | 62 | Verification loops: a seeded app with phone screenshots, and an on-demand read-only prod copy (§8.6), ported from PandaBase | Tests passed while checks Will did by hand on the iPhone stayed pending for days. A seeded server with data in every state lets a session look at each screen in both themes; the prod copy answers "does it hold on real data?" without touching prod. Read-only token, SELECT-only wrapper and counts-only output, because the data is Will's own conversations |
+| 63 | No addressee on phrases or cards; extract_turn.v2 writes a `note` only when the wording depends on who hears it. The `addressee` column stays, unused, until a later contract PR | On prod data (counts only), the addressee was taken from the conversation title, so it tagged whole conversations: most phrases were single words labeled "yuesao", and no meaning was ever stored with two addressees. The "→ 阿姨" chip on the Say front was on nearly every card and told Will nothing; yuesao and nanny both showed 阿姨. Audience matters only for register (baby talk, 您), which a short English note covers without a fixed list of audiences. The contract still accepts `addressee` so a v1 worker keeps working until `make mac-update` |
 
 ## Appendix A — Synthetic fixtures
 

@@ -523,7 +523,7 @@ async function applyExtraction(
           kind: item.kind,
           hanzi: item.hanzi,
           english: item.english,
-          addressee: item.addressee,
+          note: item.note,
           heardAs: item.heardAs,
           examples: item.example ? [{ ...item.example, turn_id: ctx.turn.id }] : [],
           tags: item.tags,

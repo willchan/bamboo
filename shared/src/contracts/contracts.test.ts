@@ -13,7 +13,7 @@ const item = {
   kind: "term",
   hanzi: "高压锅",
   english: "pressure cooker",
-  addressee: "yuesao",
+  note: null,
   heard_as: "gaoyaguo",
   example: { hanzi: "用高压锅煮。", english: null },
   usefulness: 4,
@@ -33,6 +33,17 @@ describe("contracts", () => {
       ExtractTurnResult.safeParse({
         turn_kind: "say",
         items: [{ ...item, english: "x".repeat(121) }],
+      }).success,
+    ).toBe(false);
+    // A v1 worker still sends `addressee`: accepted. v2 sends a short English `note`.
+    expect(
+      ExtractTurnResult.safeParse({ turn_kind: "say", items: [{ ...item, addressee: "yuesao" }] })
+        .success,
+    ).toBe(true);
+    expect(
+      ExtractTurnResult.safeParse({
+        turn_kind: "say",
+        items: [{ ...item, note: "x".repeat(sharedConfig.extraction.maxNoteChars + 1) }],
       }).success,
     ).toBe(false);
   });

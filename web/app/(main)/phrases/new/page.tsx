@@ -27,7 +27,6 @@ export default async function NewPhrasePage() {
             kind: "term",
             hanzi: "",
             english: "",
-            addressee: null,
             heardAs: null,
             note: null,
             tags: [],

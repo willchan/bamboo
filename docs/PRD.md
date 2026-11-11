@@ -78,12 +78,14 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen"),
     with **1–3 example sentences** taken from Gemini's answers;
   - a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？);
-  - a **sentence**: a full thing to say, kept short, with who it's for (yuesao, toddler, nanny).
-- Each phrase carries: hanzi, English meaning or intent, addressee, computed pinyin (tone marks),
-  examples, an optional note, and tags (domain: feeding, baby care, food, groceries, household,
-  toddler, units, …).
+  - a **sentence**: a full thing to say, kept short.
+- Each phrase carries: hanzi, English meaning or intent, computed pinyin (tone marks), examples,
+  an optional note, and tags (domain: feeding, baby care, food, groceries, household,
+  toddler, units, …). There's no fixed "who it's for" field: who Will is talking to rarely changes
+  the Chinese. When it does (baby talk to the toddler, 您 to an adult), the extractor says so in
+  the note ("polite, to an adult"), shown on the back of the card.
 - Each phrase has one or two **cards**:
-  - **Say**: the front shows the English intent and who it's for; he says it; the back shows hanzi
+  - **Say**: the front shows the English intent; he says it; the back shows hanzi
     with pinyin above it, plays audio, and (for terms) shows an example sentence.
   - **Listen**: the front only plays audio; he recalls the meaning; the back shows everything
     including the example, and, if he typed what he heard when he asked, a small "you first heard:

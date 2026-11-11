@@ -30,7 +30,6 @@ export function phraseFormToInput(fd: FormData): PhraseInputRaw {
     kind: str(fd, "kind") as PhraseInputRaw["kind"],
     hanzi,
     english: str(fd, "english"),
-    addressee: str(fd, "addressee"),
     heardAs: str(fd, "heardAs"),
     note: str(fd, "note"),
     tags: splitTags(str(fd, "tags")),
