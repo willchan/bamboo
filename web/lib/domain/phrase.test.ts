@@ -23,7 +23,6 @@ describe("PhraseInput", () => {
       ...ok,
       hanzi: " ⾼压锅\n",
       english: "  pressure cooker ",
-      addressee: "",
       heardAs: " gaoyaguo ",
       note: undefined,
       tags: ["Food", "food", " ", "household"],
@@ -36,7 +35,6 @@ describe("PhraseInput", () => {
     expect(p).toMatchObject({
       hanzi: "高压锅",
       english: "pressure cooker",
-      addressee: null,
       heardAs: "gaoyaguo",
       note: null,
       tags: ["food", "household"],

@@ -18,7 +18,7 @@ import {
 } from "./session";
 
 // These cases were written for a cap of 3 new cards a day; the rules don't depend on the value
-// (`newPerDay` is 5 since DESIGN §10 #63), so the file keeps 3.
+// (`newPerDay` is 5 since DESIGN §10 #64), so the file keeps 3.
 vi.mock("../config", async (importOriginal) => {
   const m = await importOriginal<typeof import("../config")>();
   return { ...m, config: { ...m.config, session: { ...m.config.session, newPerDay: 3 } } };

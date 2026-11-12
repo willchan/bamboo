@@ -33,7 +33,13 @@ export const ExtractItem = z.object({
   /** Copied exactly from the turn; frames use `…` for the slot. */
   hanzi: z.string().min(1).max(200),
   english: z.string().min(1).max(sharedConfig.extraction.maxEnglishChars),
-  addressee: z.string().max(40).nullable(),
+  /**
+   * extract_turn.v1 only; v2 doesn't ask for it (DESIGN §10 #63). Accepted so a worker on v1 keeps
+   * working until it's updated, and ignored.
+   */
+  addressee: z.string().max(40).nullish(),
+  /** v2: a short English note, only when the wording depends on who hears it. */
+  note: z.string().max(sharedConfig.extraction.maxNoteChars).nullish(),
   /** Decode turns only: Will's guess, copied from his message. */
   heard_as: z.string().max(80).nullable(),
   /** Terms only: a sentence from the reply that uses the term, copied exactly. */
@@ -52,15 +58,17 @@ export const ExtractTurnResult = z.object({
 export type ExtractTurnResult = z.infer<typeof ExtractTurnResult>;
 
 /**
- * The shape the worker asks Ollama for (its `format` schema): the same result, but with tags
- * limited to `PHRASE_TAGS` and `maxTags`, so the model's grammar can't invent one. The API keeps
- * accepting the looser `ExtractTurnResult` (an older worker may still send other tags), and the
- * engine filters tags itself.
+ * The shape the worker asks Ollama for (its `format` schema): the contract without v1's
+ * `addressee`, with `note` required (null when there's nothing to say, so the model decides on it
+ * every time), and tags limited to `PHRASE_TAGS` and `maxTags`, so the model's grammar can't
+ * invent one. The API keeps accepting the looser `ExtractTurnResult` (an older worker may still
+ * send an addressee or other tags), and the engine filters tags itself (DESIGN §4.6).
  */
 export const ModelExtractTurnResult = ExtractTurnResult.extend({
   items: z
     .array(
-      ExtractItem.extend({
+      ExtractItem.omit({ addressee: true }).extend({
+        note: z.string().max(sharedConfig.extraction.maxNoteChars).nullable(),
         tags: z.array(z.enum(PHRASE_TAGS)).max(sharedConfig.extraction.maxTags),
       }),
     )

@@ -9,7 +9,6 @@ test("add a phrase, review it, done for today", async ({ page }) => {
   await page.getByRole("radio", { name: "sentence" }).check({ force: true });
   await page.getByLabel("Chinese", { exact: true }).fill("该吃饭了。");
   await page.getByLabel("English intent", { exact: true }).fill("Time to eat.");
-  await page.getByLabel("Who it's for").fill("toddler");
   await page.getByRole("button", { name: "Add phrase" }).click();
 
   // Saved, with computed ruby pinyin.
@@ -25,9 +24,9 @@ test("add a phrase, review it, done for today", async ({ page }) => {
   await expect(page.getByTestId("today-summary")).toHaveText("1 round · 0 due · 1 new");
   await page.getByRole("button", { name: "Start" }).click();
 
-  // Say card: English intent and the addressee chip, then reveal.
+  // Say card: the English intent alone (no addressee chip, DESIGN §10 #63), then reveal.
   await expect(page.getByTestId("card-front")).toHaveText("Time to eat.");
-  await expect(page.getByText("→ 宝宝")).toBeVisible();
+  await expect(page.getByText("→", { exact: false })).toHaveCount(0);
   await page.getByRole("button", { name: "Show", exact: true }).click();
   await expect(page.getByTestId("card-back").locator("rt").first()).toHaveText("gāi");
   // First sight offers Not useful / Already know.

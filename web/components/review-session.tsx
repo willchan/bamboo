@@ -15,7 +15,6 @@ import {
 import { finishRoundAction, gradeAction, notUsefulAction } from "@/app/actions";
 import { LearnMoreButton, StartButton } from "@/components/start-button";
 import { Ruby } from "@/components/ruby";
-import { addresseeChip } from "@/lib/addressee";
 import { speak } from "@/lib/audio";
 import { config, type SessionConfig } from "@/lib/config";
 import { reinsertIndex } from "@/lib/domain/session";
@@ -190,7 +189,6 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
     return <RoundDone today={finished} alert={saveAlert} />;
   }
 
-  const chip = addresseeChip(current.addressee);
   const position = Math.min(index + 1, cards.length);
 
   return (
@@ -218,16 +216,9 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
         className="flex flex-1 flex-col items-center justify-center gap-4 py-8 text-center"
       >
         {current.type === "say" ? (
-          <>
-            {chip ? (
-              <span className="hanzi rounded-full bg-card px-3 py-1 text-sm text-muted">
-                {chip}
-              </span>
-            ) : null}
-            <p className="text-2xl font-semibold" data-testid="card-front">
-              {current.english}
-            </p>
-          </>
+          <p className="text-2xl font-semibold" data-testid="card-front">
+            {current.english}
+          </p>
         ) : (
           // No "you heard" hint on the front: it repeats Will's own mishearing (DESIGN §10 #59).
           <span className="text-5xl" aria-hidden data-testid="card-front">

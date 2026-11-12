@@ -122,7 +122,8 @@ export interface ValidItem {
   hanzi: string;
   hanziKey: string;
   english: string;
-  addressee: string | null;
+  /** Who the wording is for, only when that changes it (extract_turn.v2). English only. */
+  note: string | null;
   heardAs: string | null;
   example: { hanzi: string; english: string | null } | null;
   usefulness: number;
@@ -156,6 +157,17 @@ export function cleanTags(
   const unique = [...new Set(raw.map((x) => x.trim().toLowerCase()).filter(Boolean))];
   const tags = unique.filter((t) => KNOWN_TAGS.has(t)).slice(0, max);
   return { tags, dropped: unique.length - tags.length };
+}
+
+const HAN = /\p{Script=Han}/u;
+
+/**
+ * The model's `note`, trimmed. A note is English only: one with Chinese in it is dropped, since
+ * LLM-written Chinese is never stored unless it's copied from the turn (CLAUDE.md).
+ */
+export function englishNote(note: string | null | undefined): string | null {
+  const n = note?.trim();
+  return n && !HAN.test(n) ? n : null;
 }
 
 /**
@@ -231,7 +243,7 @@ export function validateExtraction(
       hanzi,
       hanziKey: k,
       english: raw.english.trim(),
-      addressee: raw.addressee?.trim() || null,
+      note: englishNote(raw.note),
       heardAs,
       example,
       usefulness: raw.usefulness,

@@ -89,7 +89,7 @@ export const config = {
     secondsPerCard: 15,
   } as SessionConfig,
 
-  /** Ranking (DESIGN §4.6). Rebalanced in the 2026-11 ranking review (DESIGN §10 #63). */
+  /** Ranking (DESIGN §4.6). Rebalanced in the 2026-11 ranking review (DESIGN §10 #64). */
   rank: {
     kindWeight: { term: 1, frame: 2, sentence: 1 },
     turnWeight: { decode: 2, say: 1, errand: -3, other: -1 },

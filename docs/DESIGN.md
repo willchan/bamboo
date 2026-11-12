@@ -81,10 +81,10 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `hanzi` | text | normalized (§4.1) |
 | `hanzi_key` | text **unique** | dedupe key (§4.1) |
 | `english` | text | meaning (term) or intent (frame/sentence) |
-| `addressee` | text null | `yuesao`, `toddler`, `nanny`, `anyone` (free text allowed) |
+| `addressee` | text null | **unused** since §10 #63: not written or shown; to be dropped in a later PR |
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
 | `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; verbatim from Gemini (§4.6) |
-| `note` | text null | short usage note |
+| `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
 | `pinyin` | json `[char, syllable \| null][]` | computed (§4.2), never from the LLM |
 | `pinyin_override` | json null | same shape; Will's per-syllable edits |
@@ -294,7 +294,7 @@ cards, in this order:
    kept). By due alone, the card graded first in one round always led the next (§10 #57);
 2. review cards due today, most overdue first;
 3. **new cards**, interleaved one per `config.session.newEvery` (3) cards (d d N d d N …; extras
-   go at the end). New cards are limited by `config.session.newPerDay` (5; 3 until §10 #63) minus those already
+   go at the end). New cards are limited by `config.session.newPerDay` (5; 3 until §10 #64) minus those already
    introduced today. Due cards take priority: new cards only fill the slots the due cards leave.
    **Learn more**: `buildRound(…, { learnMore: true })` (Start with `learnMore=1`), once
    today's cap is used up, allows `config.session.extraNewBatch` (3) more new cards in that round
@@ -378,7 +378,7 @@ On `extract_turn` completion, for each raw item:
    - **Caps per turn** (`config.extraction`, applied after the checks above, in the model's
      order): an `errand` turn keeps its first `errandMaxItems` (1) item; a `say` turn keeps its
      first `sayMaxTerms` (2) terms (its sentence and frame are kept). Drops are counted as
-     `dropped_over_cap`. The prompt asks for the same; the engine doesn't rely on it (§10 #63).
+     `dropped_over_cap`. The prompt asks for the same; the engine doesn't rely on it (§10 #64).
    - **Tags**: lower-cased and deduped, then only tags in `PHRASE_TAGS`
      (`shared/src/contracts/extract.ts`, the prompt's list) are kept, at most
      `sharedConfig.extraction.maxTags` (3). Others are counted as `tags_dropped`.
@@ -405,7 +405,7 @@ All of this is `validateExtraction` and `planMerge` (pure, in `queue.ts`), appli
 
 **Score.** `base_score` is stored, recomputed when its inputs change and re-scored daily (§4.7),
 so new weights apply to the whole queue. The queue order uses `effective_score`, computed at read
-time. Weights are in `config.rank` (rebalanced in the 2026-11 ranking review, §10 #63).
+time. Weights are in `config.rank` (rebalanced in the 2026-11 ranking review, §10 #64).
 
 ```
 base_score = kindWeight[kind]              // term 1, frame 2, sentence 1
@@ -451,7 +451,7 @@ The daily cron first **re-scores** every `queued` phrase with the current formul
   past that expire, except one asked about more than once (`asked_count > 1`) or within
   `queue.budgetMinAgeDays` (3, by `last_asked_at`): asking again means it matters. Without a
   budget the queue only grows: Will adds phrases several times faster than `newPerDay`
-  (§10 #63). (The first prod-copy run without that exception expired 4 phrases asked about twice,
+  (§10 #64). (The first prod-copy run without that exception expired 4 phrases asked about twice,
   low-scored as errand or rare words.)
 
 Expired phrases come back if asked about again (§4.6), and can be restored from Phrases. Nothing
@@ -781,7 +781,9 @@ Input: `{turn_id, conversation_title, user_text, reply_text}`. Prompt:
     kind: 'term' | 'frame' | 'sentence',
     hanzi: string,                     // copied exactly from the turn
     english: string,                   // ≤ 120 chars
-    addressee: string | null,          // use the conversation title as a hint
+    note?: string | null,              // v2: English only, when the wording depends on who
+                                       // hears it ("polite, to an adult"); else null
+    addressee?: string | null,         // v1 only; accepted and ignored (§10 #63)
     heard_as: string | null,           // only for decode: Will's guess, copied from his message
     example: { hanzi: string, english: string | null } | null,  // terms only: a sentence from
                                        // the reply that uses the term, copied exactly
@@ -791,7 +793,8 @@ Input: `{turn_id, conversation_title, user_text, reply_text}`. Prompt:
 }
 ```
 
-Prompt guidance (v1):
+Prompt guidance (v3; v1 also asked for an `addressee`; v2 added `note`, and v3 the limits and
+the anchored usefulness of §10 #64):
 
 - **decode**: Will is guessing a word he heard. Extract the decoded word(s) with `heard_as`.
 - **say**: extract the **shortest natural** sentence Gemini offered (prefer a "short/direct"
@@ -800,7 +803,7 @@ Prompt guidance (v1):
   `阿姨，您是说…吗？`.
 - **errand**: extract at most one Chinese noun (an ingredient, a product), and only if it will
   come up at home again; usually nothing.
-- **usefulness** (v2): anchored, relative to the turn's other items, using the whole scale:
+- **usefulness** (v3): anchored, relative to the turn's other items, using the whole scale:
   5 = several times a day (at most one per turn, most turns none); 4 = most weeks; 3 = now and
   then (the usual rating); 2 = rarely; 1 = a one-off (a brand, a single errand). v1's open
   wording got two thirds of all items rated 5, which left the rating no say in the order.
@@ -810,12 +813,16 @@ Prompt guidance (v1):
 - Copy hanzi **exactly** from the text. Never write Chinese that isn't in the turn. Skip items
   that are Cantonese-only (e.g. 肥仔水).
 - Keep `english` short.
+- **note**: usually null. Only when the Chinese would be worded differently for someone else
+  (baby talk to a small child, 您 to an adult), a few English words saying so. Never Chinese: a
+  note with Chinese in it is dropped (`englishNote`). The schema sent to Ollama requires `note`
+  (nullable) and leaves out `addressee`, so the model decides on the note every time.
 
 The worker calls Ollama with `format` set to the JSON schema of the result. It validates with Zod.
 On invalid output it sends one repair turn (the bad reply plus the validation error); a second
 failure fails the attempt. After 3 attempts the job is `failed` and counted in
 `import.jobs_failed`. The Imports page has a **Retry failed** button, which requeues with
-`attempt` reset. The job records `model` and `prompt_version` (`extract_turn.v2` since §10 #63).
+`attempt` reset. The job records `model` and `prompt_version` (e.g. `extract_turn.v3`).
 
 The engine, on completion: sets `turn.kind`/`extracted_at` and runs §4.6. When the import's last
 job finishes, it sets the import to `done`, builds its summary, and logs `import_finished`.
@@ -940,7 +947,7 @@ full-screen.
     tap can't show the next answer.
   - The whole front is a button (`aria-label` "Show answer") and there's a **Show** button below;
     the front carries no "Tap to show" label (it duplicated Show).
-  - *Say*: the front shows the English intent and an addressee chip ("→ 阿姨"). Tap to reveal the
+  - *Say*: the front shows the English intent (no addressee chip, §10 #63). Tap to reveal the
     hanzi with ruby pinyin; audio plays; for terms, the example sentence (with pinyin) and its
     English appear below.
   - *Listen*: the front autoplays audio and shows only 🔊. Tap to reveal the hanzi with pinyin,
@@ -1286,7 +1293,7 @@ bamboo/
 | 5 | Turn identity = hash of Will's prompt text | Stable across re-shares, formats and multiple conversations |
 | 6 | Local LLM extracts and rates; it never writes Chinese for study | 9B models copy and classify Chinese well; the verbatim check enforces it, examples included |
 | 7 | Terms carry example sentences copied from Gemini | Will needs usage, not just the word; copying keeps Chinese generation out of the local model |
-| 8 | Automatic selection: ranked queue → ≤ 3 new/day (5 since #63); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
+| 8 | Automatic selection: ranked queue → ≤ 3 new/day (5 since #64); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
 | 9 | Pinyin computed (pinyin-pro) with overrides | Gemini's pinyin is inconsistent even within a single reply |
 | 10 | "Asked again" = Again on active phrases, revives dropped/expired ones | Re-asking is the clearest forgetting (and usefulness) signal available |
 | 11 | Daily unit = one round of ~10 cards; FSRS at 0.85 | Tiny required unit plus optional extra, as habit-forming apps do; smaller review load |
@@ -1341,7 +1348,8 @@ bamboo/
 | 60 | Slow replay is 0.3 (was 0.45, #56) | Will's iPhone feedback: 0.45 was better than 0.6 but still not slow enough, because iOS compresses the rate range. Still to be checked by ear on the iPhone |
 | 61 | "Learn N more" is a start-round option (`learnMore`), granted by the engine only once today's `newPerDay` is used up; no new column | The round's card ids are stored when it's built, so the extra allowance only matters at build time: a reload resumes the same cards, and the next round counts today's introductions (now past the cap) as usual. Deciding on the server keeps the cap authoritative (a stale button gives an ordinary round). Opt-in, not a higher `newPerDay`: each new card adds future reviews, so more is a choice for a day with spare time. The round reserves room for the extras, or a long due list would leave the button doing nothing |
 | 62 | Verification loops: a seeded app with phone screenshots, and an on-demand read-only prod copy (§8.6), ported from PandaBase | Tests passed while checks Will did by hand on the iPhone stayed pending for days. A seeded server with data in every state lets a session look at each screen in both themes; the prod copy answers "does it hold on real data?" without touching prod. Read-only token, SELECT-only wrapper and counts-only output, because the data is Will's own conversations |
-| 63 | The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v2`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
+| 63 | No addressee on phrases or cards; extract_turn.v2 writes a `note` only when the wording depends on who hears it. The `addressee` column stays, unused, until a later contract PR | On prod data (counts only), the addressee was taken from the conversation title, so it tagged whole conversations: most phrases were single words labeled "yuesao", and no meaning was ever stored with two addressees. The "→ 阿姨" chip on the Say front was on nearly every card and told Will nothing; yuesao and nanny both showed 阿姨. Audience matters only for register (baby talk, 您), which a short English note covers without a fixed list of audiences. The contract still accepts `addressee` so a v1 worker keeps working until `make mac-update` |
+| 64 | The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v3`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
 
 ## Appendix A — Synthetic fixtures
 

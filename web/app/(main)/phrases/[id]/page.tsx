@@ -76,7 +76,6 @@ export default async function EditPhrasePage({ params, searchParams }: PageProps
             kind: p.kind,
             hanzi: p.hanzi,
             english: p.english,
-            addressee: p.addressee,
             heardAs: p.heardAs,
             note: p.note,
             tags: p.tags,

@@ -30,7 +30,7 @@ export interface Seed {
   kind: PhraseKind;
   hanzi: string;
   english: string;
-  addressee?: string;
+  note?: string;
   heardAs?: string;
   examples?: { hanzi: string; english: string }[];
   tags: string[];
@@ -109,7 +109,6 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "宝宝喝完奶了。",
     english: "The baby finished the milk.",
-    addressee: "yuesao",
     tags: ["feeding", "baby"],
     turnKind: "say",
     usefulness: 4,
@@ -138,7 +137,6 @@ export const SEEDS: Seed[] = [
     kind: "frame",
     hanzi: "阿姨，您是说…吗？",
     english: "Auntie, do you mean …?",
-    addressee: "yuesao",
     tags: ["household"],
     turnKind: "say",
     usefulness: 5,
@@ -148,7 +146,6 @@ export const SEEDS: Seed[] = [
     kind: "frame",
     hanzi: "能不能帮我…？",
     english: "Could you help me …?",
-    addressee: "anyone",
     tags: ["household"],
     turnKind: "say",
     usefulness: 4,
@@ -158,7 +155,6 @@ export const SEEDS: Seed[] = [
     kind: "frame",
     hanzi: "…多少钱一斤？",
     english: "How much is … per jin?",
-    addressee: "anyone",
     tags: ["groceries", "units"],
     turnKind: "errand",
     usefulness: 3,
@@ -167,7 +163,6 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "宝宝睡得很好。",
     english: "The baby slept well.",
-    addressee: "yuesao",
     tags: ["baby"],
     turnKind: "say",
     usefulness: 4,
@@ -177,7 +172,6 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "我们得给宝宝洗澡了。",
     english: "We need to give the baby a bath now.",
-    addressee: "nanny",
     tags: ["baby"],
     turnKind: "say",
     usefulness: 4,
@@ -186,7 +180,6 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "慢慢吃，别着急。",
     english: "Eat slowly, no rush.",
-    addressee: "toddler",
     tags: ["toddler", "feeding"],
     turnKind: "say",
     usefulness: 5,
@@ -196,7 +189,6 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "该睡觉了。",
     english: "It's time to sleep.",
-    addressee: "toddler",
     tags: ["toddler"],
     turnKind: "say",
     usefulness: 5,
@@ -205,7 +197,7 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "谢谢您，辛苦了！",
     english: "Thank you, you've worked so hard!",
-    addressee: "yuesao",
+    note: "Polite, to an adult",
     tags: ["household"],
     turnKind: "other",
     usefulness: 3,
@@ -214,7 +206,6 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "鸡蛋还有吗？",
     english: "Do we still have eggs?",
-    addressee: "nanny",
     tags: ["groceries", "food"],
     turnKind: "errand",
     usefulness: 2,
@@ -276,7 +267,7 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
         kind: s.kind,
         hanzi: s.hanzi,
         english: s.english,
-        addressee: s.addressee,
+        note: s.note,
         heardAs: s.heardAs,
         examples: (s.examples ?? []).map((e) => ({ ...e, turn_id: null })),
         tags: s.tags,

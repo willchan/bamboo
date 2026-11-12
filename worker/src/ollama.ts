@@ -11,7 +11,10 @@ import { repairMessage, userMessage, type Prompt } from "./prompt";
 
 const O = sharedConfig.worker.ollama;
 
-/** The JSON schema Ollama constrains the reply to (tags limited to the fixed list). */
+/**
+ * The JSON schema Ollama constrains the reply to (`ModelExtractTurnResult`): no `addressee`,
+ * `note` required, tags only from the fixed list.
+ */
 export const RESULT_SCHEMA = z.toJSONSchema(ModelExtractTurnResult);
 
 export interface ChatMessage {

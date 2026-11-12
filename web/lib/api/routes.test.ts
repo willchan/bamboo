@@ -159,7 +159,7 @@ const term = (hanzi: string, english: string, o: Partial<ExtractTurnResult["item
   kind: "term" as const,
   hanzi,
   english,
-  addressee: null,
+  note: null,
   heard_as: null,
   example: null,
   usefulness: 3,

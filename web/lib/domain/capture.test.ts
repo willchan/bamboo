@@ -5,6 +5,7 @@ import { importSummary, PUBLIC_LINK_NOTE, workerStatus, type NextUpPhrase } from
 import { computePinyin, overrideFromEdits } from "./pinyin";
 import { isLeaseExpired, isStaleAttempt, leaseExpiresAt, statusAfterFailure } from "./jobs";
 import {
+  englishNote,
   expiredPhraseIds,
   frequencyPoints,
   mergeExamples,
@@ -44,12 +45,24 @@ describe("validateExtraction", () => {
     kind: "sentence" as const,
     hanzi: "该洗澡了",
     english: " Bath time ",
-    addressee: " toddler ",
+    addressee: " toddler ", // extract_turn.v1 still sends it: accepted and ignored
+    note: " Said to a small child ",
     heard_as: "",
     example: { hanzi: "该洗澡了", english: null },
     usefulness: 4,
     tags: [" Baby ", "baby", ""],
   };
+
+  it("keeps an English note and drops one with Chinese in it", () => {
+    const turn = { userText: "how do I say bath time", replyText: "该洗澡了！" };
+    const note = (n: string | null | undefined) =>
+      validateExtraction(turn, { turn_kind: "say", items: [{ ...item, note: n }] }).items[0]!.note;
+    expect(note("Polite, to an adult")).toBe("Polite, to an adult");
+    expect(note("Polite: use 您")).toBeNull();
+    expect(note("  ")).toBeNull();
+    expect(note(undefined)).toBeNull();
+    expect(englishNote(null)).toBeNull();
+  });
 
   it("cleans fields and ignores examples on non-terms", () => {
     const v = validateExtraction(
@@ -62,7 +75,7 @@ describe("validateExtraction", () => {
         hanzi: "该洗澡了",
         hanziKey: "该洗澡了",
         english: "Bath time",
-        addressee: "toddler",
+        note: "Said to a small child",
         heardAs: null,
         example: null,
         usefulness: 4,

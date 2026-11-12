@@ -184,7 +184,6 @@ export interface ReviewCardView {
   kind: Phrase["kind"];
   firstSight: boolean;
   english: string;
-  addressee: string | null;
   heardAs: string | null;
   hanzi: string;
   pinyin: PinyinPairs;
@@ -220,7 +219,6 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
     kind: p.kind,
     firstSight: isFirstSight(c),
     english: p.english,
-    addressee: p.addressee,
     heardAs: p.heardAs,
     hanzi: p.hanzi,
     pinyin: displayPinyin(p.pinyin, p.pinyinOverride),
