@@ -26,6 +26,7 @@ import { POST as heartbeatPOST } from "@/app/api/worker/heartbeat/route";
 import { config } from "../config";
 import { createManualPhrase, dropPhrase, getPhrase, listQueue } from "../repo/phrases";
 import { PhraseInput } from "../domain/phrase";
+import { frequencyPoints } from "../domain/queue";
 import { gradeCard, startRound, getRound } from "../repo/review";
 import {
   getImportsPage,
@@ -476,8 +477,11 @@ describe("extract results", () => {
       turnKind: "decode",
       tags: ["food"],
       flags: [],
-      // term 1 + decode 3 + heard_as 2 + usefulness 1 + core tag 1
-      baseScore: 8,
+      // term 1 + decode 2 + heard_as 1 + usefulness 1.5 × (4 − 3), plus how common 高压锅 is
+      baseScore: expect.closeTo(
+        1 + 2 + 1 + 1.5 + frequencyPoints({ kind: "term", tags: ["food"], hanziKey: "高压锅" }),
+        2,
+      ),
     });
     expect(cooker.examples).toEqual([
       expect.objectContaining({ hanzi: "用高压锅煮二十分钟就好了。", turn_id: expect.any(String) }),
@@ -612,8 +616,10 @@ describe("extract results", () => {
     }
     const [p] = await db.select().from(phrase);
     expect(p).toMatchObject({ status: "queued", askedCount: 5 });
-    // term 1 + say 1 + 3 × (5 − 1)
-    expect(p!.baseScore).toBe(14);
+    // term 1 + say 1 + 3 × (5 − 1), plus how common 泡打粉 is
+    expect(p!.baseScore).toBeCloseTo(
+      14 + frequencyPoints({ kind: "term", tags: [], hanziKey: "泡打粉" }),
+    );
     expect(p!.examples.map((e) => e.hanzi)).toEqual([
       "例句1放一勺泡打粉。",
       "例句2放一勺泡打粉。",
@@ -652,13 +658,14 @@ describe("extract results", () => {
             items: [term("高压锅", "pressure cooker", { heard_as: "gaoyaguo", usefulness: 5 })],
           }
         : t.reply_text.includes("泡打粉")
-          ? { turn_kind: "errand", items: [term("泡打粉", "baking powder"), term("面粉", "flour")] }
+          ? // An errand keeps its first item (config.extraction.errandMaxItems).
+            { turn_kind: "errand", items: [term("泡打粉", "baking powder"), term("面粉", "flour")] }
           : { turn_kind: "say", items: [] },
     );
     const row = await importRow(import_id);
-    expect(row).toMatchObject({ status: "done", phrasesNew: 3, jobsFailed: 0, finishedAt: T0 });
+    expect(row).toMatchObject({ status: "done", phrasesNew: 2, jobsFailed: 0, finishedAt: T0 });
     expect(row.summary).toBe(
-      "✅ 3 new questions → 3 phrases queued. Next up: 高压锅 gāo yā guō (pressure cooker), 泡打粉 pào dǎ fěn (baking powder), 面粉 miàn fěn (flour).\n" +
+      "✅ 3 new questions → 2 phrases queued. Next up: 高压锅 gāo yā guō (pressure cooker), 泡打粉 pào dǎ fěn (baking powder).\n" +
         "🔗 This share link is public; you can delete it in Gemini → Settings → Public links.",
     );
     const [finished] = await db.select().from(event).where(eq(event.type, "import_finished"));
@@ -784,9 +791,10 @@ describe("cron", () => {
       const c = (await claim())!;
       return { finish: (r: ExtractTurnResult) => done(c.job_id, c.attempt, r) };
     }
-    // errand −2, usefulness 1 → −2: sinks below −2 within weeks.
+    // term 1, other −1, usefulness 1 → −3, rare word → −3: below −2 already, but young.
+    // Flour: 1 − 1 + 3 (usefulness 5), common enough → about 3.5: stays.
     await finish({
-      turn_kind: "errand",
+      turn_kind: "other",
       items: [
         term("泡打粉", "baking powder", { usefulness: 1 }),
         term("面粉", "flour", { usefulness: 5 }),
@@ -812,7 +820,7 @@ describe("cron", () => {
     expect(r).toMatchObject({ phrases_expired: 1, events_pruned: 0 });
     const rows = await db.select().from(phrase);
     expect(rows.find((p) => p.hanzi === "泡打粉")!.status).toBe("expired");
-    // Higher score (flour: 1 − 2 + 2, decayed to −1.2) and pinned (manual) stay.
+    // Higher score (flour) and pinned (manual) stay.
     expect(rows.find((p) => p.hanzi === "面粉")!.status).toBe("queued");
     expect(rows.find((p) => manual.ok && p.id === manual.id)!.status).toBe("queued");
 

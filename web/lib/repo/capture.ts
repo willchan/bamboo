@@ -31,7 +31,7 @@ import { config } from "../config";
 import { importSummary, workerStatus, type WorkerStatus } from "../domain/imports";
 import { isLeaseExpired, isStaleAttempt, leaseExpiresAt, statusAfterFailure } from "../domain/jobs";
 import { initialCardTypes } from "../domain/phrase";
-import { expiredPhraseIds, planMerge, validateExtraction } from "../domain/queue";
+import { expiredPhraseIds, planMerge, rescored, validateExtraction } from "../domain/queue";
 import { askedAgainCards } from "../domain/session";
 import { reviewCard } from "../domain/fsrs";
 import { eventRow, newId, runBatch } from "./db";
@@ -480,6 +480,8 @@ export async function completeJob(
           dropped_duplicate: applied.validation.droppedDuplicate,
           examples_dropped: applied.validation.examplesDropped,
           heard_as_dropped: applied.validation.heardAsDropped,
+          dropped_over_cap: applied.validation.droppedOverCap,
+          tags_dropped: applied.validation.tagsDropped,
         },
         now,
       ),
@@ -647,21 +649,34 @@ export async function getWorkerStatus(db: Db, now: number): Promise<WorkerStatus
 const DAY = 24 * 60 * 60 * 1000;
 
 /**
- * `GET /api/cron/daily`: expire stale queue items (§4.7), requeue expired leases, prune events
- * older than `config.events.retainDays`.
+ * `GET /api/cron/daily`: re-score the queue with the current weights and word list, expire stale
+ * and over-budget queue items (§4.7), requeue expired leases, prune events older than
+ * `config.events.retainDays`.
  */
 export async function runDaily(db: Db, now: number) {
   const leases = await sweepExpiredLeases(db, now);
   const queued = await db.select().from(phrase).where(eq(phrase.status, "queued"));
-  const expire = expiredPhraseIds(queued, now);
-  const writes: BatchItem<"sqlite">[] = chunks(expire).map((part) =>
-    db.update(phrase).set({ status: "expired", updatedAt: now }).where(inArray(phrase.id, part)),
+  const scores = rescored(queued);
+  const next = new Map(scores.map((r) => [r.id, r.baseScore]));
+  const expire = expiredPhraseIds(
+    queued.map((p) => ({ ...p, baseScore: next.get(p.id) ?? p.baseScore })),
+    now,
   );
+  const writes: BatchItem<"sqlite">[] = [
+    // The score is stored without touching `updated_at`: nothing about the phrase changed.
+    ...scores.map((r) =>
+      db.update(phrase).set({ baseScore: r.baseScore }).where(eq(phrase.id, r.id)),
+    ),
+    ...chunks(expire).map((part) =>
+      db.update(phrase).set({ status: "expired", updatedAt: now }).where(inArray(phrase.id, part)),
+    ),
+  ];
   await runBatch(db, writes);
   const pruned = await db.delete(event).where(lt(event.at, now - config.events.retainDays * DAY));
   return {
     leases_requeued: leases.requeued,
     leases_failed: leases.failed,
+    phrases_rescored: scores.length,
     phrases_expired: expire.length,
     events_pruned: pruned.rowsAffected,
   };

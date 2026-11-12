@@ -57,7 +57,7 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 4. **A tiny daily unit.** The daily goal is **one round** (~10 cards, ~2–3 min), the way
    Duolingo-style apps use a short lesson as the unit. More rounds are optional.
 5. **Bamboo chooses; Will corrects.** New material is picked automatically from a ranked queue,
-   at most 3 new cards a day. Will never has to sort an inbox; he flags bad picks while reviewing.
+   at most 5 new cards a day. Will never has to sort an inbox; he flags bad picks while reviewing.
 6. **Trust nothing the LLM says about pronunciation.** Pinyin is computed from characters (with
    manual override); audio comes from a TTS voice, not from LLM text.
 
@@ -99,7 +99,7 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 ### 5.2 Daily review (the core loop)
 
 - A PWA installed on the iPhone home screen. **Today** shows what's due and a **Start** button.
-- A **round** is ~10 cards: due cards first, with up to 3 new cards a day mixed in. After a round:
+- A **round** is ~10 cards: due cards first, with up to 5 new cards a day mixed in. After a round:
   "✓ Done for today" (one round is the daily goal), plus an optional "Another round (N due)" if
   more is waiting.
 - **Learn 3 more**: once today's new cards are used up and new phrases are waiting, Today and the
@@ -147,17 +147,22 @@ The behavior:
   backlog and becomes his starter material. The conversation's title ("Yuesao…", "Toddler…") is
   used as context for who phrases are for.
 - Each new question is classified (**decode / say / errand / other**) and mined for terms (with
-  examples), frames and short sentences. Errand questions contribute at most their nouns.
+  examples), frames and short sentences. A "how do I say" question gives at most its sentence,
+  2 key words and a frame; an errand question at most one noun, usually none.
 - Everything extracted goes into a ranked **Up next** queue. Ranking:
-  - words the yuesao said rank high;
+  - **common words rank high**: how often a word is used in everyday spoken Mandarin, from a
+    bundled word list (not the LLM's opinion). Baby and feeding words aren't held back for being
+    rare in that list, since they're daily language at home;
   - anything asked about more than once ranks high;
-  - reusable frames rank high;
-  - core topics get a boost;
-  - the local model's "how likely to come up again at home" rating counts;
-  - long sentences sink;
-  - old items fade.
+  - words the yuesao said rank high;
+  - reusable frames rank a little higher;
+  - the local model's "how often will this come up at home" rating counts;
+  - errand items and long sentences sink;
+  - old items fade slowly.
 - Each day the top items become new cards. **Up next** can be browsed (move to top, remove), but
   never has to be.
+- The queue holds about three weeks of new cards. Lower-ranked extras expire on their own;
+  anything expired comes back if he asks about it again, or he can restore it from Phrases.
 - If he asks again about something he's already learning, Bamboo doesn't duplicate it. It treats
   this as **forgotten** and shows it again soon. A dropped item he asks about again returns to
   the queue (or straight back into review, if he had already started learning it).

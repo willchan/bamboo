@@ -1,8 +1,8 @@
 // The Ollama client (DESIGN §1.2, §5.3): the model check (`GET /api/tags`) and `extract_turn`
 // through `POST /api/chat` with `format` set to the result's JSON schema, plus one repair turn.
 import {
-  ExtractItem,
   ExtractTurnResult,
+  ModelExtractTurnResult,
   sharedConfig,
   type ExtractTurnInput,
 } from "@bamboo/shared";
@@ -12,20 +12,10 @@ import { repairMessage, userMessage, type Prompt } from "./prompt";
 const O = sharedConfig.worker.ollama;
 
 /**
- * The JSON schema Ollama constrains the reply to: the contract without v1's `addressee`, and with
- * `note` required (null when there's nothing to say), so the model decides on it every time.
+ * The JSON schema Ollama constrains the reply to (`ModelExtractTurnResult`): no `addressee`,
+ * `note` required, tags only from the fixed list.
  */
-export const RESULT_SCHEMA = z.toJSONSchema(
-  ExtractTurnResult.extend({
-    items: z
-      .array(
-        ExtractItem.omit({ addressee: true }).extend({
-          note: z.string().max(sharedConfig.extraction.maxNoteChars).nullable(),
-        }),
-      )
-      .max(sharedConfig.extraction.maxItems),
-  }),
-);
+export const RESULT_SCHEMA = z.toJSONSchema(ModelExtractTurnResult);
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";

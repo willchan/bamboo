@@ -12,6 +12,8 @@ export const sharedConfig = {
     maxItems: 8,
     /** `english` is at most this long. */
     maxEnglishChars: 120,
+    /** The engine keeps at most this many tags per item, all from `PHRASE_TAGS`. */
+    maxTags: 3,
     /** `note` (who the wording is for, when that changes it) is at most this long. */
     maxNoteChars: 120,
   },

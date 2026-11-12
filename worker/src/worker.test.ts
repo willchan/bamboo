@@ -55,7 +55,7 @@ describe("claim loop (fake engine with M3's rules)", () => {
       ["job-2", 1, "done", true],
     ]);
     for (const c of engine.completes) {
-      expect(c).toMatchObject({ model: "qwen3.5:9b", prompt_version: "extract_turn.v2" });
+      expect(c).toMatchObject({ model: "qwen3.5:9b", prompt_version: "extract_turn.v3" });
       expect(c.latency_ms).toBeGreaterThanOrEqual(0);
     }
     expect(engine.jobs.map((j) => j.status)).toEqual(["done", "done"]);

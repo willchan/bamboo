@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { derivedFields, examplesFor, initialCardTypes, PhraseInput } from "./phrase";
+import { frequencyPoints } from "./queue";
 
 describe("initialCardTypes (DESIGN §4.8)", () => {
   it("gives decoded terms a Listen card", () => {
@@ -76,7 +77,14 @@ describe("derivedFields", () => {
 
   it("computes the key and score, and sets or clears `long`", () => {
     const short = derivedFields({ ...base, hanzi: "该睡觉了。" });
-    expect(short).toEqual({ hanziKey: "该睡觉了", baseScore: 1, flags: ["heard_as_dropped"] });
+    expect(short).toEqual({
+      hanziKey: "该睡觉了",
+      baseScore: expect.closeTo(
+        1 + frequencyPoints({ kind: "sentence", tags: [], hanziKey: "该睡觉了" }),
+        2,
+      ),
+      flags: ["heard_as_dropped"],
+    });
     const long = derivedFields({
       ...base,
       hanzi: "一二三四五六七八九十一二三四五六七八九十一",

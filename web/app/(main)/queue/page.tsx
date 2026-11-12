@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { dropPhraseAction, pinPhraseAction } from "@/app/actions";
 import { requireUser } from "@/lib/auth/current";
+import { config } from "@/lib/config";
 import { getDb } from "@/lib/repo/db";
 import { serverClock } from "@/lib/repo/clock";
 import { listQueue } from "@/lib/repo/phrases";
@@ -22,7 +23,8 @@ export default async function QueuePage() {
           <span className="text-sm text-muted">{queue.length} waiting</span>
         </header>
         <p className="text-sm text-muted">
-          New cards come from the top of this list, up to 3 a day.
+          New cards come from the top of this list, up to {config.session.newPerDay} a day. Phrases
+          far down the list expire after a while; asking about one again brings it back.
         </p>
 
         {queue.length === 0 ? (
