@@ -1,13 +1,18 @@
 // The Ollama client (DESIGN §1.2, §5.3): the model check (`GET /api/tags`) and `extract_turn`
 // through `POST /api/chat` with `format` set to the result's JSON schema, plus one repair turn.
-import { ExtractTurnResult, sharedConfig, type ExtractTurnInput } from "@bamboo/shared";
+import {
+  ExtractTurnResult,
+  ModelExtractTurnResult,
+  sharedConfig,
+  type ExtractTurnInput,
+} from "@bamboo/shared";
 import { z } from "zod";
 import { repairMessage, userMessage, type Prompt } from "./prompt";
 
 const O = sharedConfig.worker.ollama;
 
-/** The JSON schema Ollama constrains the reply to. */
-export const RESULT_SCHEMA = z.toJSONSchema(ExtractTurnResult);
+/** The JSON schema Ollama constrains the reply to (tags limited to the fixed list). */
+export const RESULT_SCHEMA = z.toJSONSchema(ModelExtractTurnResult);
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";

@@ -1,7 +1,9 @@
 import { card, createTestDb, event, phrase, reviewLog, round, type Db } from "@bamboo/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { config } from "../config";
 import { PhraseInput, type PhraseInputRaw } from "../domain/phrase";
+import { frequencyPoints } from "../domain/queue";
 import {
   allTags,
   createManualPhrase,
@@ -37,6 +39,9 @@ const input = (o: Partial<PhraseInputRaw> = {}) =>
     ...o,
   });
 
+/** Distinct one-character phrases, for tests that need many. */
+const HANZI = Array.from("一二三四五六七八九十百千");
+
 let db: Db;
 beforeEach(async () => {
   db = await createTestDb();
@@ -66,7 +71,8 @@ describe("phrases", () => {
         ["粉", "fěn"],
       ],
       pinyinOverride: null,
-      baseScore: 2, // term 1 + core tag 1
+      // term 1, plus how common 泡打粉 is (tags no longer score by themselves)
+      baseScore: 1 + frequencyPoints({ kind: "term", tags: ["food"], hanziKey: "泡打粉" }),
     });
     expect(p!.cards.map((c) => [c.type, c.state, c.due])).toEqual([
       ["say", 0, T0],
@@ -315,12 +321,12 @@ describe("rounds", () => {
         clock(),
       ),
     ).toBeNull();
-    // Not useful doesn't count toward the new cap: two more are allowed today.
-    await add({ hanzi: "米粉" });
-    await add({ hanzi: "面粉" });
-    await add({ hanzi: "奶粉" });
+    // Not useful doesn't count toward the new cap: the whole cap is still allowed today.
+    for (const h of ["米粉", "面粉", "奶粉", "米饭", "面条"]) await add({ hanzi: h });
     const today = await getToday(db, clock());
-    expect(today.status).toMatchObject({ workload: { newAvailable: 3 } });
+    expect(today.status).toMatchObject({
+      workload: { newAvailable: config.session.newPerDay },
+    });
   });
 
   it("refuses Not useful on a card that has been reviewed", async () => {
@@ -337,11 +343,12 @@ describe("rounds", () => {
   });
 
   it("caps new cards across rounds at newPerDay", async () => {
-    for (const h of ["一", "二", "三", "四", "五"]) await add({ hanzi: h });
+    const cap = config.session.newPerDay;
+    for (let i = 0; i < cap + 2; i++) await add({ hanzi: HANZI[i] });
     const first = (await startRound(db, clock()))!;
     const cards = (await getRound(db, first, clock()))!.cards;
-    expect(cards).toHaveLength(3);
-    for (const c of cards.slice(0, 2)) {
+    expect(cards).toHaveLength(cap);
+    for (const c of cards.slice(0, cap - 1)) {
       await gradeCard(
         db,
         { roundId: first, cardId: c.cardId, grade: 4, source: "session", durationMs: null },
@@ -354,7 +361,9 @@ describe("rounds", () => {
   });
 
   it("Learn more: offered once the cap is used, its round adds extra new cards", async () => {
-    for (const h of ["一", "二", "三", "四", "五", "六", "七"]) await add({ hanzi: h });
+    const { newPerDay: cap, extraNewBatch: extra } = config.session;
+    // The cap, one Learn-more batch, and one phrase left over.
+    for (let i = 0; i < cap + extra + 1; i++) await add({ hanzi: HANZI[i] });
     const gradeAll = async (roundId: string, now: number) => {
       for (const c of (await getRound(db, roundId, clock(now)))!.cards) {
         await gradeCard(
@@ -368,15 +377,15 @@ describe("rounds", () => {
     expect((await getToday(db, clock())).learnMore).toBe(0); // the cap has room
     // Even when asked, a round with room under the cap is a normal one.
     const first = (await startRound(db, clock(), { learnMore: true }))!;
-    expect((await getRound(db, first, clock()))!.cards).toHaveLength(3);
+    expect((await getRound(db, first, clock()))!.cards).toHaveLength(cap);
     const after = await gradeAll(first, T0 + MIN);
     expect(after.status).toEqual({ kind: "done", another: null });
-    expect(after.learnMore).toBe(3);
+    expect(after.learnMore).toBe(extra);
     // Without asking, nothing new today.
     expect(await startRound(db, clock(T0 + 2 * MIN))).toBeNull();
-    const extra = (await startRound(db, clock(T0 + 2 * MIN), { learnMore: true }))!;
-    expect((await getRound(db, extra, clock(T0 + 2 * MIN)))!.cards).toHaveLength(3);
-    await gradeAll(extra, T0 + 3 * MIN);
+    const more = (await startRound(db, clock(T0 + 2 * MIN), { learnMore: true }))!;
+    expect((await getRound(db, more, clock(T0 + 2 * MIN)))!.cards).toHaveLength(extra);
+    await gradeAll(more, T0 + 3 * MIN);
     // One phrase left: offered again, for what's waiting.
     expect((await getToday(db, clock(T0 + 4 * MIN))).learnMore).toBe(1);
     // A new day: back to the normal cap, no Learn more while it has room.

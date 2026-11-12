@@ -12,3 +12,5 @@ spikes/
 agent/tools/tests/fixtures/share-*
 playwright-report/
 test-results/
+# Generated from wordfreq (web/scripts/wordfreq-zh.py): never reformat it.
+web/lib/data/wordfreq-zh.ts

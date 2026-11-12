@@ -1,7 +1,7 @@
 // The synthetic seed (CLAUDE.md › Privacy: invented content only), shared by `pnpm db:seed`, the
 // `dev:seeded` server, `pnpm --filter web shot` and the seeded e2e project. Relative to `now`, it
-// leaves phrases in every state — new (queued), learning (introduced today, which also uses up
-// today's new cards, so Today offers "Learn 3 more"), and review cards due now — plus finished
+// leaves phrases in every state — new (queued), learning (five introduced today, which uses up
+// today's `newPerDay` new cards, so Today offers "Learn 3 more"), and review cards due now — plus finished
 // rounds on past days (Stats), imports with turns, extraction events and one failed job (Imports),
 // and a recent worker heartbeat. Idempotent: phrases already present (by hanzi key) are skipped,
 // and the imports, rounds and events are only added to a database without imports.
@@ -90,6 +90,26 @@ export const SEEDS: Seed[] = [
     examples: [
       { hanzi: "吃饭前给宝宝戴上围兜。", english: "Put the bib on the baby before eating." },
     ],
+    tags: ["feeding", "baby"],
+    turnKind: "say",
+    usefulness: 4,
+    learningToday: true,
+  },
+  {
+    kind: "term",
+    hanzi: "奶瓶",
+    english: "baby bottle",
+    examples: [{ hanzi: "奶瓶洗好了吗？", english: "Is the bottle washed?" }],
+    tags: ["feeding", "baby"],
+    turnKind: "say",
+    usefulness: 4,
+    learningToday: true,
+  },
+  {
+    kind: "sentence",
+    hanzi: "宝宝喝完奶了。",
+    english: "The baby finished the milk.",
+    addressee: "yuesao",
     tags: ["feeding", "baby"],
     turnKind: "say",
     usefulness: 4,

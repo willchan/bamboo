@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-// Will's pending iPhone checks, on the seeded app (scripts/seed-data.ts: due reviews, today's 3
+// Will's pending iPhone checks, on the seeded app (scripts/seed-data.ts: due reviews, today's 5
 // new cards already learning, 6 phrases waiting in Up next). In order: the second test uses up
 // the waiting phrases.
 
@@ -34,7 +34,7 @@ test("the reminder switch stays off after a reload, then turns back on", async (
 
 test("Learn 3 more starts a round with 3 new cards", async ({ page }) => {
   await page.goto("/");
-  // Today's 3 new cards are already learning, so new ones wait for the opt-in.
+  // Today's 5 new cards are already learning, so new ones wait for the opt-in.
   await expect(page.getByTestId("today-summary")).toContainText("0 new");
   await page.getByRole("button", { name: "Learn 3 more" }).click();
   await page.waitForURL(/\/review\//);

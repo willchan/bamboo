@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { config } from "../config";
 import { dayStart, nextDayStart } from "./day";
 import { State } from "./fsrs";
@@ -16,6 +16,13 @@ import {
   type RoundState,
   type SchedCard,
 } from "./session";
+
+// These cases were written for a cap of 3 new cards a day; the rules don't depend on the value
+// (`newPerDay` is 5 since DESIGN §10 #63), so the file keeps 3.
+vi.mock("../config", async (importOriginal) => {
+  const m = await importOriginal<typeof import("../config")>();
+  return { ...m, config: { ...m.config, session: { ...m.config.session, newPerDay: 3 } } };
+});
 
 const LA = { timeZone: "America/Los_Angeles" };
 // 21:00 PDT, 2026-06-01.

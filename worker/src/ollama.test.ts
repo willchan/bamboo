@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { PHRASE_TAGS } from "@bamboo/shared";
 import { OllamaClient, OllamaError, RESULT_SCHEMA, checkReply, extractTurn } from "./ollama";
 import { loadPrompt } from "./prompt";
 import { FakeOllama, fixtureTurns, ollamaFixtures as F } from "./test-fakes";
@@ -45,6 +46,12 @@ describe("OllamaClient", () => {
       options: { temperature: 0, num_ctx: 8192 },
     });
     expect(body.format).toEqual(RESULT_SCHEMA);
+    // The model can only pick tags from the fixed list.
+    const tags = RESULT_SCHEMA.properties?.items as { items: { properties: { tags: unknown } } };
+    expect(tags.items.properties.tags).toMatchObject({
+      items: { enum: [...PHRASE_TAGS] },
+      maxItems: 3,
+    });
     expect(RESULT_SCHEMA).toMatchObject({ type: "object", required: ["turn_kind", "items"] });
   });
 });

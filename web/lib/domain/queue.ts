@@ -5,10 +5,13 @@ import {
   cleanHanzi,
   hanziKey,
   occursVerbatim,
+  PHRASE_TAGS,
+  sharedConfig,
   turnTextKey,
   type ExtractTurnResult,
 } from "@bamboo/shared";
-import { config, type RankConfig } from "../config";
+import { config, type ExtractionConfig, type QueueConfig, type RankConfig } from "../config";
+import { bundledFrequencies, commonness, type WordFrequencies } from "./frequency";
 
 export interface ScoreInput {
   kind: PhraseKind;
@@ -21,15 +24,37 @@ export interface ScoreInput {
   hanziKey: string;
 }
 
-/** The stored part of the score; recomputed whenever any input changes. */
-export function baseScore(p: ScoreInput, rank: RankConfig = config.rank): number {
-  const coreTags: readonly string[] = rank.coreTags;
+/**
+ * The frequency part of the score: how common the phrase's rarest word is (Zipf, from the
+ * bundled list), relative to `frequencyPivot`, clamped to ±`frequencyRange`. Household-tagged
+ * phrases (baby, feeding, toddler) aren't penalized for rarity: subtitles under-count them.
+ */
+export function frequencyPoints(
+  p: Pick<ScoreInput, "kind" | "tags" | "hanziKey">,
+  rank: RankConfig = config.rank,
+  freq: WordFrequencies = bundledFrequencies(),
+): number {
+  const zipf = commonness(p.hanziKey, p.kind === "term", freq);
+  if (zipf === null) return 0;
+  const range = rank.frequencyRange;
+  let d = Math.max(-range, Math.min(range, zipf - rank.frequencyPivot));
+  const household: readonly string[] = rank.householdTags;
+  if (d < 0 && p.tags.some((t) => household.includes(t))) d = 0;
+  return rank.frequency * d;
+}
+
+/** The stored part of the score; recomputed whenever any input changes, and daily (§4.7). */
+export function baseScore(
+  p: ScoreInput,
+  rank: RankConfig = config.rank,
+  freq: WordFrequencies = bundledFrequencies(),
+): number {
   let score = rank.kindWeight[p.kind];
   if (p.turnKind) score += rank.turnWeight[p.turnKind];
   if (p.heardAs) score += rank.heardAs;
   score += rank.askedAgain * Math.max(0, p.askedCount - 1);
   if (p.usefulness !== null) score += rank.usefulness * (p.usefulness - rank.usefulnessPivot);
-  if (p.tags.some((t) => coreTags.includes(t))) score += rank.coreTag;
+  score += frequencyPoints(p, rank, freq);
   score -= rank.lengthPenalty * Math.max(0, Array.from(p.hanziKey).length - rank.lengthFreeChars);
   return round2(score);
 }
@@ -115,16 +140,35 @@ export interface Validation {
   droppedDuplicate: number;
   examplesDropped: number;
   heardAsDropped: number;
+  /** Items past the per-turn caps (`config.extraction`: errand items, say terms). */
+  droppedOverCap: number;
+  /** Tags off the fixed list, or past `maxTags`. */
+  tagsDropped: number;
+}
+
+const KNOWN_TAGS: ReadonlySet<string> = new Set(PHRASE_TAGS);
+
+/** Lower-cased, deduped tags from the fixed list, at most `max`; and how many were dropped. */
+export function cleanTags(
+  raw: readonly string[],
+  max: number = sharedConfig.extraction.maxTags,
+): { tags: string[]; dropped: number } {
+  const unique = [...new Set(raw.map((x) => x.trim().toLowerCase()).filter(Boolean))];
+  const tags = unique.filter((t) => KNOWN_TAGS.has(t)).slice(0, max);
+  return { tags, dropped: unique.length - tags.length };
 }
 
 /**
  * §4.6 steps 1–3 on one `extract_turn` result: drop items not copied from the turn, keep
  * `heard_as` only if Will typed it, keep a term's example only if it is verbatim and contains the
- * term. Items for the same key collapse to the first.
+ * term. Items for the same key collapse to the first. Then the per-turn caps: an errand turn keeps
+ * its first `errandMaxItems` items, a say turn its first `sayMaxTerms` terms. Tags are limited to
+ * the fixed list.
  */
 export function validateExtraction(
   t: { userText: string; replyText: string },
   result: ExtractTurnResult,
+  caps: ExtractionConfig = config.extraction,
 ): Validation {
   const key = turnTextKey(t);
   const user = squash(t.userText);
@@ -135,8 +179,11 @@ export function validateExtraction(
     droppedDuplicate: 0,
     examplesDropped: 0,
     heardAsDropped: 0,
+    droppedOverCap: 0,
+    tagsDropped: 0,
   };
   const seen = new Set<string>();
+  let terms = 0;
   for (const raw of result.items) {
     const hanzi = cleanHanzi(raw.hanzi);
     const k = hanziKey(hanzi);
@@ -149,6 +196,14 @@ export function validateExtraction(
       continue;
     }
     seen.add(k);
+    const overCap =
+      (result.turn_kind === "errand" && out.items.length >= caps.errandMaxItems) ||
+      (result.turn_kind === "say" && raw.kind === "term" && terms >= caps.sayMaxTerms);
+    if (overCap) {
+      out.droppedOverCap += 1;
+      continue;
+    }
+    if (raw.kind === "term") terms += 1;
 
     const flags: string[] = [];
     let heardAs = raw.heard_as?.trim() || null;
@@ -169,6 +224,8 @@ export function validateExtraction(
       }
     }
 
+    const tags = cleanTags(raw.tags);
+    out.tagsDropped += tags.dropped;
     out.items.push({
       kind: raw.kind,
       hanzi,
@@ -178,7 +235,7 @@ export function validateExtraction(
       heardAs,
       example,
       usefulness: raw.usefulness,
-      tags: [...new Set(raw.tags.map((x) => x.trim().toLowerCase()).filter(Boolean))],
+      tags: tags.tags,
       flags,
     });
   }
@@ -290,34 +347,67 @@ export function planMerge(
   };
 }
 
-// --- Expiry (§4.7) ------------------------------------------------------------------------------
+// --- Expiry and the queue budget (§4.7) -------------------------------------------------------
 
 const DAY = 24 * 60 * 60 * 1000;
 
+export interface ExpiryCandidate extends QueueEntry {
+  id: string;
+  status: PhraseStatus;
+  askedCount: number;
+}
+
 /**
- * Queued, unpinned phrases that have sunk below `expireBelow` and are older than `minAgeDays`.
- * Expired phrases come back if asked about again.
+ * Queued, unpinned phrases to expire: those that have sunk below `expireBelow` and are older than
+ * `minAgeDays`, then those ranked past the budget (`newPerDay` × `budgetDays` queued phrases,
+ * pins included). The budget spares a phrase Will asked about more than once, or within
+ * `budgetMinAgeDays`: asking again means it matters. Expired phrases come back if asked about
+ * again.
  */
 export function expiredPhraseIds(
-  phrases: readonly {
-    id: string;
-    status: PhraseStatus;
-    pinned: boolean;
-    baseScore: number;
-    lastAskedAt: number;
-    createdAt: number;
-  }[],
+  phrases: readonly ExpiryCandidate[],
   now: number,
-  q: { expireBelow: number; minAgeDays: number } = config.queue,
+  q: QueueConfig = config.queue,
   rank: RankConfig = config.rank,
+  newPerDay: number = config.session.newPerDay,
 ): string[] {
+  const queued = phrases.filter((p) => p.status === "queued");
+  const sunk = new Set(
+    queued
+      .filter(
+        (p) =>
+          !p.pinned &&
+          now - p.createdAt > q.minAgeDays * DAY &&
+          effectiveScore(p, now, rank) < q.expireBelow,
+      )
+      .map((p) => p.id),
+  );
+  const budget = newPerDay * q.budgetDays;
+  const overBudget = orderQueue(
+    queued.filter((p) => !sunk.has(p.id)),
+    now,
+    rank,
+  ).filter(
+    (p) =>
+      p.rank > budget &&
+      !p.pinned &&
+      p.askedCount <= 1 &&
+      now - p.lastAskedAt > q.budgetMinAgeDays * DAY,
+  );
+  return [...sunk, ...overBudget.map((p) => p.id)];
+}
+
+/**
+ * The daily re-score (§4.7): phrases whose stored `base_score` differs from the current formula
+ * (weights or the word list changed since it was stored), with their new score.
+ */
+export function rescored<T extends ScoreInput & { id: string; baseScore: number }>(
+  phrases: readonly T[],
+  rank: RankConfig = config.rank,
+  freq: WordFrequencies = bundledFrequencies(),
+): { id: string; baseScore: number }[] {
   return phrases
-    .filter(
-      (p) =>
-        p.status === "queued" &&
-        !p.pinned &&
-        now - p.createdAt > q.minAgeDays * DAY &&
-        effectiveScore(p, now, rank) < q.expireBelow,
-    )
-    .map((p) => p.id);
+    .map((p) => ({ id: p.id, before: p.baseScore, baseScore: baseScore(p, rank, freq) }))
+    .filter((p) => p.baseScore !== p.before)
+    .map(({ id, baseScore: b }) => ({ id, baseScore: b }));
 }

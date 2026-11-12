@@ -206,7 +206,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt) |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
-| `GET /api/cron/daily` | cron | expire stale queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
+| `GET /api/cron/daily` | cron | re-score the queue, expire sunk and over-budget queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
 
 Errors from every machine route are `{error, message?, issues?}` with `error` one of
 `invalid_body` and `invalid_query` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
@@ -294,7 +294,7 @@ cards, in this order:
    kept). By due alone, the card graded first in one round always led the next (§10 #57);
 2. review cards due today, most overdue first;
 3. **new cards**, interleaved one per `config.session.newEvery` (3) cards (d d N d d N …; extras
-   go at the end). New cards are limited by `config.session.newPerDay` (3) minus those already
+   go at the end). New cards are limited by `config.session.newPerDay` (5; 3 until §10 #63) minus those already
    introduced today. Due cards take priority: new cards only fill the slots the due cards leave.
    **Learn more**: `buildRound(…, { learnMore: true })` (Start with `learnMore=1`), once
    today's cap is used up, allows `config.session.extraNewBatch` (3) more new cards in that round
@@ -375,6 +375,13 @@ On `extract_turn` completion, for each raw item:
    otherwise null it and flag `heard_as_dropped`.
 3. Keep `example` (terms only) only if it occurs verbatim in the turn **and** contains the term's
    `hanzi_key`; otherwise drop the example and flag `example_dropped`.
+   - **Caps per turn** (`config.extraction`, applied after the checks above, in the model's
+     order): an `errand` turn keeps its first `errandMaxItems` (1) item; a `say` turn keeps its
+     first `sayMaxTerms` (2) terms (its sentence and frame are kept). Drops are counted as
+     `dropped_over_cap`. The prompt asks for the same; the engine doesn't rely on it (§10 #63).
+   - **Tags**: lower-cased and deduped, then only tags in `PHRASE_TAGS`
+     (`shared/src/contracts/extract.ts`, the prompt's list) are kept, at most
+     `sharedConfig.extraction.maxTags` (3). Others are counted as `tags_dropped`.
 4. If a phrase with the same `hanzi_key` exists:
    - the first time **this import** asks about it (`last_asked_import_id` differs):
      `asked_count += 1`, `last_asked_at = now`, `last_asked_import_id = import`, and log
@@ -396,29 +403,59 @@ The verbatim check itself (`occursVerbatim`, `cleanHanzi`, `turnTextKey`) lives 
 All of this is `validateExtraction` and `planMerge` (pure, in `queue.ts`), applied by
 `completeJob` in `web/lib/repo/capture.ts` in the same batch as the job and turn updates.
 
-**Score.** `base_score` is stored. The queue order uses `effective_score`, computed at read time.
-Weights are in `config.rank`.
+**Score.** `base_score` is stored, recomputed when its inputs change and re-scored daily (§4.7),
+so new weights apply to the whole queue. The queue order uses `effective_score`, computed at read
+time. Weights are in `config.rank` (rebalanced in the 2026-11 ranking review, §10 #63).
 
 ```
-base_score = kindWeight[kind]              // term 1, frame 3, sentence 1
-           + turnWeight[turn_kind]         // decode 3, say 1, errand −2, other −1
-           + (heard_as ? 2 : 0)
+base_score = kindWeight[kind]              // term 1, frame 2, sentence 1
+           + turnWeight[turn_kind]         // decode 2, say 1, errand −3, other −1
+           + (heard_as ? 1 : 0)
            + 3 × (asked_count − 1)
-           + 1 × (usefulness − 3)          // model's rating, 1–5; 0 if null
-           + (tags ∩ coreTags ≠ ∅ ? 1 : 0) // feeding, baby, food, toddler, units
+           + 1.5 × (usefulness − 3)        // model's rating, 1–5; 0 if null
+           + 1.5 × clamp(zipf − 3.5, ±2)   // frequency, below; 0 without hanzi
            − 0.2 × max(0, len(hanzi_key) − 12)   // flag `long` if > 20
-effective_score = base_score − 0.5 × weeks_since(last_asked_at)
+effective_score = base_score − 0.25 × weeks_since(last_asked_at)
 ```
+
+**Frequency** (`web/lib/domain/frequency.ts`): how common the phrase is in spoken Mandarin, from a
+bundled word list, never from the LLM. The list (`web/lib/data/wordfreq-zh.ts`, generated by
+`web/scripts/wordfreq-zh.py`) is wordfreq 3.1.1's `large` Chinese list (subtitles including
+SUBTLEX-CH, chat, web, Wikipedia; CC BY-SA 4.0, credited in `web/lib/data/README.md`), cut to
+all-hanzi words with Zipf ≥ 2 (about 108k words, 0.9 MB). Zipf is log10 of occurrences per
+billion words: 谢谢 5.2, 冰箱 4.1, 奶瓶 3.0, 生抽 2.0.
+
+- `zipf` is the phrase's **rarest word**: the whole key if listed, else the key is segmented
+  (greedy longest match per run of hanzi) and the lowest segment counts. An unlisted character
+  counts as `config.frequency.unknownZipf` (1.5). A **term** that splits only into single
+  characters (a rare compound like 围兜) is unknown as a whole: two common characters don't make a
+  common word.
+- Phrases tagged `rank.householdTags` (feeding, baby, toddler) don't lose points for rarity:
+  subtitles under-count baby talk (拍嗝, 辅食), which is daily language in Will's home. They still
+  gain for being common. Tags no longer score otherwise (the old core-tag +1 is gone).
+- Traditional characters aren't folded to simplified; a traditional-only word counts as unknown.
 
 **Queue order**: `pinned` first (newest pin first), then `effective_score` descending, then newest.
 The **Up next** page lists the queue, with **Move to top** (sets `pinned`) and **Remove** (drop).
 
-### 4.7 Expiry
+### 4.7 Expiry and the queue budget
 
-The daily cron marks `queued`, unpinned phrases as `expired` when `effective_score <
-config.queue.expireBelow` (−2) and they are older than `config.queue.minAgeDays` (30, by
-`created_at`). Expired phrases come back if asked about again (§4.6). Nothing depends on Will
-acting. (`expiredPhraseIds` in `queue.ts`.)
+The daily cron first **re-scores** every `queued` phrase with the current formula (`rescored` in
+`queue.ts`; only changed scores are written, without touching `updated_at`). Then it marks
+`queued`, unpinned phrases as `expired`:
+
+- **sunk**: `effective_score < config.queue.expireBelow` (−2) and older than
+  `config.queue.minAgeDays` (30, by `created_at`);
+- **over budget**: the queue holds about `queue.budgetDays` (21) days of new cards, i.e.
+  `newPerDay × budgetDays` (105) phrases in queue order, pins included. Unpinned phrases ranked
+  past that expire, except one asked about more than once (`asked_count > 1`) or within
+  `queue.budgetMinAgeDays` (3, by `last_asked_at`): asking again means it matters. Without a
+  budget the queue only grows: Will adds phrases several times faster than `newPerDay`
+  (§10 #63). (The first prod-copy run without that exception expired 4 phrases asked about twice,
+  low-scored as errand or rare words.)
+
+Expired phrases come back if asked about again (§4.6), and can be restored from Phrases. Nothing
+depends on Will acting. (`expiredPhraseIds` in `queue.ts`.)
 
 ### 4.8 Card creation
 
@@ -758,11 +795,18 @@ Prompt guidance (v1):
 
 - **decode**: Will is guessing a word he heard. Extract the decoded word(s) with `heard_as`.
 - **say**: extract the **shortest natural** sentence Gemini offered (prefer a "short/direct"
-  variant if present), the 1–4 key terms (each with an example sentence), and any **reusable
-  frame**. Write frames with `…` for the slot, e.g. `阿姨，您是说…吗？`.
-- **errand**: extract at most the Chinese nouns (an ingredient, a product), if any are present.
-- **usefulness**: 5 = daily household language (feeding, food, the kids); 1 = a one-off
-  (a brand, a single errand).
+  variant if present), at most 2 key terms (each with an example sentence, most useful first),
+  and a **reusable frame** if there is one. Write frames with `…` for the slot, e.g.
+  `阿姨，您是说…吗？`.
+- **errand**: extract at most one Chinese noun (an ingredient, a product), and only if it will
+  come up at home again; usually nothing.
+- **usefulness** (v2): anchored, relative to the turn's other items, using the whole scale:
+  5 = several times a day (at most one per turn, most turns none); 4 = most weeks; 3 = now and
+  then (the usual rating); 2 = rarely; 1 = a one-off (a brand, a single errand). v1's open
+  wording got two thirds of all items rated 5, which left the rating no say in the order.
+- **tags**: only from the fixed list; the worker's `format` schema (`ModelExtractTurnResult`)
+  limits tags to `PHRASE_TAGS` and 3, so the model's grammar can't invent one. The API accepts
+  the looser `ExtractTurnResult`, and the engine filters tags anyway (§4.6).
 - Copy hanzi **exactly** from the text. Never write Chinese that isn't in the turn. Skip items
   that are Cantonese-only (e.g. 肥仔水).
 - Keep `english` short.
@@ -771,7 +815,7 @@ The worker calls Ollama with `format` set to the JSON schema of the result. It v
 On invalid output it sends one repair turn (the bad reply plus the validation error); a second
 failure fails the attempt. After 3 attempts the job is `failed` and counted in
 `import.jobs_failed`. The Imports page has a **Retry failed** button, which requeues with
-`attempt` reset. The job records `model` and `prompt_version` (`extract_turn.v1`).
+`attempt` reset. The job records `model` and `prompt_version` (`extract_turn.v2` since §10 #63).
 
 The engine, on completion: sets `turn.kind`/`extracted_at` and runs §4.6. When the import's last
 job finishes, it sets the import to `done`, builds its summary, and logs `import_finished`.
@@ -939,7 +983,7 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 
 - `import_finished {import_id, kind, turns_total, turns_new, jobs_failed, phrases_new, phrases_again}`
 - `share_parse_failed {host}`
-- `extraction {turn_id, job_id, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, examples_dropped, heard_as_dropped, repaired}`
+- `extraction {turn_id, job_id, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, repaired}`
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind}`
@@ -1153,7 +1197,7 @@ remote-database writes. Ported from PandaBase (its PRs #41, #47, #50, #52).
   (`web/scripts/seed-data.ts`, synthetic only), signed in through `DEV_AUTH_BYPASS` as the fake
   `dev@example.com`. Its own build directory (`.next-seeded`, `NEXT_DIST_DIR`), so it runs beside
   `pnpm dev`. Real-service secrets are set to `""`, which Next keeps over any `.env` file.
-- The seed is relative to *now*: review cards due now, three phrases introduced a few minutes ago
+- The seed is relative to *now*: review cards due now, five phrases introduced a few minutes ago
   (on their learning step, which uses up today's new cards, so Today offers "Learn 3 more"), six
   new phrases waiting in Up next, finished rounds and reviews on past days (Stats), three imports
   with turns, extraction events and one failed job (Imports), and a recent worker heartbeat.
@@ -1242,7 +1286,7 @@ bamboo/
 | 5 | Turn identity = hash of Will's prompt text | Stable across re-shares, formats and multiple conversations |
 | 6 | Local LLM extracts and rates; it never writes Chinese for study | 9B models copy and classify Chinese well; the verbatim check enforces it, examples included |
 | 7 | Terms carry example sentences copied from Gemini | Will needs usage, not just the word; copying keeps Chinese generation out of the local model |
-| 8 | Automatic selection: ranked queue → ≤ 3 new/day; Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
+| 8 | Automatic selection: ranked queue → ≤ 3 new/day (5 since #63); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
 | 9 | Pinyin computed (pinyin-pro) with overrides | Gemini's pinyin is inconsistent even within a single reply |
 | 10 | "Asked again" = Again on active phrases, revives dropped/expired ones | Re-asking is the clearest forgetting (and usefulness) signal available |
 | 11 | Daily unit = one round of ~10 cards; FSRS at 0.85 | Tiny required unit plus optional extra, as habit-forming apps do; smaller review load |
@@ -1297,6 +1341,7 @@ bamboo/
 | 60 | Slow replay is 0.3 (was 0.45, #56) | Will's iPhone feedback: 0.45 was better than 0.6 but still not slow enough, because iOS compresses the rate range. Still to be checked by ear on the iPhone |
 | 61 | "Learn N more" is a start-round option (`learnMore`), granted by the engine only once today's `newPerDay` is used up; no new column | The round's card ids are stored when it's built, so the extra allowance only matters at build time: a reload resumes the same cards, and the next round counts today's introductions (now past the cap) as usual. Deciding on the server keeps the cap authoritative (a stale button gives an ordinary round). Opt-in, not a higher `newPerDay`: each new card adds future reviews, so more is a choice for a day with spare time. The round reserves room for the extras, or a long due list would leave the button doing nothing |
 | 62 | Verification loops: a seeded app with phone screenshots, and an on-demand read-only prod copy (§8.6), ported from PandaBase | Tests passed while checks Will did by hand on the iPhone stayed pending for days. A seeded server with data in every state lets a session look at each screen in both themes; the prod copy answers "does it hold on real data?" without touching prod. Read-only token, SELECT-only wrapper and counts-only output, because the data is Will's own conversations |
+| 63 | The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v2`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
 
 ## Appendix A — Synthetic fixtures
 

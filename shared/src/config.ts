@@ -12,6 +12,8 @@ export const sharedConfig = {
     maxItems: 8,
     /** `english` is at most this long. */
     maxEnglishChars: 120,
+    /** The engine keeps at most this many tags per item, all from `PHRASE_TAGS`. */
+    maxTags: 3,
   },
   /** PDF-text segmentation (DESIGN §5.2 *PDF*), on `pdftotext -layout` output. */
   segment: {

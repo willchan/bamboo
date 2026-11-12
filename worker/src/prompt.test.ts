@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sharedConfig } from "@bamboo/shared";
+import { PHRASE_TAGS, sharedConfig } from "@bamboo/shared";
 import { describe, expect, it } from "vitest";
 import { fill, loadPrompt, parsePrompt, repairMessage, replyForModel, userMessage } from "./prompt";
 import { fixtureTurns } from "./test-fakes";
@@ -10,9 +10,9 @@ const FILE = (n: string) =>
   `<!-- note ${n} -->\n<!-- system -->\nS${n}\n<!-- user -->\nU {{user_text}}\n<!-- repair -->\nR {{errors}}\n`;
 
 describe("prompt files", () => {
-  it("the shipped prompt loads as extract_turn.v1 with all three parts", () => {
+  it("the shipped prompt loads as extract_turn.v2 with all three parts", () => {
     const p = loadPrompt();
-    expect(p.version).toBe("extract_turn.v1");
+    expect(p.version).toBe("extract_turn.v2");
     expect(p.system).toContain("turn_kind");
     expect(p.user).toContain("{{user_text}}");
     expect(p.user).toContain("{{reply_text}}");
@@ -20,6 +20,11 @@ describe("prompt files", () => {
     expect(p.repair).toContain("{{errors}}");
     // The comment header is not part of the system message.
     expect(p.system).not.toContain("Never edit a released version");
+  });
+
+  it("lists exactly the engine's tags", () => {
+    const line = /`tags`:[\s\S]*?list, never any other word: ([^.]+)\./u.exec(loadPrompt().system);
+    expect(line?.[1]?.split(/,\s*/u)).toEqual([...PHRASE_TAGS]);
   });
 
   it("the highest version wins (numerically)", () => {

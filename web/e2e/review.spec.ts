@@ -90,7 +90,8 @@ test("grading moves on at once and a failed save is retried", async ({ page }) =
 
 // Will's iPhone feedback: a Listen card's front is just the audio (no "you heard" hint, no "Tap
 // to show"); the back shows what he first heard under the answer. Once today's new cards are used
-// up (3, by the tests above), "Learn N more" starts a round with extra new cards (DESIGN §4.4).
+// up (3 by the tests above, 2 more here: newPerDay is 5), "Learn N more" starts a round with extra
+// new cards (DESIGN §4.4).
 test("Learn more adds new cards past the cap; a Listen card's hint is on the back", async ({
   page,
 }) => {
@@ -116,7 +117,35 @@ test("Learn more adds new cards past the cap; a Listen card's hint is on the bac
   await page.getByRole("button", { name: "Add phrase" }).click();
   await expect(page.getByTestId("saved")).toBeVisible();
 
-  // Today's 3 new cards are used, so the new phrases wait for an opt-in.
+  // Two more phrases use up the rest of today's 5 new cards. Added last, they're pinned newest,
+  // so they come first in the queue.
+  for (const [hanzi, english] of [
+    ["关灯。", "Lights off."],
+    ["刷牙了吗？", "Brushed your teeth?"],
+  ] as const) {
+    await page.goto("/phrases/new");
+    await page.getByRole("radio", { name: "sentence" }).check({ force: true });
+    await page.getByLabel("Chinese", { exact: true }).fill(hanzi);
+    await page.getByLabel("English intent", { exact: true }).fill(english);
+    await page.getByRole("button", { name: "Add phrase" }).click();
+    await expect(page.getByTestId("saved")).toBeVisible();
+  }
+  await page.goto("/");
+  await page.getByRole("button", { name: /^Another round/ }).click();
+  const filler = page.getByTestId("progress");
+  await expect(filler).toHaveText(/^1 \/ \d+$/);
+  const fillerTotal = Number((await filler.textContent())!.split("/")[1]);
+  for (let i = 1; i <= fillerTotal; i++) {
+    await expect(filler).toHaveText(`${i} / ${fillerTotal}`);
+    await expect(async () => {
+      await page.getByRole("button", { name: "Show", exact: true }).click();
+      await expect(page.getByRole("button", { name: /^Good/ })).toBeVisible({ timeout: 300 });
+    }).toPass();
+    await expect(page.getByTestId("card-back").getByText("baking powder")).toHaveCount(0);
+    await page.getByRole("button", { name: /^Good/ }).click();
+  }
+
+  // Today's 5 new cards are used, so the new phrases wait for an opt-in.
   await page.goto("/");
   await page.getByRole("button", { name: "Learn 2 more" }).click();
 

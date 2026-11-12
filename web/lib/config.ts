@@ -17,11 +17,29 @@ export interface RankConfig {
   askedAgain: number;
   usefulnessPivot: number;
   usefulness: number;
-  coreTags: readonly string[];
-  coreTag: number;
+  frequency: number;
+  frequencyPivot: number;
+  frequencyRange: number;
+  householdTags: readonly string[];
   lengthFreeChars: number;
   lengthPenalty: number;
   weeklyDecay: number;
+}
+
+export interface FrequencyConfig {
+  unknownZipf: number;
+}
+
+export interface QueueConfig {
+  expireBelow: number;
+  minAgeDays: number;
+  budgetDays: number;
+  budgetMinAgeDays: number;
+}
+
+export interface ExtractionConfig {
+  errandMaxItems: number;
+  sayMaxTerms: number;
 }
 
 export interface NudgeConfig {
@@ -56,7 +74,8 @@ export const config = {
 
   session: {
     roundSize: 10,
-    newPerDay: 3,
+    /** New cards a day (5 since the 2026-11 ranking review, DESIGN §10 #63; was 3). */
+    newPerDay: 5,
     /**
      * "Learn N more" (opt-in, once today's new cards are used up): a round may introduce this many
      * new cards beyond `newPerDay`. Each new card adds future reviews, so it's never automatic.
@@ -70,27 +89,61 @@ export const config = {
     secondsPerCard: 15,
   } as SessionConfig,
 
-  /** Ranking (DESIGN §4.6). */
+  /** Ranking (DESIGN §4.6). Rebalanced in the 2026-11 ranking review (DESIGN §10 #63). */
   rank: {
-    kindWeight: { term: 1, frame: 3, sentence: 1 },
-    turnWeight: { decode: 3, say: 1, errand: -2, other: -1 },
-    heardAs: 2,
+    kindWeight: { term: 1, frame: 2, sentence: 1 },
+    turnWeight: { decode: 2, say: 1, errand: -3, other: -1 },
+    heardAs: 1,
     askedAgain: 3,
     usefulnessPivot: 3,
-    usefulness: 1,
-    coreTags: ["feeding", "baby", "food", "toddler", "units"],
-    coreTag: 1,
+    usefulness: 1.5,
+    /** Points per Zipf unit above `frequencyPivot` (the phrase's rarest word, §4.6). */
+    frequency: 1.5,
+    /** Zipf 3.5 sits between ordinary (奶瓶, 3) and common (冰箱, 4). */
+    frequencyPivot: 3.5,
+    /** The Zipf difference is clamped to ±this before weighting. */
+    frequencyRange: 2,
+    /**
+     * Baby and feeding words are rarer in subtitles and chat than in Will's home (拍嗝, 辅食), so
+     * phrases with these tags don't lose points for rarity (they still gain for being common).
+     */
+    householdTags: ["feeding", "baby", "toddler"],
     lengthFreeChars: 12,
     lengthPenalty: 0.2,
     /** `effective_score` loses this much per week since the phrase was last asked about. */
-    weeklyDecay: 0.5,
+    weeklyDecay: 0.25,
   } as RankConfig,
 
-  /** Expiry (DESIGN §4.7), run by the daily cron. */
+  /** The frequency signal (DESIGN §4.6, `web/lib/domain/frequency.ts`). */
+  frequency: {
+    /** A word missing from the bundled list (Zipf < 2) counts as this rare. */
+    unknownZipf: 1.5,
+  } as FrequencyConfig,
+
+  /** Expiry and the queue budget (DESIGN §4.7), run by the daily cron. */
   queue: {
     expireBelow: -2,
     minAgeDays: 30,
-  },
+    /**
+     * The queue keeps about this many days of new cards (`newPerDay` × this); the lowest-ranked
+     * unpinned phrases beyond it expire. They come back if Will asks about them again.
+     */
+    budgetDays: 21,
+    /**
+     * The budget never expires a phrase within this many days of Will asking about it (nor one
+     * asked about more than once).
+     */
+    budgetMinAgeDays: 3,
+  } as QueueConfig,
+
+  /**
+   * Caps the engine applies to each extract_turn result (DESIGN §4.6 step 1), whatever the
+   * prompt says: the model's order decides which items stay.
+   */
+  extraction: {
+    errandMaxItems: 1,
+    sayMaxTerms: 2,
+  } as ExtractionConfig,
 
   /** The extract_turn job queue (DESIGN §3.2, §5.3). */
   jobs: {
