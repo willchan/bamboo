@@ -433,16 +433,17 @@ Its `extraction` event carries `reextract: true`.
 
 **Score.** `base_score` is stored, recomputed when its inputs change and re-scored daily (§4.7),
 so new weights apply to the whole queue. The queue order uses `effective_score`, computed at read
-time. Weights are in `config.rank` (rebalanced in the 2026-11 ranking review, §10 #64).
+time. Weights are in `config.rank` (rebalanced in the 2026-11 ranking review, §10 #64; sentences
+since §10 #66).
 
 ```
-base_score = kindWeight[kind]              // term 1, frame 2, sentence 1
+base_score = kindWeight[kind]              // term 1, frame 2, sentence 2
            + turnWeight[turn_kind]         // decode 2, say 1, errand −3, other −1
            + (heard_as ? 1 : 0)
            + 3 × (asked_count − 1)
            + 1.5 × (usefulness − 3)        // model's rating, 1–5; 0 if null
            + 1.5 × clamp(zipf − 3.5, ±2)   // frequency, below; 0 without hanzi
-           − 0.2 × max(0, len(hanzi_key) − 12)   // flag `long` if > 20
+           − 0.2 × max(0, len(hanzi_key) − 20)   // only `long` phrases (> 20) lose points
 effective_score = base_score − 0.25 × weeks_since(last_asked_at)
 ```
 
@@ -1383,6 +1384,7 @@ bamboo/
 | 63 | No addressee on phrases or cards; extract_turn.v2 writes a `note` only when the wording depends on who hears it. The `addressee` column stays, unused, until a later contract PR | On prod data (counts only), the addressee was taken from the conversation title, so it tagged whole conversations: most phrases were single words labeled "yuesao", and no meaning was ever stored with two addressees. The "→ 阿姨" chip on the Say front was on nearly every card and told Will nothing; yuesao and nanny both showed 阿姨. Audience matters only for register (baby talk, 您), which a short English note covers without a fixed list of audiences. The contract still accepts `addressee` so a v1 worker keeps working until `make mac-update` |
 | 64 | The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v3`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
 | 65 | Re-run old turns with the current prompt (§4.6.1), on Will's tap, as `reextract` jobs that never count as asking again, never touch their import, and wait behind ordinary jobs | Read-only prod counts (2026-11-13): all but 6 of 125 turns were read by `extract_turn.v1`, which took ~4.6 items per "how do I say" turn and gave about half no sentence; the #64 budget then expired 154 phrases at once, so 17 of 54 such questions had nothing left, while single-character fragments of Gemini's example sentences reached rounds. Re-running beats tuning v1's leftovers: v3 already asks for the sentence and fewer terms. Dating new phrases to the turn keeps decay and the budget honest; not bumping keeps `asked_count` meaning "Will asked"; leaving dropped phrases dropped respects his choice. A tap, not automatic on every prompt bump, because each re-run spends Mac model time and visibly reshuffles Up next; ordering keeps a new import's Discord reply from waiting behind the backlog |
+| 66 | A sentence weighs like a frame (`kindWeight.sentence` 2, was 1), and length costs points only past `phrase.longChars` (20, was 12) | Read-only prod counts (2026-11-13, in memory): sentences had already lost almost nothing to the frequency signal (−0.05 on average; frames +0.46, terms −0.34), but the length penalty cost them about 2 points on average, while every sentence was from a "how do I say" turn, the very thing Will asked for. Under the old weights only 5 of 14 sentences ranked inside the 105-phrase budget (median rank 162 of 294). With these, 9 of 14 do (median 36), and the 5 left out are the long, formal ones (26–44 characters), which should sink. 20 is the existing `long` flag, so "long" means one thing |
 
 ## Appendix A — Synthetic fixtures
 

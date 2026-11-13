@@ -89,9 +89,12 @@ export const config = {
     secondsPerCard: 15,
   } as SessionConfig,
 
-  /** Ranking (DESIGN §4.6). Rebalanced in the 2026-11 ranking review (DESIGN §10 #64). */
+  /**
+   * Ranking (DESIGN §4.6). Rebalanced in the 2026-11 ranking review (DESIGN §10 #64); sentences
+   * weigh like frames and aren't penalized for length until they're long (§10 #66).
+   */
   rank: {
-    kindWeight: { term: 1, frame: 2, sentence: 1 },
+    kindWeight: { term: 1, frame: 2, sentence: 2 },
     turnWeight: { decode: 2, say: 1, errand: -3, other: -1 },
     heardAs: 1,
     askedAgain: 3,
@@ -108,7 +111,8 @@ export const config = {
      * phrases with these tags don't lose points for rarity (they still gain for being common).
      */
     householdTags: ["feeding", "baby", "toddler"],
-    lengthFreeChars: 12,
+    /** Length is free up to `phrase.longChars` (20): only phrases flagged `long` lose points. */
+    lengthFreeChars: 20,
     lengthPenalty: 0.2,
     /** `effective_score` loses this much per week since the phrase was last asked about. */
     weeklyDecay: 0.25,

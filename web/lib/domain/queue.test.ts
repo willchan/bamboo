@@ -33,7 +33,8 @@ describe("baseScore", () => {
   it("weights the kind", () => {
     expect(score({})).toBe(1);
     expect(score({ kind: "frame" })).toBe(2);
-    expect(score({ kind: "sentence" })).toBe(1);
+    // A say turn's sentence is what Will asked for: it weighs like a frame (§10 #66).
+    expect(score({ kind: "sentence" })).toBe(2);
   });
 
   it("weights the source turn", () => {
@@ -63,9 +64,13 @@ describe("baseScore", () => {
     expect(score({ hanziKey: "宝宝", tags: ["baby"] })).toBe(2.5);
   });
 
-  it("penalizes length beyond 12 key characters", () => {
-    const key = "宝宝".repeat(7) + "洗澡"; // 16, all common
-    expect(score({ hanziKey: key, kind: "sentence" })).toBeCloseTo(1 + 1.5 - 0.2 * 4);
+  it("penalizes length only past the long threshold (20 key characters)", () => {
+    // 16, all common: a typical short sentence from Gemini isn't penalized (§10 #66).
+    const short = "宝宝".repeat(7) + "洗澡";
+    expect(score({ hanziKey: short, kind: "sentence" })).toBeCloseTo(2 + 1.5);
+    const long = "宝宝".repeat(11) + "洗澡"; // 24
+    expect(score({ hanziKey: long, kind: "sentence" })).toBeCloseTo(2 + 1.5 - 0.2 * 4);
+    expect(config.rank.lengthFreeChars).toBe(config.phrase.longChars);
   });
 
   it("combines everything (DESIGN §4.6 formula)", () => {

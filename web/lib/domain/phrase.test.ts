@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { config } from "../config";
 import { derivedFields, examplesFor, initialCardTypes, PhraseInput } from "./phrase";
 import { frequencyPoints } from "./queue";
 
@@ -80,7 +81,8 @@ describe("derivedFields", () => {
     expect(short).toEqual({
       hanziKey: "该睡觉了",
       baseScore: expect.closeTo(
-        1 + frequencyPoints({ kind: "sentence", tags: [], hanziKey: "该睡觉了" }),
+        config.rank.kindWeight.sentence +
+          frequencyPoints({ kind: "sentence", tags: [], hanziKey: "该睡觉了" }),
         2,
       ),
       flags: ["heard_as_dropped"],
