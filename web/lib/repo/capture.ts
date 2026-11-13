@@ -38,6 +38,7 @@ import {
   rescored,
   validateExtraction,
   type ReextractPhrase,
+  type ValidItem,
 } from "../domain/queue";
 import { askedAgainCards } from "../domain/session";
 import { reviewCard } from "../domain/fsrs";
@@ -499,6 +500,7 @@ export async function completeJob(
           heard_as_dropped: applied.validation.heardAsDropped,
           dropped_over_cap: applied.validation.droppedOverCap,
           tags_dropped: applied.validation.tagsDropped,
+          sentence_promoted: applied.validation.sentencePromoted,
         },
         now,
       ),
@@ -822,12 +824,95 @@ export async function getWorkerStatus(db: Db, now: number): Promise<WorkerStatus
 const DAY = 24 * 60 * 60 * 1000;
 
 /**
- * `GET /api/cron/daily`: re-score the queue with the current weights and word list, expire stale
+ * The daily backfill of §4.6's sentence rule: a say turn whose latest result has no sentence gets
+ * the one `validateExtraction` now promotes from a term's example, if no phrase has that key yet.
+ * Results stored before the rule existed get it without re-running the model; once created (or
+ * dropped by Will), a phrase isn't touched again, so this is a no-op on later runs. Dated to the
+ * turn, like a re-run (§4.6.1).
+ */
+export async function promoteMissingSentences(db: Db, now: number): Promise<number> {
+  const res = await db.$client.execute(`
+    with last as (
+      select json_extract(input, '$.turn_id') tid, result,
+        row_number() over (
+          partition by json_extract(input, '$.turn_id') order by finished_at desc, id desc
+        ) rn
+      from job where status = 'done' and result is not null
+    )
+    select last.tid, last.result from last
+    join turn on turn.id = last.tid
+    where last.rn = 1 and turn.kind = 'say'
+      and not exists (
+        select 1 from json_each(json_extract(last.result, '$.items')) i
+        where json_extract(i.value, '$.kind') = 'sentence'
+      )`);
+  if (res.rows.length === 0) return 0;
+  const results = new Map(res.rows.map((r) => [String(r.tid), String(r.result)]));
+  const turns = (
+    await Promise.all(
+      chunks([...results.keys()]).map((part) =>
+        db.select().from(turn).where(inArray(turn.id, part)),
+      ),
+    )
+  ).flat();
+  const promoted: { t: (typeof turns)[number]; item: ValidItem }[] = [];
+  for (const t of turns) {
+    const parsed = ExtractTurnResult.safeParse(JSON.parse(results.get(t.id)!));
+    if (!parsed.success) continue;
+    const v = validateExtraction({ userText: t.userText, replyText: t.replyText }, parsed.data);
+    const item = v.items.find((i) => i.flags.includes("from_example"));
+    if (item) promoted.push({ t, item });
+  }
+  const keys = [...new Set(promoted.map((p) => p.item.hanziKey))];
+  const taken = new Set<string>();
+  for (const part of chunks(keys)) {
+    const rows = await db
+      .select({ k: phrase.hanziKey })
+      .from(phrase)
+      .where(inArray(phrase.hanziKey, part));
+    for (const r of rows) taken.add(r.k);
+  }
+  const writes: BatchItem<"sqlite">[] = [];
+  for (const { t, item } of promoted) {
+    if (taken.has(item.hanziKey)) continue;
+    taken.add(item.hanziKey);
+    const rows = phraseRows(
+      {
+        status: "queued",
+        kind: item.kind,
+        hanzi: item.hanzi,
+        english: item.english,
+        tags: item.tags,
+        usefulness: item.usefulness,
+        turnKind: "say",
+        source: "import",
+        sourceTurnId: t.id,
+        flags: item.flags,
+      },
+      initialCardTypes(item.kind, "say"),
+      now,
+    );
+    writes.push(
+      db
+        .insert(phrase)
+        .values({ ...rows.phrase, lastAskedAt: t.createdAt, lastAskedImportId: t.importId }),
+      db.insert(card).values(rows.cards),
+    );
+  }
+  if (writes.length) await runBatch(db, writes);
+  return writes.length / 2;
+}
+
+/**
+ * `GET /api/cron/daily`: give old say turns their sentence (`promoteMissingSentences`), re-score
+ * the queue with the current weights and word list, expire stale
  * and over-budget queue items (§4.7), requeue expired leases, prune events older than
  * `config.events.retainDays`.
  */
 export async function runDaily(db: Db, now: number) {
   const leases = await sweepExpiredLeases(db, now);
+  // Before the re-score and budget, so the new sentences compete for a place.
+  const promoted = await promoteMissingSentences(db, now);
   const queued = await db.select().from(phrase).where(eq(phrase.status, "queued"));
   const scores = rescored(queued);
   const next = new Map(scores.map((r) => [r.id, r.baseScore]));
@@ -849,6 +934,7 @@ export async function runDaily(db: Db, now: number) {
   return {
     leases_requeued: leases.requeued,
     leases_failed: leases.failed,
+    sentences_promoted: promoted,
     phrases_rescored: scores.length,
     phrases_expired: expire.length,
     events_pruned: pruned.rowsAffected,

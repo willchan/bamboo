@@ -207,7 +207,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary jobs before re-runs (§4.6.1), then oldest first; a re-run looks the same to the worker |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
-| `GET /api/cron/daily` | cron | re-score the queue, expire sunk and over-budget queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
+| `GET /api/cron/daily` | cron | give say turns stored before the sentence rule their sentence (§4.7), re-score the queue, expire sunk and over-budget queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
 
 Errors from every machine route are `{error, message?, issues?}` with `error` one of
 `invalid_body` and `invalid_query` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
@@ -380,6 +380,11 @@ On `extract_turn` completion, for each raw item:
      order): an `errand` turn keeps its first `errandMaxItems` (1) item; a `say` turn keeps its
      first `sayMaxTerms` (2) terms (its sentence and frame are kept). Drops are counted as
      `dropped_over_cap`. The prompt asks for the same; the engine doesn't rely on it (§10 #64).
+   - **A say turn's sentence** (`config.extraction.promoteExampleSentence`): a `say` result with
+     no `sentence` gets one, the shortest example of its kept terms that has English and is more
+     than the term itself, flagged `from_example`. The example already passed step 3 (verbatim,
+     contains the term), so no LLM-written Chinese gets in; the local model returned a sentence
+     for only 5 of 47 say turns under v3 (§10 #67). Counted as `sentence_promoted`.
    - **Tags**: lower-cased and deduped, then only tags in `PHRASE_TAGS`
      (`shared/src/contracts/extract.ts`, the prompt's list) are kept, at most
      `sharedConfig.extraction.maxTags` (3). Others are counted as `tags_dropped`.
@@ -469,7 +474,11 @@ The **Up next** page lists the queue, with **Move to top** (sets `pinned`) and *
 
 ### 4.7 Expiry and the queue budget
 
-The daily cron first **re-scores** every `queued` phrase with the current formula (`rescored` in
+The daily cron first **backfills sentences** (`promoteMissingSentences` in `capture.ts`): a `say`
+turn whose latest stored result has no sentence gets the one §4.6's rule promotes from it, unless a
+phrase with that key exists in any status (so a dropped one is never made again, and later runs
+do nothing). It's created `queued`, dated to the turn like a re-run (§4.6.1), with no model call.
+Then it **re-scores** every `queued` phrase with the current formula (`rescored` in
 `queue.ts`; only changed scores are written, without touching `updated_at`). Then it marks
 `queued`, unpinned phrases as `expired`:
 
@@ -1021,7 +1030,7 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 
 - `import_finished {import_id, kind, turns_total, turns_new, jobs_failed, phrases_new, phrases_again}`
 - `share_parse_failed {host}`
-- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, repaired}`
+- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, repaired}`
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind}`
@@ -1385,6 +1394,7 @@ bamboo/
 | 64 | The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v3`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
 | 65 | Re-run old turns with the current prompt (§4.6.1), on Will's tap, as `reextract` jobs that never count as asking again, never touch their import, and wait behind ordinary jobs | Read-only prod counts (2026-11-13): all but 6 of 125 turns were read by `extract_turn.v1`, which took ~4.6 items per "how do I say" turn and gave about half no sentence; the #64 budget then expired 154 phrases at once, so 17 of 54 such questions had nothing left, while single-character fragments of Gemini's example sentences reached rounds. Re-running beats tuning v1's leftovers: v3 already asks for the sentence and fewer terms. Dating new phrases to the turn keeps decay and the budget honest; not bumping keeps `asked_count` meaning "Will asked"; leaving dropped phrases dropped respects his choice. A tap, not automatic on every prompt bump, because each re-run spends Mac model time and visibly reshuffles Up next; ordering keeps a new import's Discord reply from waiting behind the backlog |
 | 66 | A sentence weighs like a frame (`kindWeight.sentence` 2, was 1), and length costs points only past `phrase.longChars` (20, was 12) | Read-only prod counts (2026-11-13, in memory): sentences had already lost almost nothing to the frequency signal (−0.05 on average; frames +0.46, terms −0.34), but the length penalty cost them about 2 points on average, while every sentence was from a "how do I say" turn, the very thing Will asked for. Under the old weights only 5 of 14 sentences ranked inside the 105-phrase budget (median rank 162 of 294). With these, 9 of 14 do (median 36), and the 5 left out are the long, formal ones (26–44 characters), which should sink. 20 is the existing `long` flag, so "long" means one thing |
+| 67 | A say turn without a sentence gets the shortest example of its kept terms as its sentence (`from_example`), at extraction and, once, by the daily cron for stored results | After the #65 re-run (prod counts, 2026-11-13), the local model returned a sentence for 5 of 47 say turns and exceeded the 2-term cap on many; prompting harder is unreliable with a small local model. The examples are verbatim from Gemini's reply and contain the term, and their English came with them, so promoting one stores no LLM-written Chinese. 42 of the 42 sentence-less say turns had such an example. Shortest, because Gemini's first suggestion is often the long, formal one. A cron backfill rather than another re-run: the stored results already hold the examples, so no model time is spent; existence in any status makes it idempotent and respects Will's drops |
 
 ## Appendix A — Synthetic fixtures
 

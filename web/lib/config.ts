@@ -40,6 +40,7 @@ export interface QueueConfig {
 export interface ExtractionConfig {
   errandMaxItems: number;
   sayMaxTerms: number;
+  promoteExampleSentence: boolean;
 }
 
 export interface NudgeConfig {
@@ -147,6 +148,11 @@ export const config = {
   extraction: {
     errandMaxItems: 1,
     sayMaxTerms: 2,
+    /**
+     * A say turn the model returned without a sentence gets one: the shortest example (with
+     * English) of its kept terms, already verbatim-checked (§4.6, §10 #67).
+     */
+    promoteExampleSentence: true,
   } as ExtractionConfig,
 
   /** The extract_turn job queue (DESIGN §3.2, §5.3). */

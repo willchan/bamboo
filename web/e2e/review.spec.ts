@@ -143,6 +143,9 @@ test("Learn more adds new cards past the cap; a Listen card's hint is on the bac
     await expect(page.getByTestId("card-back").getByText("baking powder")).toHaveCount(0);
     await page.getByRole("button", { name: /^Good/ }).click();
   }
+  // Finishing waits for every grade to save; leaving earlier races the last save, and Today
+  // would still count that card as new (no "Learn 2 more").
+  await expect(page.getByTestId("done-for-today")).toBeVisible();
 
   // Today's 5 new cards are used, so the new phrases wait for an opt-in.
   await page.goto("/");

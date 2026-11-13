@@ -913,6 +913,65 @@ describe("tutor eval", () => {
   });
 });
 
+describe("a say turn's sentence from a term's example", () => {
+  const SAY: FakeTurn = {
+    user_text: "How do I tell the nanny the baby needs a bath?",
+    reply_text: "可以说：“阿姨，宝宝该洗澡了。”洗澡 means bath.",
+    position: 0,
+  };
+  const onlyTerms: ExtractTurnResult = {
+    turn_kind: "say",
+    items: [
+      term("洗澡", "bath", {
+        example: {
+          hanzi: "阿姨，宝宝该洗澡了。",
+          english: "Auntie, it's time for the baby's bath.",
+        },
+      }),
+    ],
+  };
+  const sentences = () => db.select().from(phrase).where(eq(phrase.kind, "sentence"));
+
+  it("is made when the model leaves the sentence out", async () => {
+    await postImport({ turns: [SAY], turns_total: 1 });
+    const c = (await claim())!;
+    expect((await done(c.job_id, c.attempt, onlyTerms)).status).toBe(200);
+    const [s] = await sentences();
+    expect(s).toMatchObject({
+      hanzi: "阿姨，宝宝该洗澡了。",
+      english: "Auntie, it's time for the baby's bath.",
+      status: "queued",
+      flags: ["from_example"],
+    });
+    expect(await db.select().from(card).where(eq(card.phraseId, s!.id))).toMatchObject([
+      { type: "say" },
+    ]);
+  });
+
+  it("is backfilled once by the daily cron for results stored before the rule", async () => {
+    config.extraction.promoteExampleSentence = false;
+    try {
+      await postImport({ turns: [SAY], turns_total: 1 });
+      const c = (await claim())!;
+      await done(c.job_id, c.attempt, onlyTerms);
+    } finally {
+      config.extraction.promoteExampleSentence = true;
+    }
+    expect(await sentences()).toHaveLength(0);
+
+    at(T0 + DAY);
+    const cron = async () => json(await cronGET(req("/api/cron/daily", CRON)));
+    expect(await cron()).toMatchObject({ sentences_promoted: 1 });
+    expect(await sentences()).toMatchObject([
+      { hanzi: "阿姨，宝宝该洗澡了。", lastAskedAt: T0, createdAt: T0 + DAY },
+    ]);
+    // Removed by Will: never made again.
+    await dropPhrase(db, (await sentences())[0]!.id, T0 + DAY, "remove");
+    expect(await cron()).toMatchObject({ sentences_promoted: 0 });
+    expect(await sentences()).toMatchObject([{ status: "dropped" }]);
+  });
+});
+
 describe("cron", () => {
   it("expires stale queue items and prunes old events", async () => {
     const { finish } = await oneTurn();
