@@ -96,6 +96,11 @@ export const job = sqliteTable(
     model: text("model"),
     promptVersion: text("prompt_version"),
     error: text("error"),
+    /**
+     * A re-run of an already extracted turn with a newer prompt (DESIGN §4.6.1): claimed after
+     * every ordinary job, never counted on its import, never "asked again".
+     */
+    reextract: integer("reextract", { mode: "boolean" }).notNull().default(false),
     createdAt: integer("created_at").notNull(),
     finishedAt: integer("finished_at"),
   },

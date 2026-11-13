@@ -31,7 +31,14 @@ import { config } from "../config";
 import { importSummary, workerStatus, type WorkerStatus } from "../domain/imports";
 import { isLeaseExpired, isStaleAttempt, leaseExpiresAt, statusAfterFailure } from "../domain/jobs";
 import { initialCardTypes } from "../domain/phrase";
-import { expiredPhraseIds, planMerge, rescored, validateExtraction } from "../domain/queue";
+import {
+  expiredPhraseIds,
+  planMerge,
+  planReextract,
+  rescored,
+  validateExtraction,
+  type ReextractPhrase,
+} from "../domain/queue";
 import { askedAgainCards } from "../domain/session";
 import { reviewCard } from "../domain/fsrs";
 import { eventRow, newId, runBatch } from "./db";
@@ -340,7 +347,7 @@ function failWrites(
       })
       .where(and(eq(job.id, j.id), eq(job.attempt, j.attempt), eq(job.status, "leased"))),
   ];
-  if (next === "failed") {
+  if (next === "failed" && !j.reextract) {
     writes.push(
       db
         .update(imports)
@@ -351,7 +358,10 @@ function failWrites(
   return writes;
 }
 
-/** `POST /api/jobs/claim`: lease the oldest queued job (attempt + 1), or null when idle. */
+/**
+ * `POST /api/jobs/claim`: lease the oldest queued job (attempt + 1), or null when idle. Re-runs
+ * (§4.6.1) wait behind every ordinary job, so a new import is never stuck behind a backlog.
+ */
 export async function claimJob(db: Db, now: number): Promise<ClaimedJob | null> {
   await sweepExpiredLeases(db, now);
   for (let tries = 0; tries < 3; tries++) {
@@ -359,7 +369,7 @@ export async function claimJob(db: Db, now: number): Promise<ClaimedJob | null> 
       .select()
       .from(job)
       .where(eq(job.status, "queued"))
-      .orderBy(asc(job.createdAt), asc(job.id))
+      .orderBy(asc(job.reextract), asc(job.createdAt), asc(job.id))
       .limit(1)
       .get();
     if (!next) return null;
@@ -439,7 +449,9 @@ export async function completeJob(
   const input = j.input as ExtractTurnInput;
   const t = await db.query.turn.findFirst({ where: eq(turn.id, input.turn_id) });
   if (!t) return { ok: false, error: "not_found" };
-  const applied = await applyExtraction(db, { turn: t, importId: j.importId }, parsed.data, now);
+  const applied = j.reextract
+    ? await applyReextraction(db, t, parsed.data, now)
+    : await applyExtraction(db, { turn: t, importId: j.importId }, parsed.data, now);
 
   const writes: BatchItem<"sqlite">[] = [
     ...applied.writes,
@@ -456,19 +468,24 @@ export async function completeJob(
         finishedAt: now,
       })
       .where(and(eq(job.id, j.id), eq(job.attempt, j.attempt), eq(job.status, "leased"))),
-    db
-      .update(imports)
-      .set({
-        phrasesNew: sql`${imports.phrasesNew} + ${applied.phrasesNew}`,
-        phrasesAgain: sql`${imports.phrasesAgain} + ${applied.phrasesAgain}`,
-      })
-      .where(eq(imports.id, j.importId)),
+    ...(j.reextract
+      ? []
+      : [
+          db
+            .update(imports)
+            .set({
+              phrasesNew: sql`${imports.phrasesNew} + ${applied.phrasesNew}`,
+              phrasesAgain: sql`${imports.phrasesAgain} + ${applied.phrasesAgain}`,
+            })
+            .where(eq(imports.id, j.importId)),
+        ]),
     db.insert(event).values(
       eventRow(
         "extraction",
         {
           turn_id: t.id,
           job_id: j.id,
+          reextract: j.reextract,
           model: meta.model,
           prompt_version: meta.promptVersion,
           latency_ms: body.latency_ms ?? null,
@@ -597,16 +614,170 @@ async function applyExtraction(
 }
 
 /**
+ * §4.6.1: a re-run's result replaces what the old prompt made of the turn (`planReextract`). New
+ * phrases are dated to the turn, when Will asked; nothing counts as asked again, and the import's
+ * counters and Discord reply are left alone.
+ */
+async function applyReextraction(
+  db: Db,
+  t: typeof turn.$inferSelect,
+  result: ExtractTurnResult,
+  now: number,
+) {
+  const validation = validateExtraction({ userText: t.userText, replyText: t.replyText }, result);
+  const keys = validation.items.map((i) => i.hanziKey);
+  const [byKey, fromTurn] = await Promise.all([
+    keys.length ? db.select().from(phrase).where(inArray(phrase.hanziKey, keys)) : [],
+    db.select().from(phrase).where(eq(phrase.sourceTurnId, t.id)),
+  ]);
+  const existing = new Map<string, ReextractPhrase>(byKey.map((p) => [p.hanziKey, p]));
+  const plan = planReextract(t.id, validation, existing, fromTurn, now);
+
+  const writes: BatchItem<"sqlite">[] = [];
+  for (const item of plan.create) {
+    const rows = phraseRows(
+      {
+        status: "queued",
+        kind: item.kind,
+        hanzi: item.hanzi,
+        english: item.english,
+        note: item.note,
+        heardAs: item.heardAs,
+        examples: item.example ? [{ ...item.example, turn_id: t.id }] : [],
+        tags: item.tags,
+        usefulness: item.usefulness,
+        turnKind: result.turn_kind,
+        source: "import",
+        sourceTurnId: t.id,
+        flags: item.flags,
+      },
+      initialCardTypes(item.kind, result.turn_kind),
+      now,
+    );
+    writes.push(
+      db
+        .insert(phrase)
+        .values({ ...rows.phrase, lastAskedAt: t.createdAt, lastAskedImportId: t.importId }),
+      db.insert(card).values(rows.cards),
+    );
+  }
+  for (const m of plan.merges) {
+    writes.push(
+      db
+        .update(phrase)
+        .set({ ...m.patch, ...(m.revived ? { droppedAt: null } : {}) })
+        .where(eq(phrase.id, m.id)),
+    );
+    if (m.revived) {
+      writes.push(
+        db
+          .insert(event)
+          .values(eventRow("phrase_revived", { phrase_id: m.id, reextract: true }, now)),
+      );
+    }
+  }
+  if (plan.superseded.length) {
+    writes.push(
+      db
+        .update(phrase)
+        .set({ status: "expired", updatedAt: now })
+        .where(and(inArray(phrase.id, plan.superseded), eq(phrase.status, "queued"))),
+      ...plan.superseded.map((id) =>
+        db
+          .insert(event)
+          .values(eventRow("phrase_superseded", { phrase_id: id, turn_id: t.id }, now)),
+      ),
+    );
+  }
+  return { writes, validation, phrasesNew: 0, phrasesAgain: 0 };
+}
+
+/**
+ * Turns whose latest extraction used an older prompt than the newest one the worker has reported
+ * (the prompt of the most recently finished job), with no job open and their import done
+ * (§4.6.1). A turn whose every job failed isn't here: Retry failed covers it.
+ */
+async function staleTurnIds(db: Db): Promise<string[]> {
+  const res = await db.$client.execute(`
+    with latest as (
+      select prompt_version v from job
+      where status = 'done' and prompt_version is not null
+      order by finished_at desc, id desc limit 1
+    ),
+    last as (
+      select json_extract(input, '$.turn_id') tid, prompt_version v,
+        row_number() over (
+          partition by json_extract(input, '$.turn_id') order by finished_at desc, id desc
+        ) rn
+      from job where status = 'done'
+    )
+    select last.tid from last
+    join turn on turn.id = last.tid
+    join import on import.id = turn.import_id and import.status = 'done'
+    where last.rn = 1
+      and exists (select 1 from latest)
+      and last.v is not (select v from latest)
+      and last.tid not in (
+        select json_extract(input, '$.turn_id') from job where status in ('queued', 'leased')
+      )
+    order by turn.created_at, turn.position`);
+  return res.rows.map((r) => String(r.tid));
+}
+
+/**
+ * Imports › Re-run: one re-extraction job (`reextract`) per stale turn (§4.6.1). Returns how many
+ * were queued; running it again while they're open queues nothing more.
+ */
+export async function queueReextraction(db: Db, now: number): Promise<number> {
+  const ids = await staleTurnIds(db);
+  if (ids.length === 0) return 0;
+  const writes: BatchItem<"sqlite">[] = [];
+  for (const part of chunks(ids, 100)) {
+    const rows = await db
+      .select({ turn, title: imports.conversationTitle })
+      .from(turn)
+      .innerJoin(imports, eq(imports.id, turn.importId))
+      .where(inArray(turn.id, part));
+    const byId = new Map(rows.map((r) => [r.turn.id, r]));
+    writes.push(
+      db.insert(job).values(
+        part.map((id) => {
+          const r = byId.get(id)!;
+          return {
+            id: newId(),
+            type: "extract_turn" as const,
+            status: "queued" as const,
+            importId: r.turn.importId,
+            reextract: true,
+            input: {
+              turn_id: r.turn.id,
+              conversation_title: r.title,
+              user_text: r.turn.userText,
+              reply_text: r.turn.replyText,
+            } satisfies ExtractTurnInput,
+            createdAt: now,
+          };
+        }),
+      ),
+    );
+  }
+  writes.push(db.insert(event).values(eventRow("reextract_queued", { turns: ids.length }, now)));
+  await runBatch(db, writes);
+  return ids.length;
+}
+
+/**
  * Imports › Retry failed: requeue failed jobs with `attempt` reset, and reopen their imports. An
  * import already replied to in Discord isn't replied to again.
  */
 export async function retryFailedJobs(db: Db, importId?: string): Promise<number> {
   const failed = await db
-    .select({ id: job.id, importId: job.importId })
+    .select({ id: job.id, importId: job.importId, reextract: job.reextract })
     .from(job)
     .where(and(eq(job.status, "failed"), importId ? eq(job.importId, importId) : undefined));
   if (failed.length === 0) return 0;
-  const importIds = [...new Set(failed.map((f) => f.importId))];
+  // A failed re-run (§4.6.1) never counted on its import, so its import stays closed.
+  const importIds = [...new Set(failed.filter((f) => !f.reextract).map((f) => f.importId))];
   const writes: BatchItem<"sqlite">[] = [];
   for (const part of chunks(failed.map((f) => f.id))) {
     writes.push(
@@ -616,12 +787,14 @@ export async function retryFailedJobs(db: Db, importId?: string): Promise<number
         .where(inArray(job.id, part)),
     );
   }
-  writes.push(
-    db
-      .update(imports)
-      .set({ status: "extracting", jobsFailed: 0, finishedAt: null, summary: null })
-      .where(inArray(imports.id, importIds)),
-  );
+  if (importIds.length) {
+    writes.push(
+      db
+        .update(imports)
+        .set({ status: "extracting", jobsFailed: 0, finishedAt: null, summary: null })
+        .where(inArray(imports.id, importIds)),
+    );
+  }
   await runBatch(db, writes);
   return failed.length;
 }
@@ -692,7 +865,7 @@ export interface FailedJobRow {
 
 /** The Imports page: recent imports and the failed jobs (with the start of their prompt). */
 export async function getImportsPage(db: Db) {
-  const [recent, failed] = await Promise.all([
+  const [recent, failed, stale, [reextracting]] = await Promise.all([
     db.select().from(imports).orderBy(desc(imports.createdAt)).limit(config.imports.recentCount),
     db
       .select({ job, userText: turn.userText, replyText: turn.replyText })
@@ -700,6 +873,11 @@ export async function getImportsPage(db: Db) {
       .innerJoin(turn, sql`${turn.id} = json_extract(${job.input}, '$.turn_id')`)
       .where(eq(job.status, "failed"))
       .orderBy(desc(job.finishedAt)),
+    staleTurnIds(db),
+    db
+      .select({ n: count() })
+      .from(job)
+      .where(and(eq(job.reextract, true), inArray(job.status, [...OPEN_JOB]))),
   ]);
   const failedJobs: FailedJobRow[] = failed.map((f) => ({
     id: f.job.id,
@@ -708,5 +886,11 @@ export async function getImportsPage(db: Db) {
     attempt: f.job.attempt,
     prompt: (f.userText || f.replyText).slice(0, 80),
   }));
-  return { recent, failedJobs };
+  return {
+    recent,
+    failedJobs,
+    /** Turns read with an older prompt (§4.6.1), and re-runs still open. */
+    staleTurns: stale.length,
+    reextracting: reextracting?.n ?? 0,
+  };
 }

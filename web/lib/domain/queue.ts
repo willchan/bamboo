@@ -359,6 +359,116 @@ export function planMerge(
   };
 }
 
+// --- Re-extraction (§4.6.1) -------------------------------------------------------------------
+
+export interface ReextractPhrase extends ExistingPhrase {
+  id: string;
+  pinned: boolean;
+  sourceTurnId: string | null;
+}
+
+export interface ReextractPatch {
+  status: PhraseStatus;
+  heardAs: string | null;
+  examples: PhraseExample[];
+  usefulness: number | null;
+  turnKind: TurnKind | null;
+  tags: string[];
+  baseScore: number;
+  flags: string[];
+  updatedAt: number;
+}
+
+export interface ReextractPlan {
+  /** Items with no phrase yet: created `queued`, dated to when Will asked (the turn's time). */
+  create: ValidItem[];
+  /** Existing phrases the new result picks again. */
+  merges: { id: string; revived: boolean; patch: ReextractPatch }[];
+  /** Queued phrases first made from this turn that the new result no longer picks: expire them. */
+  superseded: string[];
+}
+
+/**
+ * A re-run of an extracted turn with a newer prompt (§4.6.1). It replaces what the old prompt
+ * made of the turn, without counting as Will asking again: no `asked_count` bump, no *asked
+ * again*, `last_asked_*` untouched. An expired phrase it picks comes back to `queued`; a dropped
+ * one stays dropped (that was Will's call); an active one only gains the example. A queued phrase
+ * first made from this turn takes the new usefulness, turn kind and tags. Queued phrases from this
+ * turn it no longer picks are superseded, unless pinned or asked about more than once.
+ */
+export function planReextract(
+  turnId: string,
+  validation: Pick<Validation, "turnKind" | "items">,
+  existing: ReadonlyMap<string, ReextractPhrase>,
+  fromTurn: readonly ReextractPhrase[],
+  now: number,
+  rank: RankConfig = config.rank,
+): ReextractPlan {
+  const plan: ReextractPlan = { create: [], merges: [], superseded: [] };
+  const picked = new Set(validation.items.map((i) => i.hanziKey));
+  for (const item of validation.items) {
+    const p = existing.get(item.hanziKey);
+    if (!p) {
+      plan.create.push(item);
+      continue;
+    }
+    const revived = p.status === "expired";
+    const status: PhraseStatus = revived
+      ? p.introducedAt !== null
+        ? "active"
+        : "queued"
+      : p.status;
+    const refresh = status === "queued" && p.sourceTurnId === turnId;
+    const usefulness = refresh ? item.usefulness : p.usefulness;
+    const turnKind = refresh ? validation.turnKind : p.turnKind;
+    const tags = refresh ? item.tags : p.tags;
+    const heardAs = p.heardAs ?? item.heardAs;
+    const examples =
+      p.kind === "term"
+        ? mergeExamples(p.examples, item.example && { ...item.example, turn_id: turnId })
+        : p.examples;
+    const flags = [...new Set([...p.flags, ...item.flags])].filter((f) => f !== "long");
+    if (isLong(p.hanziKey)) flags.push("long");
+    plan.merges.push({
+      id: p.id,
+      revived,
+      patch: {
+        status,
+        heardAs,
+        examples,
+        usefulness,
+        turnKind,
+        tags,
+        baseScore: baseScore(
+          {
+            kind: p.kind,
+            turnKind,
+            heardAs,
+            askedCount: p.askedCount,
+            usefulness,
+            tags,
+            hanziKey: p.hanziKey,
+          },
+          rank,
+        ),
+        flags,
+        updatedAt: now,
+      },
+    });
+  }
+  plan.superseded = fromTurn
+    .filter(
+      (p) =>
+        p.sourceTurnId === turnId &&
+        p.status === "queued" &&
+        !p.pinned &&
+        p.askedCount <= 1 &&
+        !picked.has(p.hanziKey),
+    )
+    .map((p) => p.id);
+  return plan;
+}
+
 // --- Expiry and the queue budget (§4.7) -------------------------------------------------------
 
 const DAY = 24 * 60 * 60 * 1000;

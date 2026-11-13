@@ -32,6 +32,8 @@ import {
   getImportsPage,
   getWorkerStatus,
   importPastedText,
+  pendingNotifications,
+  queueReextraction,
   retryFailedJobs,
 } from "../repo/capture";
 
@@ -143,14 +145,19 @@ async function claim() {
 const complete = (body: Record<string, unknown>) =>
   completePOST(req("/api/jobs/complete", WORKER, body));
 
-const done = (job_id: string, attempt: number, result: ExtractTurnResult) =>
+const done = (
+  job_id: string,
+  attempt: number,
+  result: ExtractTurnResult,
+  prompt_version = "extract_turn.v1",
+) =>
   complete({
     job_id,
     attempt,
     status: "done",
     result,
     model: "qwen3.5:9b",
-    prompt_version: "extract_turn.v1",
+    prompt_version,
     latency_ms: 1234,
     repaired: false,
   });
@@ -720,6 +727,129 @@ describe("extract results", () => {
     expect(await json(await notificationsGET(req("/api/agent/notifications", AGENT)))).toEqual({
       notifications: [],
     });
+  });
+});
+
+describe("re-extraction", () => {
+  const sentence = (hanzi: string, english: string) => ({
+    ...term(hanzi, english),
+    kind: "sentence" as const,
+  });
+  const byKey = async (hanzi: string) =>
+    (await db.select().from(phrase).where(eq(phrase.hanzi, hanzi)))[0];
+
+  /** TURNS[1] read with v1 (a fragment and two words), then a newer turn read with v3. */
+  async function oldThenNew() {
+    const { import_id } = (await json(
+      await postImport({ turns: [TURNS[1]!], turns_total: 1 }),
+    )) as { import_id: string };
+    const c = (await claim())!;
+    await done(c.job_id, c.attempt, {
+      turn_kind: "say",
+      items: [
+        term("水", "water", { usefulness: 5 }),
+        term("加水", "add water"),
+        { ...term("您是说…吗？", "do you mean …?"), kind: "frame" },
+      ],
+    });
+    await notifiedPOST(req(`/api/imports/${import_id}/notified`, AGENT, {}), {
+      params: Promise.resolve({ id: import_id }),
+    });
+    await db.update(phrase).set({ status: "expired" }).where(eq(phrase.hanzi, "加水"));
+    await dropPhrase(db, (await byKey("您是说…吗？"))!.id, T0 + 1, "remove");
+
+    at(T0 + DAY);
+    await postImport({ discord_message_id: "m2", turns: [TURNS[2]!], turns_total: 1 });
+    const c2 = (await claim())!;
+    await done(c2.job_id, c2.attempt, { turn_kind: "errand", items: [] }, "extract_turn.v3");
+    return import_id;
+  }
+
+  it("re-reads turns from an older prompt: replaces their phrases without asking again", async () => {
+    const importId = await oldThenNew();
+    const before = await importRow(importId);
+    expect((await getImportsPage(db)).staleTurns).toBe(1);
+
+    at(T0 + 2 * DAY);
+    expect(await queueReextraction(db, T0 + 2 * DAY)).toBe(1);
+    expect(await queueReextraction(db, T0 + 2 * DAY)).toBe(0); // already open
+    expect(await getImportsPage(db)).toMatchObject({ staleTurns: 0, reextracting: 1 });
+
+    // A new import queued after the re-run is still claimed first.
+    await postImport({
+      discord_message_id: "m3",
+      turns: [{ user_text: "eggs?", reply_text: "鸡蛋。", position: 0 }],
+      turns_total: 1,
+    });
+    const fresh = (await claim())!;
+    expect(fresh.input.user_text).toBe("eggs?");
+    await done(fresh.job_id, fresh.attempt, { turn_kind: "other", items: [] }, "extract_turn.v3");
+
+    const rerun = (await claim())!;
+    expect(rerun.input.user_text).toBe(TURNS[1]!.user_text);
+    const r = await done(
+      rerun.job_id,
+      rerun.attempt,
+      {
+        turn_kind: "say",
+        items: [
+          sentence("阿姨，您是说要加水吗？", "Auntie, do you mean add water?"),
+          term("加水", "add water", { usefulness: 4 }),
+          { ...term("您是说…吗？", "do you mean …?"), kind: "frame" },
+        ],
+      },
+      "extract_turn.v3",
+    );
+    expect(r.status).toBe(200);
+
+    // New: the sentence, dated to when Will asked (T0), not to the re-run.
+    expect(await byKey("阿姨，您是说要加水吗？")).toMatchObject({
+      status: "queued",
+      askedCount: 1,
+      lastAskedAt: T0,
+      createdAt: T0 + 2 * DAY,
+      lastAskedImportId: importId,
+    });
+    // Expired and picked again: back, with the new rating. Dropped: stays dropped.
+    expect(await byKey("加水")).toMatchObject({ status: "queued", askedCount: 1, usefulness: 4 });
+    expect(await byKey("您是说…吗？")).toMatchObject({ status: "dropped" });
+    // The fragment v3 no longer picks leaves the queue.
+    expect(await byKey("水")).toMatchObject({ status: "expired" });
+    expect(await db.select().from(event).where(eq(event.type, "phrase_superseded"))).toHaveLength(
+      1,
+    );
+    expect(await db.select().from(event).where(eq(event.type, "asked_again"))).toHaveLength(0);
+
+    // The import's counters, summary and Discord reply are untouched.
+    expect(await importRow(importId)).toEqual(before);
+    expect((await pendingNotifications(db)).map((n) => n.import_id)).not.toContain(importId);
+    expect((await getImportsPage(db)).staleTurns).toBe(0);
+    const [ev] = (await db.select().from(event).where(eq(event.type, "extraction"))).filter(
+      (e) => (e.data as { reextract?: boolean }).reextract,
+    );
+    expect(ev?.data).toMatchObject({ prompt_version: "extract_turn.v3", kept: 3 });
+  });
+
+  it("a failed re-run doesn't count on its import, and Retry failed doesn't reopen it", async () => {
+    const importId = await oldThenNew();
+    const before = await importRow(importId);
+    await queueReextraction(db, T0 + 2 * DAY);
+    for (let attempt = 1; attempt <= config.jobs.maxAttempts; attempt++) {
+      const c = (await claim())!;
+      await complete({ job_id: c.job_id, attempt: c.attempt, status: "failed", error: "x" });
+    }
+    expect(await importRow(importId)).toEqual(before);
+    expect(await retryFailedJobs(db)).toBe(1);
+    expect(await importRow(importId)).toEqual(before);
+  });
+
+  it("has nothing to re-run when every turn used the newest prompt", async () => {
+    expect(await queueReextraction(db, T0)).toBe(0);
+    await postImport({ turns: [TURNS[2]!], turns_total: 1 });
+    expect((await getImportsPage(db)).staleTurns).toBe(0); // not extracted yet
+    const c = (await claim())!;
+    await done(c.job_id, c.attempt, { turn_kind: "errand", items: [] });
+    expect(await queueReextraction(db, T0)).toBe(0);
   });
 });
 

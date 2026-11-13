@@ -7,8 +7,11 @@ import {
   frequencyPoints,
   isLong,
   orderQueue,
+  planReextract,
   rescored,
+  type ReextractPhrase,
   type ScoreInput,
+  type ValidItem,
 } from "./queue";
 
 // A stand-in word list, so the weights are tested apart from the bundled data: 宝宝 is common
@@ -30,7 +33,8 @@ describe("baseScore", () => {
   it("weights the kind", () => {
     expect(score({})).toBe(1);
     expect(score({ kind: "frame" })).toBe(2);
-    expect(score({ kind: "sentence" })).toBe(1);
+    // A say turn's sentence is what Will asked for: it weighs like a frame (§10 #66).
+    expect(score({ kind: "sentence" })).toBe(2);
   });
 
   it("weights the source turn", () => {
@@ -60,9 +64,13 @@ describe("baseScore", () => {
     expect(score({ hanziKey: "宝宝", tags: ["baby"] })).toBe(2.5);
   });
 
-  it("penalizes length beyond 12 key characters", () => {
-    const key = "宝宝".repeat(7) + "洗澡"; // 16, all common
-    expect(score({ hanziKey: key, kind: "sentence" })).toBeCloseTo(1 + 1.5 - 0.2 * 4);
+  it("penalizes length only past the long threshold (20 key characters)", () => {
+    // 16, all common: a typical short sentence from Gemini isn't penalized (§10 #66).
+    const short = "宝宝".repeat(7) + "洗澡";
+    expect(score({ hanziKey: short, kind: "sentence" })).toBeCloseTo(2 + 1.5);
+    const long = "宝宝".repeat(11) + "洗澡"; // 24
+    expect(score({ hanziKey: long, kind: "sentence" })).toBeCloseTo(2 + 1.5 - 0.2 * 4);
+    expect(config.rank.lengthFreeChars).toBe(config.phrase.longChars);
   });
 
   it("combines everything (DESIGN §4.6 formula)", () => {
@@ -176,5 +184,109 @@ describe("orderQueue", () => {
       NOW,
     );
     expect(order.map((e) => e.id)).toEqual(["b", "a"]);
+  });
+});
+
+describe("planReextract", () => {
+  const NOW = 1_000_000;
+  const phrase = (o: Partial<ReextractPhrase>): ReextractPhrase => ({
+    id: "p",
+    status: "queued",
+    kind: "term",
+    hanziKey: "泡打粉",
+    introducedAt: null,
+    askedCount: 1,
+    lastAskedImportId: "i1",
+    heardAs: null,
+    examples: [],
+    usefulness: 5,
+    turnKind: "say",
+    tags: [],
+    flags: [],
+    pinned: false,
+    sourceTurnId: "t1",
+    ...o,
+  });
+  const item = (o: Partial<ValidItem>): ValidItem => ({
+    kind: "term",
+    hanzi: "泡打粉",
+    hanziKey: "泡打粉",
+    english: "baking powder",
+    note: null,
+    heardAs: null,
+    example: null,
+    usefulness: 3,
+    tags: ["cooking"],
+    flags: [],
+    ...o,
+  });
+  const plan = (items: ValidItem[], phrases: ReextractPhrase[]) =>
+    planReextract(
+      "t1",
+      { turnKind: "errand", items },
+      new Map(phrases.map((p) => [p.hanziKey, p])),
+      phrases.filter((p) => p.sourceTurnId === "t1"),
+      NOW,
+    );
+
+  it("creates items with no phrase yet", () => {
+    const out = plan([item({})], []);
+    expect(out).toEqual({ create: [item({})], merges: [], superseded: [] });
+  });
+
+  it("revives an expired phrase it picks again, and refreshes the ratings of its own turn", () => {
+    const out = plan([item({})], [phrase({ status: "expired" })]);
+    expect(out.merges).toHaveLength(1);
+    expect(out.merges[0]).toMatchObject({
+      id: "p",
+      revived: true,
+      patch: { status: "queued", usefulness: 3, turnKind: "errand", tags: ["cooking"] },
+    });
+    // Not "asked again": the patch never touches asked_count or last_asked_*.
+    expect(Object.keys(out.merges[0]!.patch)).not.toContain("askedCount");
+    expect(Object.keys(out.merges[0]!.patch)).not.toContain("lastAskedAt");
+  });
+
+  it("brings an expired, once-introduced phrase back to active", () => {
+    const out = plan([item({})], [phrase({ status: "expired", introducedAt: 5 })]);
+    expect(out.merges[0]!.patch.status).toBe("active");
+  });
+
+  it("leaves a dropped phrase dropped, and an active one's ratings alone", () => {
+    const dropped = plan([item({})], [phrase({ status: "dropped" })]).merges[0]!;
+    expect(dropped).toMatchObject({ revived: false, patch: { status: "dropped" } });
+    const active = plan(
+      [item({ example: { hanzi: "放泡打粉。", english: null } })],
+      [phrase({ status: "active", introducedAt: 5 })],
+    ).merges[0]!;
+    expect(active.patch).toMatchObject({ status: "active", usefulness: 5, turnKind: "say" });
+    expect(active.patch.examples).toEqual([{ hanzi: "放泡打粉。", english: null, turn_id: "t1" }]);
+  });
+
+  it("keeps another turn's ratings on a phrase it picks again", () => {
+    const out = plan([item({})], [phrase({ sourceTurnId: "t0", heardAs: "podafen" })]);
+    expect(out.merges[0]!.patch).toMatchObject({
+      status: "queued",
+      usefulness: 5,
+      turnKind: "say",
+      tags: [],
+      heardAs: "podafen",
+    });
+  });
+
+  it("supersedes this turn's queued phrases it no longer picks, except pinned or asked again", () => {
+    const out = plan(
+      [item({})],
+      [
+        phrase({}),
+        phrase({ id: "frag", hanziKey: "连" }),
+        phrase({ id: "pin", hanziKey: "粉", pinned: true }),
+        phrase({ id: "twice", hanziKey: "面粉", askedCount: 2 }),
+        phrase({ id: "learning", hanziKey: "面", status: "active", introducedAt: 5 }),
+        phrase({ id: "gone", hanziKey: "放", status: "expired" }),
+        phrase({ id: "other", hanziKey: "糖", sourceTurnId: "t0" }),
+      ],
+    );
+    expect(out.superseded).toEqual(["frag"]);
   });
 });
