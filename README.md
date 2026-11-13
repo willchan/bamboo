@@ -7,6 +7,8 @@ worth keeping, and a short daily round of spoken review (FSRS) makes them stick.
 
 See [CLAUDE.md](CLAUDE.md) and [docs/](docs/) for the product, design, and build plan.
 
+**Production:** https://bamboo-panda.vercel.app
+
 ## Develop
 
 Node 24 and pnpm (the version is pinned in `package.json`; `corepack enable` picks it up).
@@ -81,8 +83,12 @@ Vercel deploys `main` to production and every PR to a preview (DESIGN §8.2). Th
 Run the public smoke check against the deployment (no sign-in, no secrets, never a real token):
 
 ```
-pnpm smoke https://<production domain>
+pnpm smoke https://bamboo-panda.vercel.app
 ```
+
+In a Claude Code cloud session, `bamboo-panda.vercel.app` must be in the environment's allowed
+hosts, and Node's `fetch` only uses the session's proxy with
+`NODE_USE_ENV_PROXY=1 NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt` in front of the command.
 
 It prints one line per check and exits non-zero on any failure: `/` redirects signed-out
 visitors to `/sign-in`; the manifest is standalone and its icons load; Google is the auth provider
