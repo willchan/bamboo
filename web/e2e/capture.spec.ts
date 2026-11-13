@@ -1,12 +1,13 @@
 import { expect, test } from "@playwright/test";
 
 // PLAN M3: paste an answer → a fake worker completes its job through the API with a canned
-// ExtractTurnResult → the phrase is at the top of Up next. Synthetic text only.
+// ExtractTurnResult → its phrases top Up next. The model returned only a term for this "how do I
+// say" answer, so the term's example becomes its sentence (DESIGN §4.6, §10 #67). Synthetic text.
 const WORKER = { authorization: "Bearer e2e-worker-token" };
 
 const ANSWER = "你可以说：\n高压锅\n例如：用高压锅煮二十分钟就好了。";
 
-test("paste an answer, the worker extracts it, the phrase tops Up next", async ({
+test("paste an answer, the worker extracts it, its phrases top Up next", async ({
   page,
   request,
 }) => {
@@ -59,15 +60,22 @@ test("paste an answer, the worker extracts it, the phrase tops Up next", async (
   expect((await request.post("/api/jobs/claim", { headers: WORKER })).status()).toBe(204);
 
   await page.getByRole("link", { name: "Up next" }).click();
-  const top = page.getByTestId("queue").locator("li").first();
-  await expect(top).toContainText("高压锅");
-  await expect(top).toContainText("pressure cooker");
+  const rows = page.getByTestId("queue").locator("li");
+  await expect(rows).toHaveCount(2);
+  // The sentence (a say turn's point) first, then the term.
+  await expect(rows.nth(0)).toContainText("用高压锅煮二十分钟就好了。");
+  await expect(rows.nth(0)).toContainText("Twenty minutes in it.");
+  await expect(rows.nth(1)).toContainText("高压锅");
+  await expect(rows.nth(1)).toContainText("pressure cooker");
 
   await page.getByRole("link", { name: "Imports" }).click();
-  await expect(page.getByTestId("imports")).toContainText("1 phrase queued");
+  await expect(page.getByTestId("imports")).toContainText("2 phrases queued");
 
   // Leave the database as the review test expects it: nothing queued.
   await page.getByRole("link", { name: "Up next" }).click();
-  await top.getByRole("button", { name: "Remove" }).click();
+  for (const n of [2, 1]) {
+    await expect(rows).toHaveCount(n);
+    await rows.first().getByRole("button", { name: "Remove" }).click();
+  }
   await expect(page.getByText("The queue is empty.")).toBeVisible();
 });
