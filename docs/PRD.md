@@ -167,7 +167,10 @@ The behavior:
   this as **forgotten** and shows it again soon. A dropped item he asks about again returns to
   the queue (or straight back into review, if he had already started learning it).
 - The PWA's **Imports** tab lists recent imports with their counts, any questions that couldn't be
-  processed (with **Retry failed**), and the paste box. **Today** shows a line when questions are
+  processed (with **Retry failed**), and the paste box. When the extraction prompt has improved,
+  it offers to **Re-run** the questions read with an older one: the queue then reflects the
+  newer reading (expired phrases it still wants come back, fragments it no longer wants leave),
+  without counting as asking again. Cards being learned and phrases Will removed are untouched. **Today** shows a line when questions are
   waiting and the Mac's worker hasn't been heard from for a while.
 
 ### 5.4 Daily reminder

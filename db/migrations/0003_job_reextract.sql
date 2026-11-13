@@ -1,0 +1,1 @@
+ALTER TABLE `job` ADD `reextract` integer DEFAULT false NOT NULL;

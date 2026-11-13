@@ -2,8 +2,9 @@
 // `dev:seeded` server, `pnpm --filter web shot` and the seeded e2e project. Relative to `now`, it
 // leaves phrases in every state — new (queued), learning (five introduced today, which uses up
 // today's `newPerDay` new cards, so Today offers "Learn 3 more"), and review cards due now — plus finished
-// rounds on past days (Stats), imports with turns, extraction events and one failed job (Imports),
-// and a recent worker heartbeat. Idempotent: phrases already present (by hanzi key) are skipped,
+// rounds on past days (Stats), imports with turns, extraction events and one failed job (Imports;
+// the newest import was read with a newer prompt, so it offers a re-run), and a recent worker
+// heartbeat. Idempotent: phrases already present (by hanzi key) are skipped,
 // and the imports, rounds and events are only added to a database without imports.
 import {
   card,
@@ -343,6 +344,8 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
 async function seedCapture(db: Db, now: number): Promise<void> {
   const [existing] = await db.select({ n: count() }).from(imports);
   if ((existing?.n ?? 0) > 0) return;
+  // The newest import was read with a newer prompt, so Imports offers to re-run the older ones.
+  const newest = Math.min(...IMPORTS.map((i) => i.hoursAgo));
   for (const [n, imp] of IMPORTS.entries()) {
     const at = now - imp.hoursAgo * 60 * MIN;
     const importId = newId();
@@ -390,7 +393,7 @@ async function seedCapture(db: Db, now: number): Promise<void> {
         input: { turn_id: turnId },
         attempt: failed ? 3 : 1,
         model: "qwen3.5:9b",
-        promptVersion: "extract_turn.v1",
+        promptVersion: imp.hoursAgo === newest ? "extract_turn.v3" : "extract_turn.v1",
         error: failed ? "model returned invalid JSON" : null,
         createdAt: at,
         finishedAt: at + 2 * MIN,

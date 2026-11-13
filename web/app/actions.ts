@@ -7,7 +7,7 @@ import { GRADES, type Grade } from "@/lib/domain/fsrs";
 import { PhraseInput } from "@/lib/domain/phrase";
 import { phraseFormToInput } from "@/lib/phrase-form";
 import { hasHanzi } from "@bamboo/shared";
-import { importPastedText, retryFailedJobs } from "@/lib/repo/capture";
+import { importPastedText, queueReextraction, retryFailedJobs } from "@/lib/repo/capture";
 import { serverClock } from "@/lib/repo/clock";
 import { getDb } from "@/lib/repo/db";
 import { setNudgeEnabled } from "@/lib/repo/nudge";
@@ -172,6 +172,15 @@ export async function retryFailedAction(): Promise<void> {
   return timed("action retryFailed", async () => {
     await requireUser();
     await retryFailedJobs(getDb());
+    revalidatePath("/imports");
+  });
+}
+
+/** Imports › Re-run: re-extract every turn read with an older prompt (DESIGN §4.6.1). */
+export async function reextractAction(): Promise<void> {
+  return timed("action reextract", async () => {
+    await requireUser();
+    await queueReextraction(getDb(), Date.now());
     revalidatePath("/imports");
   });
 }

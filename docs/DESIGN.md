@@ -165,8 +165,9 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
   (`'extract_turn'`), `status` (`'queued' | 'leased' | 'done' | 'failed'`), `import_id` (fk
   `import`, denormalized from the turn, to count an import's open jobs), `input` json, `result`
   json null, `attempt` int, `lease_expires_at` null, `model` null, `prompt_version` null, `error`
-  null, `created_at`, `finished_at` null. Jobs are claimed oldest first (ids are monotonic ULIDs,
-  so one import's turns are processed in order).
+  null, `reextract` bool (default false; a re-run of an extracted turn, §4.6.1), `created_at`,
+  `finished_at` null. Jobs are claimed oldest first (ids are monotonic ULIDs, so one import's
+  turns are processed in order), ordinary jobs before re-runs.
 - **`event`**: telemetry. Columns: `id`, `type`, `data` json, `at`. See §7.
 - **`setting`**: key/value: `nudge_enabled`, `nudge_last_sent_day`.
 
@@ -203,7 +204,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
 | `GET /api/agent/nudge` | agent | `NudgeResponse` `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent (a conditional upsert of `nudge_last_sent_day`, so of two overlapping polls only one gets the text) and logs `nudge_sent` |
 | `GET /api/agent/eval/turns?limit=&seed=` | agent | `EvalTurnsResponse` `{turns: [{turn_id, import_id, user_text, reply_text}], pool: {turns, imports}}`: a seeded sample of past questions with Gemini's answers for the tutor evaluation (§5.4). `limit` 1–50 (default 20), `seed` ≤ 100 chars (default `bamboo`); otherwise 400 `invalid_query`. Image-only turns (empty `user_text`) are skipped; imports are visited round-robin in a seeded order (`web/lib/domain/tutor-eval.ts`). Read-only |
-| `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt) |
+| `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary jobs before re-runs (§4.6.1), then oldest first; a re-run looks the same to the worker |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
 | `GET /api/cron/daily` | cron | re-score the queue, expire sunk and over-budget queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
@@ -402,6 +403,33 @@ The verbatim check itself (`occursVerbatim`, `cleanHanzi`, `turnTextKey`) lives 
 
 All of this is `validateExtraction` and `planMerge` (pure, in `queue.ts`), applied by
 `completeJob` in `web/lib/repo/capture.ts` in the same batch as the job and turn updates.
+
+#### 4.6.1 Re-extraction
+
+When the prompt improves, turns read by an older one can be **re-run**. On Imports, **Re-run**
+(`queueReextraction` in `capture.ts`) queues one `extract_turn` job with `reextract = true` for
+each turn whose latest finished job's `prompt_version` differs from the newest one (the prompt
+of the most recently finished job), whose import is `done`, and with no job open. The worker
+needs no change: a re-run is an ordinary job to it, claimed after every ordinary job.
+
+A re-run's result replaces what the old prompt made of the turn without counting as Will asking
+again (`planReextract` in `queue.ts`), after the same validation and caps (steps 1–3):
+
+- an item with no phrase yet is created `queued`, with `last_asked_at` = the turn's
+  `created_at` (when Will asked) and `last_asked_import_id` = the turn's import, so decay and
+  the budget treat it as old, not new;
+- an existing phrase is never bumped (`asked_count`, `last_asked_*` unchanged) and never gets
+  *asked again*. An `expired` one comes back to `queued` (`phrase_revived`, `reextract: true`); a
+  `dropped` one stays dropped, since that was Will's call; any keeps the new example. A `queued`
+  one first made from this turn takes the new `usefulness`, `turn_kind` and tags, and is
+  re-scored;
+- `queued` phrases first made from this turn (`source_turn_id`) that the new result no longer
+  picks are **superseded**: `expired`, with a `phrase_superseded` event. Pinned ones, ones asked
+  about more than once and active ones stay.
+
+A re-run never touches its import: no `phrases_new`/`phrases_again`, no `jobs_failed`, no
+summary or Discord reply, and Retry failed requeues a failed re-run without reopening its import.
+Its `extraction` event carries `reextract: true`.
 
 **Score.** `base_score` is stored, recomputed when its inputs change and re-scored daily (§4.7),
 so new weights apply to the whole queue. The queue order uses `effective_score`, computed at read
@@ -961,7 +989,9 @@ full-screen.
   heard-as) and filter by kind, tag or status; add, edit (examples for terms, pinyin overrides,
   card types); drop, and restore a dropped phrase. After adding, the editor opens so Will can
   check the computed pinyin (per-character override inputs appear once the hanzi is saved).
-- **Imports** (`/imports`): recent imports with status and counts, failed jobs (Retry), and a
+- **Imports** (`/imports`): recent imports with status and counts, failed jobs (Retry),
+  **Older extractions** ("N questions were read with an older prompt", **Re-run**, §4.6.1; while
+  re-runs are open, "Re-reading N questions with the newer prompt on the Mac…"), and a
   paste box for a single Gemini answer (it must contain Chinese; the result line says whether
   it was new or already imported).
 - **Stats** (`/stats`, the fifth tab): PRD §6 measures (§7), each with its target and ✓/✗.
@@ -990,13 +1020,15 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 
 - `import_finished {import_id, kind, turns_total, turns_new, jobs_failed, phrases_new, phrases_again}`
 - `share_parse_failed {host}`
-- `extraction {turn_id, job_id, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, repaired}`
+- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, repaired}`
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind}`
 - `already_know {phrase_id}`
 - `asked_again {phrase_id, status, import_id}` (status before the merge)
-- `phrase_revived {phrase_id}`
+- `phrase_revived {phrase_id, reextract?}`
+- `phrase_superseded {phrase_id, turn_id}` (a re-run no longer picks it, §4.6.1)
+- `reextract_queued {turns}`
 - `review {card_type, rating, source}`
 - `round_finished {cards, ms}`
 - `nudge_sent {local_time, nudge_at}` (`HH:MM`, household time)
@@ -1350,6 +1382,7 @@ bamboo/
 | 62 | Verification loops: a seeded app with phone screenshots, and an on-demand read-only prod copy (§8.6), ported from PandaBase | Tests passed while checks Will did by hand on the iPhone stayed pending for days. A seeded server with data in every state lets a session look at each screen in both themes; the prod copy answers "does it hold on real data?" without touching prod. Read-only token, SELECT-only wrapper and counts-only output, because the data is Will's own conversations |
 | 63 | No addressee on phrases or cards; extract_turn.v2 writes a `note` only when the wording depends on who hears it. The `addressee` column stays, unused, until a later contract PR | On prod data (counts only), the addressee was taken from the conversation title, so it tagged whole conversations: most phrases were single words labeled "yuesao", and no meaning was ever stored with two addressees. The "→ 阿姨" chip on the Say front was on nearly every card and told Will nothing; yuesao and nanny both showed 阿姨. Audience matters only for register (baby talk, 您), which a short English note covers without a fixed list of audiences. The contract still accepts `addressee` so a v1 worker keeps working until `make mac-update` |
 | 64 | The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v3`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
+| 65 | Re-run old turns with the current prompt (§4.6.1), on Will's tap, as `reextract` jobs that never count as asking again, never touch their import, and wait behind ordinary jobs | Read-only prod counts (2026-11-13): all but 6 of 125 turns were read by `extract_turn.v1`, which took ~4.6 items per "how do I say" turn and gave about half no sentence; the #64 budget then expired 154 phrases at once, so 17 of 54 such questions had nothing left, while single-character fragments of Gemini's example sentences reached rounds. Re-running beats tuning v1's leftovers: v3 already asks for the sentence and fewer terms. Dating new phrases to the turn keeps decay and the budget honest; not bumping keeps `asked_count` meaning "Will asked"; leaving dropped phrases dropped respects his choice. A tap, not automatic on every prompt bump, because each re-run spends Mac model time and visibly reshuffles Up next; ordering keeps a new import's Discord reply from waiting behind the backlog |
 
 ## Appendix A — Synthetic fixtures
 

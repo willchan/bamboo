@@ -1,6 +1,6 @@
 import type { Import } from "@bamboo/db";
 import type { Metadata } from "next";
-import { pasteAnswerAction, retryFailedAction } from "@/app/actions";
+import { pasteAnswerAction, reextractAction, retryFailedAction } from "@/app/actions";
 import { requireUser } from "@/lib/auth/current";
 import { householdTimeZone } from "@/lib/config";
 import { getImportsPage } from "@/lib/repo/capture";
@@ -29,13 +29,14 @@ const when = (ms: number) =>
     timeZone: householdTimeZone(),
   });
 
-// Imports (DESIGN §6): recent imports with status and counts, failed jobs (Retry), and a paste box.
+// Imports (DESIGN §6): recent imports with status and counts, failed jobs (Retry), re-running
+// questions read with an older prompt (§4.6.1), and a paste box.
 export default async function ImportsPage({ searchParams }: PageProps<"/imports">) {
   return timed("page /imports", async () => {
     await requireUser();
     const sp = await searchParams;
     const pasted = typeof sp.pasted === "string" ? PASTED[sp.pasted] : undefined;
-    const { recent, failedJobs } = await getImportsPage(getDb());
+    const { recent, failedJobs, staleTurns, reextracting } = await getImportsPage(getDb());
 
     return (
       <main className="flex flex-col gap-6">
@@ -91,6 +92,29 @@ export default async function ImportsPage({ searchParams }: PageProps<"/imports"
                 </li>
               ))}
             </ul>
+          </section>
+        ) : null}
+
+        {reextracting > 0 ? (
+          <p role="status" data-testid="reextracting" className="text-sm text-muted">
+            Re-reading {plural(reextracting, "question")} with the newer prompt on the Mac…
+          </p>
+        ) : staleTurns > 0 ? (
+          <section className="flex flex-col gap-2" data-testid="reextract">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-semibold">Older extractions</h2>
+              <form action={reextractAction}>
+                <button type="submit" className="h-9 rounded-lg border border-border px-3 text-sm">
+                  Re-run
+                </button>
+              </form>
+            </div>
+            <p className="text-sm text-muted">
+              {plural(staleTurns, "question")} {staleTurns === 1 ? "was" : "were"} read with an
+              older prompt. Running them again picks their phrases afresh: expired ones it still
+              wants come back, and ones it no longer wants leave Up next. Cards you&apos;re learning
+              and phrases you removed stay as they are.
+            </p>
           </section>
         ) : null}
 
