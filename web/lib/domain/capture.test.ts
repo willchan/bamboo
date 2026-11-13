@@ -40,6 +40,71 @@ describe("occursVerbatim", () => {
   });
 });
 
+describe("validateExtraction: a say turn's sentence from a term's example (§4.6, §10 #67)", () => {
+  const turn = {
+    userText: "how do I ask the nanny to give the baby a bath",
+    replyText:
+      "你可以说：“阿姨，麻烦您今天晚上给宝宝洗个澡。”简单一点：“给宝宝洗澡吧。”洗澡 = bath.",
+  };
+  const term = (hanzi: string, ex: string | null, english: string | null = "an example") => ({
+    kind: "term" as const,
+    hanzi,
+    english: "a word",
+    note: null,
+    heard_as: null,
+    example: ex === null ? null : { hanzi: ex, english },
+    usefulness: 4,
+    tags: ["baby"],
+  });
+
+  it("promotes the shortest example to the sentence the model left out", () => {
+    const v = validateExtraction(turn, {
+      turn_kind: "say",
+      items: [
+        term(
+          "麻烦您",
+          "阿姨，麻烦您今天晚上给宝宝洗个澡。",
+          "Auntie, please bathe the baby tonight.",
+        ),
+        term("宝宝", "给宝宝洗澡吧。", "Let's give the baby a bath."),
+      ],
+    });
+    expect(v.sentencePromoted).toBe(1);
+    expect(v.items.at(-1)).toEqual({
+      kind: "sentence",
+      hanzi: "给宝宝洗澡吧。",
+      hanziKey: "给宝宝洗澡吧",
+      english: "Let's give the baby a bath.",
+      note: null,
+      heardAs: null,
+      example: null,
+      usefulness: 4,
+      tags: ["baby"],
+      flags: ["from_example"],
+    });
+  });
+
+  it("doesn't when the model gave a sentence, the turn isn't say, or no example has English", () => {
+    const sentence = { ...term("给宝宝洗澡吧", null), kind: "sentence" as const };
+    const ex = term("宝宝", "给宝宝洗澡吧。");
+    const promoted = (r: Parameters<typeof validateExtraction>[1]) =>
+      validateExtraction(turn, r).sentencePromoted;
+    expect(promoted({ turn_kind: "say", items: [sentence, ex] })).toBe(0);
+    expect(promoted({ turn_kind: "decode", items: [ex] })).toBe(0);
+    expect(promoted({ turn_kind: "say", items: [term("宝宝", "给宝宝洗澡吧。", null)] })).toBe(0);
+    expect(promoted({ turn_kind: "say", items: [term("洗澡", null)] })).toBe(0);
+    // An example that is just the term isn't a sentence.
+    expect(promoted({ turn_kind: "say", items: [term("洗澡", "洗澡")] })).toBe(0);
+    expect(
+      validateExtraction(
+        turn,
+        { turn_kind: "say", items: [ex] },
+        { ...config.extraction, promoteExampleSentence: false },
+      ).sentencePromoted,
+    ).toBe(0);
+  });
+});
+
 describe("validateExtraction", () => {
   const item = {
     kind: "sentence" as const,

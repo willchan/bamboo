@@ -145,6 +145,8 @@ export interface Validation {
   droppedOverCap: number;
   /** Tags off the fixed list, or past `maxTags`. */
   tagsDropped: number;
+  /** 1 when a say turn's sentence was made from a term's example (`from_example`). */
+  sentencePromoted: number;
 }
 
 const KNOWN_TAGS: ReadonlySet<string> = new Set(PHRASE_TAGS);
@@ -193,6 +195,7 @@ export function validateExtraction(
     heardAsDropped: 0,
     droppedOverCap: 0,
     tagsDropped: 0,
+    sentencePromoted: 0,
   };
   const seen = new Set<string>();
   let terms = 0;
@@ -251,7 +254,43 @@ export function validateExtraction(
       flags,
     });
   }
+  const promoted = caps.promoteExampleSentence
+    ? promotedSentence(result.turn_kind, out.items)
+    : null;
+  if (promoted && !seen.has(promoted.hanziKey)) {
+    out.items.push(promoted);
+    out.sentencePromoted = 1;
+  }
   return out;
+}
+
+/**
+ * A say turn is a question about what to say, so its sentence is the thing to learn; the local
+ * model often leaves it out and returns only terms. Then the shortest example of a kept term
+ * becomes the sentence: it is already copied from the turn and contains the term (step 3), and
+ * its English came with it. An example that is just the term, or has no English, doesn't count.
+ */
+function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): ValidItem | null {
+  if (turnKind !== "say" || items.some((i) => i.kind === "sentence")) return null;
+  const candidates = items
+    .filter((i) => i.kind === "term" && i.example?.english)
+    .map((i) => ({ term: i, hanzi: i.example!.hanzi, key: hanziKey(i.example!.hanzi) }))
+    .filter((c) => c.key !== c.term.hanziKey)
+    .sort((a, b) => Array.from(a.key).length - Array.from(b.key).length);
+  const best = candidates[0];
+  if (!best) return null;
+  return {
+    kind: "sentence",
+    hanzi: best.hanzi,
+    hanziKey: best.key,
+    english: best.term.example!.english!,
+    note: null,
+    heardAs: null,
+    example: null,
+    usefulness: best.term.usefulness,
+    tags: best.term.tags,
+    flags: ["from_example"],
+  };
 }
 
 // --- Dedupe into an existing phrase (§4.6 step 4) -----------------------------------------------

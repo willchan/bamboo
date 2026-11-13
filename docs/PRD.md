@@ -78,7 +78,8 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen"),
     with **1–3 example sentences** taken from Gemini's answers;
   - a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？);
-  - a **sentence**: a full thing to say, kept short.
+  - a **sentence**: a full thing to say, kept short. Every "how do I say" question yields one:
+    if the model leaves it out, the shortest of Gemini's example sentences for its words is used.
 - Each phrase carries: hanzi, English meaning or intent, computed pinyin (tone marks), examples,
   an optional note, and tags (domain: feeding, baby care, food, groceries, household,
   toddler, units, …). There's no fixed "who it's for" field: who Will is talking to rarely changes
