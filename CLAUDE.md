@@ -79,7 +79,7 @@ make prod-copy                             # ask Will first: prod → .scratch/p
 pnpm --filter web dev:prod-copy            # next dev on the prod copy (refuses non-file: DBs)
 make prod-copy-clean                       # delete the copy when you're done
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
-pnpm smoke <url>                           # after each deploy: public, read-only checks of a deployment (no secrets)
+pnpm smoke https://bamboo-panda.vercel.app   # after each deploy (prod): public, read-only checks, no secrets (cloud: README › After each deploy)
 make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
 pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model
 make tutor-eval ARGS="run | serve | score …"   # Mac, as openclaw-agent: local tutor evaluation (DESIGN §5.4); output in ~/bamboo-eval/
