@@ -122,7 +122,7 @@ It installs dependencies, links `~/.local/bin/bamboo-tools`, creates
 adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). It
 also pins `#bamboo`'s channel entry to the bamboo skill (`skills`, `systemPrompt`, `tools.deny`;
 DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. It never adds an
-agent or changes `bindings`: the host binds `#bamboo` to an agent (on Will's Mac, `willchan`, per
+agent or changes `bindings`: the host binds `#bamboo` to an agent (on Will's Mac, a dedicated `bamboo` agent, per
 the Mac's runbook), and the automations run on that agent. It ends with `make agent-check`
 (read-only; run it on its own any time), which fails if `#bamboo` isn't bound or the agent can't
 use the skill, and warns if the agent's thinking isn't off or its `AGENTS.md` lacks the skill's
