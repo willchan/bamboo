@@ -14,7 +14,7 @@ describe("readConfig", () => {
       apiUrl: "https://bamboo.test",
       token: SECRET,
       ollamaUrl: "http://localhost:11434",
-      model: "qwen3.5:9b",
+      model: "qwen3.8:27b",
       pollIntervalMs: 15_000,
     });
   });
@@ -73,7 +73,7 @@ describe("env file", () => {
     // A key the file doesn't list still comes from the environment.
     expect(env.POLL_INTERVAL_SECONDS).toBe("30");
     // An empty value in the file means "use the default".
-    expect(readConfig(env).model).toBe("qwen3.5:9b");
+    expect(readConfig(env).model).toBe("qwen3.8:27b");
 
     chmodSync(path, 0o644);
     expect(loadEnvFile(path, {}).tooOpen).toBe(true);
@@ -106,7 +106,7 @@ describe("env file", () => {
       apiUrl: "https://bamboo.test",
       token: SECRET,
       ollamaUrl: "http://localhost:11434",
-      model: "qwen3.5:9b",
+      model: "qwen3.8:27b",
     });
   });
 

@@ -2,7 +2,7 @@
 // never calls a model. Runs the synthetic fixture turns one at a time (concurrency 1, as the
 // worker does) and reports counts: contract validity, repairs, and the verbatim pass rate the
 // engine's check (DESIGN §4.6) would give. `pnpm --filter @bamboo/worker test:ollama`.
-//   OLLAMA_URL (http://localhost:11434), OLLAMA_TEXT_MODEL (qwen3.5:9b),
+//   OLLAMA_URL (http://localhost:11434), OLLAMA_TEXT_MODEL (qwen3.8:27b),
 //   EVAL_MIN_VERBATIM (0.8): the lowest verbatim pass rate that passes.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

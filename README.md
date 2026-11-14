@@ -102,13 +102,13 @@ OpenClaw, Ollama and PandaBase's agent run as the `openclaw-agent` user, and Bam
 does too (DESIGN §8.3).
 
 Bamboo shares that Mac's Ollama and never changes its settings or pulls models: the host owns
-those, along with the memory budget. What Bamboo needs from it: the worker's text model
-(`OLLAMA_TEXT_MODEL`, `qwen3.5:9b`, ~7–8GB while loaded, briefly per extraction job) and
-OpenClaw's reply model for the agent that serves `#bamboo` (`ollama/qwen3.8:27b`, ~18GB, 32k
-context in OpenClaw, the same one every OpenClaw agent on the Mac uses; the host sets it). Change either
-with the host's memory budget in mind: Ollama keeps one model loaded (`OLLAMA_MAX_LOADED_MODELS=1`
-on the 32GB Mac), so a worker job evicts the reply model for a while and they swap rather than
-coexist. From your own account, `ssh agent`, then:
+those, along with the memory budget. What Bamboo needs from it is one model, `qwen3.8:27b`
+(~18GB): OpenClaw's reply model for the agent that serves `#bamboo` (the host sets it; every
+OpenClaw agent on the Mac uses it) and the worker's text model (`OLLAMA_TEXT_MODEL`). The worker
+asks for it at OpenClaw's 32k context and 30m keep-alive, so a job uses the loaded model and never
+reloads or unloads it (DESIGN §1.2). Ollama keeps one model loaded (`OLLAMA_MAX_LOADED_MODELS=1`
+on the 32GB Mac) and answers one request at a time, so a job and a reply can wait for each other;
+PandaBase's vision jobs still swap in `qwen3.5:9b`. From your own account, `ssh agent`, then:
 
 ```
 git clone https://github.com/willchan/bamboo.git ~/Code/bamboo && cd ~/Code/bamboo

@@ -10,6 +10,10 @@ import { z } from "zod";
 import { repairMessage, userMessage, type Prompt } from "./prompt";
 
 const O = sharedConfig.worker.ollama;
+const P = sharedConfig.worker.modelParams;
+
+/** The `num_ctx` and `keep_alive` the host uses for this model (config `modelParams`). */
+export const modelParams = (model: string) => P[model] ?? P.default!;
 
 /**
  * The JSON schema Ollama constrains the reply to (`ModelExtractTurnResult`): no `addressee`,
@@ -49,8 +53,8 @@ export class OllamaClient {
       stream: false,
       format: RESULT_SCHEMA,
       think: O.think,
-      keep_alive: O.keepAlive,
-      options: { temperature: O.temperature, num_ctx: O.numCtx },
+      keep_alive: modelParams(this.model).keepAlive,
+      options: { temperature: O.temperature, num_ctx: modelParams(this.model).numCtx },
     });
     const body = (await res.json()) as { message?: { content?: unknown } };
     const content = body.message?.content;
