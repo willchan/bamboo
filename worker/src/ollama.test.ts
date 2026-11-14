@@ -21,7 +21,7 @@ describe("OllamaClient", () => {
   it("finds a pulled model in the recorded /api/tags", async () => {
     const fetchTags: typeof fetch = async () => Response.json(F.tags);
     expect(await new OllamaClient("http://o", "qwen3.5:9b", fetchTags).hasModel()).toBe(true);
-    expect(await new OllamaClient("http://o", "qwen3.5:27b", fetchTags).hasModel()).toBe(false);
+    expect(await new OllamaClient("http://o", "qwen3.8:27b", fetchTags).hasModel()).toBe(false);
     // A name without a tag means :latest.
     expect(await new OllamaClient("http://o", "qwen3.5", fetchTags).hasModel()).toBe(false);
   });

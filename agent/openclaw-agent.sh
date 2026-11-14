@@ -11,7 +11,7 @@ SETUP_TSX="$ROOT/agent/tools/node_modules/.bin/tsx"
 
 # Optional overrides in bamboo.config.json: agent.model (only used when the agent is added) and
 # agent.discord_account_id (the OpenClaw Discord account the binding matches).
-agent_model="ollama/qwen3.5:27b"
+agent_model="ollama/qwen3.8:27b"
 account_id="default"
 if [ -f "$CONFIG" ]; then
   agent_model="$(jq -r --arg d "$agent_model" '.agent.model // $d' "$CONFIG")"
