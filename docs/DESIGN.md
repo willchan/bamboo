@@ -915,7 +915,7 @@ can't reach it; like the worker it calls only the local Ollama.
 1. **Sample.** `GET /api/agent/eval/turns` with the agent token from `~/.config/bamboo/agent.env`
    (read like `bamboo-tools`; no new secret): ~20 questions and Gemini's answers, spread across
    imports, image-only turns skipped, deterministic for `--seed` and the same data.
-2. **Replay.** Each question goes to each model (default `qwen3.5:9b`, `qwen3.8:27b`;
+2. **Replay.** Each question goes to each model (default `qwen3.8:27b` alone, §10 #71;
    `--models` overrides) through `POST /api/chat`, non-streaming, `think: false` (`--think`
    sends `true`; qwen3.8 takes thinking levels `false`/`low`/`medium`/`xhigh`, so a thinking run
    of it would need a level flag, not built), model
@@ -950,18 +950,22 @@ synthetic questions and a fake Ollama.
 deployed and `make mac-update`):
 
 ```
-make tutor-eval ARGS="run --seed <any word>"          # ~20 questions × 2 models; 20–45 min
-make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(tailscale ip -4)"
+make tutor-eval ARGS="run --seed <any word>"          # ~20 questions × 1 model; 10–20 min
+make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(/opt/homebrew/bin/tailscale ip -4)"
 #   Will opens the printed URL on his iPhone (Tailscale on), rates, taps "Save to Mac"
 #   (or Export, then the file comes back by AirDrop and goes in that directory as results.json)
 make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
 ```
 
-`--models qwen3.5:4b,qwen3.5:9b,qwen3.8:27b` adds the 4B; `--limit`, `--ollama-url` and
+`--models <a>,<b>` compares more models (each must be pulled: an unpulled one stops the run);
+`--limit`, `--ollama-url` and
 `--fixture <turns.json>` (a synthetic sample, no engine call: a dry run) are also accepted.
 Runtime is dominated by the 27B: roughly 30–90 s per answer on the 32 GB Mac (measured with
-`qwen3.5:27b`; 9B: 10–30 s), plus a minute or two per model load. The 2026-11-06 outcome above
-compared `qwen3.5:9b` and `qwen3.5:27b`.
+`qwen3.5:27b`; 9B: 10–30 s), plus a minute or two per model load (`qwen3.8:27b`: median ~37 s per answer). The 2026-11-06
+outcome above compared `qwen3.5:9b` and `qwen3.5:27b`. **Re-run 2026-11-14** (`qwen3.5:27b` vs
+`qwen3.8:27b`, 20 questions, thinking off), judged by Claude at Will's request rather than blind
+by Will: both far below Gemini; `qwen3.8:27b` was no better than `qwen3.5:27b` (usable on ~3 vs
+~7 of 16 scoreable questions, more errors on basic vocabulary). Gemini stays the tutor.
 
 ## 6. Web UI (PWA)
 
@@ -1399,6 +1403,7 @@ bamboo/
 | 68 | OpenClaw's reply model is `qwen3.8:27b` (was `qwen3.5:27b`): the tutor eval's default 27B (and, until #69, `agent.model`'s default). The worker stays on `qwen3.5:9b` | The host moved every OpenClaw agent on the Mac to `qwen3.8:27b` (~18GB; tools, vision, thinking; Ollama 0.32.12+), so Bamboo's defaults follow it. On the 32GB Mac with one loaded model, the 27B and the 9B still swap rather than coexist. Measurements and the 2026-11-06 eval above were taken with `qwen3.5:27b` and stay as recorded. qwen3.8 takes thinking levels (`false`/`low`/`medium`/`xhigh`); the serving agent's `thinkingDefault` should stay `off` (§5.1), and `bamboo-eval --think` (boolean) isn't adapted to levels |
 | 69 | The host binds `#bamboo` to an agent (on the Mac, `willchan`); `make agent-install` no longer adds a `bamboo` agent, writes its `AGENTS.md` or merges a binding, and drops `agent.model`. It only reads the serving agent and puts the automations on it. `make agent-check` fails on a missing binding, agent or skill access, and warns on thinking, a stale inline copy of `SKILL.md` in the agent's `AGENTS.md`, or automations on another agent | The host's rollout (2026-11-12) replaced the `bamboo` agent with Will's personal `willchan` agent, which also serves `#bamboo`. The old installer would have re-added `bamboo`, put its binding ahead of willchan's and moved the automations back to `main`, undoing that rollout on every `make mac-update`. Routing and agent settings are the host's, like Ollama's; Bamboo keeps the checks that matter for intake (§5.1: thinking off, the instructions inline) as reports |
 | 70 | The worker extracts with `qwen3.8:27b` (was `qwen3.5:9b`), with `num_ctx` and `keep_alive` per model matching the host's OpenClaw settings (`worker.modelParams`) | With one loaded model, every 9B job evicted the shared reply model, so the next Discord reply cold-loaded. Background jobs can be slower. On the 8 synthetic fixture turns (`test:ollama`, `extract_turn.v3`, 2026-11-14) the 27B was better: 8/8 valid either way, turn kind 8/8 vs 6/8, items verbatim 14/14 vs 11/12, examples verbatim 7/7 vs 8/10, model time 78 s vs 42 s. Matching `num_ctx` matters because the request that loads a model sets its context for everyone (a job that loaded the 27B at 8k left OpenClaw at 8k); matching `keep_alive` keeps a job from unloading it early. With the 32k settings: 8/8 valid, turn kind 8/8, items 15/15, examples 8/8, model time 56 s. Removing the 9B entirely waits on PandaBase's vision jobs |
+| 71 | `bamboo-eval`'s default models are `qwen3.8:27b` alone (was `qwen3.5:9b`, `qwen3.5:27b`, then `qwen3.5:9b`, `qwen3.8:27b`) | Every caller on the Mac (OpenClaw, Bamboo's worker, PandaBase's worker) is on `qwen3.8:27b` as of 2026-11-14, so the 9B and 4B can be removed; a default that names an unpulled model stops the run. The 9B lost both tutor evaluations, so it isn't a candidate worth a default. Other models are compared with `--models` |
 
 ## Appendix A — Synthetic fixtures
 

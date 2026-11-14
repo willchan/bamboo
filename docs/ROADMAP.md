@@ -11,14 +11,14 @@
   latency. Will judges blind. If a local model is good enough, a Bamboo "Ask" page (with
   automatic capture) becomes viable without breaking the local-only rule. **The harness exists**
   (`bamboo-eval`, DESIGN §5.4): on the Mac as `openclaw-agent`, `make tutor-eval ARGS="run"`
-  replays a seeded sample through `qwen3.5:9b` and `qwen3.8:27b` (the defaults),
+  replays a seeded sample through `qwen3.8:27b` (the default; `--models` for more),
   `ARGS="serve --out <dir> --host <tailscale ip>"` puts the blind judging page on Will's iPhone,
   and `ARGS="score --out <dir>"` prints the per-model table. Outputs stay in `~/bamboo-eval/`.
   **Result (2026-11-06, `qwen3.5:9b` and `qwen3.5:27b`):** Will judged both local models blind
   against Gemini Flash. One was much worse; the other was closer, but Gemini Flash was still clearly better. Decision: keep asking
   Gemini (and sharing conversations by public link); no local tutor or "Ask" page yet (DESIGN §10
   #58). Re-run the evaluation when a clearly stronger local model fits the Mac; `qwen3.8:27b`, now
-  OpenClaw's reply model, is the next candidate.
+  OpenClaw's reply model, was tried 2026-11-14 and did no better (DESIGN §5.4).
 - **Tutor that reuses what's due.** When answering "how do I say X", prefer phrasing that
   reuses due or recently introduced frames and words.
 
