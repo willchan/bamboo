@@ -23,7 +23,7 @@ else
   kick=1
 fi
 # Run the (possibly just-updated) install scripts in fresh processes. agent-install keeps the
-# OpenClaw side in step with the checkout (the bamboo agent's AGENTS.md is generated from
-# SKILL.md) and changes nothing when it already is. AGENT_INSTALL overrides its path (tests).
+# OpenClaw side in step with the checkout (the skills dir, the #bamboo pin, the automations) and
+# changes nothing when it already is; its agent-check flags a SKILL.md the agent hasn't copied. AGENT_INSTALL overrides its path (tests).
 SKIP_PNPM_INSTALL=1 KICKSTART="$kick" "$ROOT/ops/scripts/worker-install.sh"
 SKIP_PNPM_INSTALL=1 DRY_RUN="$DRY_RUN" "${AGENT_INSTALL:-$ROOT/agent/install.sh}"

@@ -174,7 +174,7 @@ describe.skipIf(process.platform === "win32")("make mac-update / worker-logs", (
     expect(did[0]).toBe("git pull --ff-only");
     expect(did[1]).toBe("pnpm install --frozen-lockfile");
     expect(did[2]).toMatch(/^launchctl kickstart -k /u);
-    // Then agent-install, so the OpenClaw side (the bamboo agent's AGENTS.md) follows the pull.
+    // Then agent-install, so the OpenClaw side (pin, automations, agent-check) follows the pull.
     expect(did[3]).toBe("agent-install");
     expect(did).toHaveLength(4);
 

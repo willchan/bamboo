@@ -1,24 +1,9 @@
-// The dedicated `bamboo` OpenClaw agent (DESIGN §5.1, §10 #50): its workspace AGENTS.md, made from
-// the skill, and its Discord binding, merged into OpenClaw's `bindings` without touching anyone
-// else's. Pure functions; agent/install.sh and agent/check.sh call them through ./main.ts.
+// The OpenClaw agent that serves #bamboo (DESIGN §5.1, §10 #69). The host binds it (the Mac's
+// runbook, not Bamboo); agent/install.sh and agent/check.sh only read the config, through
+// ./main.ts. Pure functions.
 
-/** The agent's id in OpenClaw (`agents.entries.<id>`, `bindings[].agentId`). */
-export const AGENT_ID = "bamboo";
-/** The agent every other message keeps going to (`agents.defaults.systemAgent.agentId`). */
-export const SYSTEM_AGENT_ID = "main";
 /** The Discord account OpenClaw's bot runs as. */
 export const DEFAULT_ACCOUNT_ID = "default";
-
-/**
- * The first lines of the workspace AGENTS.md. With thinking off, the model doesn't open SKILL.md
- * on its own, so the instructions are inline and the header says so.
- */
-export const AGENTS_MD_HEADER = [
-  "# Bamboo agent",
-  "",
-  "You only handle the #bamboo Discord channel. Follow these instructions exactly; they are " +
-    "complete, so you don't need to open any skill file.",
-].join("\n");
 
 /** SKILL.md without its `---` frontmatter. Throws if there is none (not a skill file). */
 export function skillBody(skill: string): string {
@@ -27,11 +12,34 @@ export function skillBody(skill: string): string {
   return skill.slice(m[0].length);
 }
 
-/** The workspace AGENTS.md: the header, then the skill's body, unchanged. */
-export function renderAgentsMd(skill: string): string {
-  const body = skillBody(skill).trim();
-  if (!body) throw new Error("SKILL.md has an empty body");
-  return `${AGENTS_MD_HEADER}\n\n${body}\n`;
+/**
+ * The skill's instructions as the lines an agent's AGENTS.md must carry to follow them inline:
+ * the body's non-blank lines after its title and `Scope:` paragraph (the host writes its own
+ * heading and scope for the section). Trailing whitespace is ignored.
+ */
+export function instructionLines(skill: string): string[] {
+  const lines = skillBody(skill).replace(/\r\n/gu, "\n").split("\n");
+  const scope = lines.findIndex((l) => l.startsWith("Scope:"));
+  if (scope < 0) throw new Error("SKILL.md has no Scope: paragraph");
+  let end = scope;
+  while (end < lines.length && lines[end]!.trim() !== "") end++;
+  const out = lines
+    .slice(end)
+    .map((l) => l.trimEnd())
+    .filter((l) => l !== "");
+  if (out.length === 0) throw new Error("SKILL.md has no instructions after its Scope: paragraph");
+  return out;
+}
+
+/** The skill's instruction lines that the AGENTS.md text doesn't have (empty: it's in step). */
+export function missingInstructions(skill: string, agentsMd: string): string[] {
+  const have = new Set(
+    agentsMd
+      .replace(/\r\n/gu, "\n")
+      .split("\n")
+      .map((l) => l.trimEnd()),
+  );
+  return instructionLines(skill).filter((l) => !have.has(l));
 }
 
 export interface Binding {
@@ -49,51 +57,11 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 const peerOf = (b: Binding) => (isObject(b.match) && isObject(b.match.peer) ? b.match.peer : null);
 const isDiscord = (b: Binding) => isObject(b.match) && b.match.channel === "discord";
-/** A binding for exactly this Discord channel (whatever agent it routes to). */
-const isChannelBinding = (b: Binding, channelId: string) =>
-  isDiscord(b) && peerOf(b)?.kind === "channel" && peerOf(b)?.id === channelId;
-
-export function bambooBinding(channelId: string, accountId = DEFAULT_ACCOUNT_ID): Binding {
-  return {
-    agentId: AGENT_ID,
-    match: { channel: "discord", accountId, peer: { kind: "channel", id: channelId } },
-  };
-}
-
-/**
- * `bindings` with #bamboo routed to the bamboo agent, first, so no broader Discord binding (main's
- * `accountId: "*"`) can match it before. Every other binding is kept, in order. Dropped: other
- * bindings for this channel (they would compete with ours) and the bamboo agent's bindings to
- * another Discord channel (a stale #bamboo id). An existing, equivalent binding is kept as it is
- * (extra keys included), so a re-run changes nothing.
- */
-export function mergeBindings(
-  current: unknown,
-  channelId: string,
-  accountId = DEFAULT_ACCOUNT_ID,
-): Binding[] {
-  if (!/^\d+$/u.test(channelId)) throw new Error("channel id must be digits");
-  const list = (Array.isArray(current) ? current : []).filter(isObject) as Binding[];
-  const ours = list.find(
-    (b) =>
-      b.agentId === AGENT_ID &&
-      isChannelBinding(b, channelId) &&
-      isObject(b.match) &&
-      b.match.accountId === accountId,
-  );
-  const rest = list.filter(
-    (b) =>
-      !isChannelBinding(b, channelId) &&
-      !(b.agentId === AGENT_ID && isDiscord(b) && peerOf(b)?.kind === "channel"),
-  );
-  return [ours ?? bambooBinding(channelId, accountId), ...rest];
-}
 
 /**
  * The agent a message in this Discord channel goes to: the first binding that matches it (Discord,
- * this account or any, this channel or no peer). Conservative: whether OpenClaw takes the first
- * match or the most specific one, ours being first and exact means it wins. null when no binding
- * matches (OpenClaw's default agent).
+ * this account or any, this channel or no peer). null when no binding matches (OpenClaw's default
+ * agent).
  */
 export function routeFor(
   bindings: unknown,

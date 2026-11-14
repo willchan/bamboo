@@ -45,12 +45,12 @@ worker-logs: # launchd state, last heartbeat, tail -F ~/Library/Logs/bamboo/work
 
 # Run as the OpenClaw gateway's user (openclaw-agent on the Mac mini), from its Bamboo checkout:
 # bamboo-tools on PATH, ~/.config/bamboo, skills.load.extraDirs (backed up first), the #bamboo
-# pin, the dedicated bamboo agent (its AGENTS.md from SKILL.md, its binding) and the command
-# automations. Idempotent; DRY_RUN=1 prints what it would change (agent/install.sh).
+# pin and the command automations (on the agent the host binds #bamboo to). Never adds an agent or
+# changes bindings. Idempotent; DRY_RUN=1 prints what it would change (agent/install.sh).
 agent-install:
 	agent/install.sh
 
-agent-check: # read-only: bamboo agent, thinking off, #bamboo binding, AGENTS.md in step (agent/check.sh)
+agent-check: # read-only: #bamboo's agent, its skill access, thinking, AGENTS.md in step (agent/check.sh)
 	agent/check.sh
 
 mac-update: # git pull, pnpm install, worker-install (reload/kickstart), then agent-install

@@ -1,27 +1,22 @@
-// The bamboo agent's AGENTS.md generator and its binding merge (DESIGN §5.1, §10 #50). Synthetic
-// skill and ids only.
-import { mkdtempSync, writeFileSync } from "node:fs";
+// The #bamboo agent lookups (DESIGN §5.1, §10 #69): routing and whether an agent's AGENTS.md has
+// the skill's instructions. Synthetic skill and ids only.
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-  AGENTS_MD_HEADER,
-  bambooBinding,
-  mergeBindings,
-  renderAgentsMd,
-  routeFor,
-  skillBody,
-} from "./agent";
+import { instructionLines, missingInstructions, routeFor, skillBody } from "./agent";
 import { runSetup } from "./main";
 
 const SKILL = `---
 name: demo
 description: "A synthetic skill for #demo: never open links."
-metadata:
-  { "openclaw": { "requires": { "bins": ["demo-tools"] } } }
 ---
 
 # Demo intake
+
+Scope: messages in \`#demo\` only. In any other
+channel, this skill does nothing.
 
 Run \`demo-tools import --url <link>\` for a link.
 
@@ -29,114 +24,38 @@ Run \`demo-tools import --url <link>\` for a link.
 |---|---|
 | x | y |
 `;
+const INSTRUCTIONS = [
+  "Run `demo-tools import --url <link>` for a link.",
+  "| a | b |",
+  "|---|---|",
+  "| x | y |",
+];
 
 const CH = "111111111111111111";
 const OTHER = "555555555555555555";
 const MAIN_ALL = { agentId: "main", match: { channel: "discord", accountId: "*" } };
 const TELEGRAM = { agentId: "main", match: { channel: "telegram" } };
-const PANDA = {
-  agentId: "pandabase",
-  match: { channel: "discord", accountId: "default", peer: { kind: "channel", id: OTHER } },
-};
-
-describe("renderAgentsMd", () => {
-  it("is the header, a blank line, then the skill body without its frontmatter", () => {
-    const md = renderAgentsMd(SKILL);
-    expect(md).toBe(
-      `${AGENTS_MD_HEADER}\n\n# Demo intake\n\nRun \`demo-tools import --url <link>\` for a link.\n\n| a | b |\n|---|---|\n| x | y |\n`,
-    );
-    expect(md.split("\n").slice(0, 3)).toEqual([
-      "# Bamboo agent",
-      "",
-      "You only handle the #bamboo Discord channel. Follow these instructions exactly; they are complete, so you don't need to open any skill file.",
-    ]);
-    expect(md).not.toContain("description:");
-    expect(md).not.toContain("---\n");
-    expect(md.endsWith("\n")).toBe(true);
-    expect(md.endsWith("\n\n")).toBe(false);
-  });
-
-  it("is deterministic and ignores trailing whitespace and CRLF frontmatter", () => {
-    expect(renderAgentsMd(SKILL)).toBe(renderAgentsMd(`${SKILL}\n\n`));
-    expect(renderAgentsMd(SKILL.replace(/^(---)\n/u, "$1\r\n"))).toBe(renderAgentsMd(SKILL));
-  });
-
-  it("refuses a file without frontmatter, or with an empty body", () => {
-    expect(() => renderAgentsMd("# no frontmatter\n")).toThrow(/frontmatter/u);
-    expect(() => renderAgentsMd("---\nname: x\n---\n\n  \n")).toThrow(/empty body/u);
-  });
-
-  it("works on the real skill: its whole body, and none of its frontmatter", () => {
-    const real = new URL("../../../skills/bamboo/SKILL.md", import.meta.url);
-    const r = runSetup(["agents-md", real.pathname], () => "");
-    expect(r.code).toBe(0);
-    expect(r.out.startsWith(`${AGENTS_MD_HEADER}\n\n# Bamboo intake\n`)).toBe(true);
-    expect(r.out).toContain("bamboo-tools import --url");
-    expect(r.out).not.toMatch(/^(name|description|metadata):/mu);
-  });
-});
-
-describe("skillBody", () => {
-  it("drops only the first frontmatter block", () => {
-    expect(skillBody("---\na: 1\n---\nbody\n---\nmore\n")).toBe("body\n---\nmore\n");
-  });
-});
-
-describe("mergeBindings", () => {
-  it("puts #bamboo first and keeps every other binding, in order", () => {
-    const merged = mergeBindings([MAIN_ALL, TELEGRAM, PANDA], CH);
-    expect(merged).toEqual([bambooBinding(CH), MAIN_ALL, TELEGRAM, PANDA]);
-    expect(merged[0]).toEqual({
-      agentId: "bamboo",
-      match: { channel: "discord", accountId: "default", peer: { kind: "channel", id: CH } },
-    });
-  });
-
-  it("is a no-op when already merged, keeping the existing binding's extra keys", () => {
-    const ours = { ...bambooBinding(CH), comment: "kept" };
-    const current = [ours, MAIN_ALL, PANDA];
-    expect(mergeBindings(current, CH)).toEqual(current);
-    expect(mergeBindings(mergeBindings([MAIN_ALL], CH), CH)).toEqual(mergeBindings([MAIN_ALL], CH));
-  });
-
-  it("moves our binding ahead of main's wildcard", () => {
-    expect(mergeBindings([MAIN_ALL, bambooBinding(CH)], CH)).toEqual([bambooBinding(CH), MAIN_ALL]);
-  });
-
-  it("replaces another agent's binding for #bamboo and a stale #bamboo id, nothing else", () => {
-    const toMain = { agentId: "main", match: { ...bambooBinding(CH).match } };
-    const stale = bambooBinding("999999999999999999");
-    expect(mergeBindings([toMain, MAIN_ALL, stale, PANDA], CH)).toEqual([
-      bambooBinding(CH),
-      MAIN_ALL,
-      PANDA,
-    ]);
-  });
-
-  it("uses the configured account id", () => {
-    expect(mergeBindings([], CH, "bot2")[0]!.match).toMatchObject({ accountId: "bot2" });
-    // An existing binding on another account isn't ours: it's replaced.
-    expect(mergeBindings([bambooBinding(CH, "default")], CH, "bot2")).toEqual([
-      bambooBinding(CH, "bot2"),
-    ]);
-  });
-
-  it("rejects a channel id that isn't digits", () => {
-    expect(() => mergeBindings([], "<#bamboo>")).toThrow(/digits/u);
-  });
+const binding = (agentId: string, id: string, accountId = "default") => ({
+  agentId,
+  match: { channel: "discord", accountId, peer: { kind: "channel", id } },
 });
 
 describe("routeFor", () => {
   it("is the first matching binding's agent", () => {
-    expect(routeFor(mergeBindings([MAIN_ALL, PANDA], CH), CH)).toBe("bamboo");
-    expect(routeFor([MAIN_ALL, bambooBinding(CH)], CH)).toBe("main");
-    expect(routeFor([PANDA, TELEGRAM], CH)).toBeNull();
-    expect(routeFor([PANDA, MAIN_ALL], OTHER)).toBe("pandabase");
+    expect(routeFor([binding("willchan", CH), MAIN_ALL], CH)).toBe("willchan");
+    expect(routeFor([MAIN_ALL, binding("willchan", CH)], CH)).toBe("main");
+    expect(routeFor([binding("pandabase", OTHER), TELEGRAM], CH)).toBeNull();
+    expect(routeFor([binding("pandabase", OTHER), MAIN_ALL], OTHER)).toBe("pandabase");
   });
 
-  it("skips other accounts' bindings", () => {
-    expect(routeFor([bambooBinding(CH, "bot2"), MAIN_ALL], CH)).toBe("main");
-    expect(routeFor([bambooBinding(CH, "bot2"), MAIN_ALL], CH, "bot2")).toBe("bamboo");
+  it("skips other accounts' bindings and direct-message peers", () => {
+    expect(routeFor([binding("willchan", CH, "bot2"), MAIN_ALL], CH)).toBe("main");
+    expect(routeFor([binding("willchan", CH, "bot2"), MAIN_ALL], CH, "bot2")).toBe("willchan");
+    const dm = {
+      agentId: "willchan",
+      match: { channel: "discord", peer: { kind: "direct", id: CH } },
+    };
+    expect(routeFor([dm, MAIN_ALL], CH)).toBe("main");
   });
 
   it("is null for anything but a list", () => {
@@ -144,28 +63,68 @@ describe("routeFor", () => {
   });
 });
 
-describe("runSetup (the helper CLI install.sh and check.sh call)", () => {
-  it("merges bindings from stdin", () => {
-    const r = runSetup(["bindings", CH], () => JSON.stringify([MAIN_ALL]));
-    expect(r.code).toBe(0);
-    expect(JSON.parse(r.out)).toEqual([bambooBinding(CH), MAIN_ALL]);
-    expect(runSetup(["route", CH], () => r.out).out).toBe("bamboo\n");
+describe("instructionLines / missingInstructions", () => {
+  it("are the body's lines after the title and the Scope: paragraph", () => {
+    expect(instructionLines(SKILL)).toEqual(INSTRUCTIONS);
+    expect(skillBody(SKILL)).toMatch(/^\n# Demo intake/u);
   });
 
-  // Reading an error body (or nothing) as [] would drop main's binding on the next set.
+  it("find nothing missing in a section with its own heading and scope", () => {
+    const agents = `# Agent\n\n## #demo channel\n\nOnly in #demo.\n\n${INSTRUCTIONS.join("\n")}\n\n## Other\n`;
+    expect(missingInstructions(SKILL, agents)).toEqual([]);
+    expect(missingInstructions(SKILL, agents.replace(/\n/gu, "\r\n"))).toEqual([]);
+  });
+
+  it("list the lines a stale copy lacks", () => {
+    const stale = INSTRUCTIONS.join("\n").replace("--url <link>", "<link>");
+    expect(missingInstructions(SKILL, stale)).toEqual([INSTRUCTIONS[0]]);
+  });
+
+  it("refuse a skill without frontmatter, a Scope: paragraph or instructions", () => {
+    expect(() => instructionLines("no frontmatter\n")).toThrow(/frontmatter/u);
+    expect(() => instructionLines("---\nname: x\n---\n\n# X\n\nBody.\n")).toThrow(/Scope/u);
+    expect(() => instructionLines("---\nname: x\n---\n\nScope: here.\n")).toThrow(/instructions/u);
+  });
+
+  it("work on the real skill", () => {
+    const real = readFileSync(
+      fileURLToPath(new URL("../../../skills/bamboo/SKILL.md", import.meta.url)),
+      "utf8",
+    );
+    const lines = instructionLines(real);
+    expect(lines.length).toBeGreaterThan(10);
+    expect(lines.join("\n")).toContain("bamboo-tools import --url");
+    expect(lines.join("\n")).not.toMatch(/^(name|description):|^# Bamboo intake|^Scope:/mu);
+  });
+});
+
+describe("runSetup (the helper CLI install.sh and check.sh call)", () => {
+  it("prints the route from stdin", () => {
+    const r = runSetup(["route", CH], () => JSON.stringify([binding("willchan", CH), MAIN_ALL]));
+    expect(r).toEqual({ code: 0, out: "willchan\n" });
+    expect(runSetup(["route", CH], () => "[]").out).toBe("\n");
+  });
+
+  // Reading an error body (or nothing) as [] would report the default agent.
   it("refuses stdin that isn't a JSON array", () => {
     for (const bad of ["", "not json", '{"ok": false, "error": {}}', "null"]) {
-      const r = runSetup(["bindings", CH], () => bad);
+      const r = runSetup(["route", CH], () => bad);
       expect(r.code, bad).toBe(1);
       expect(r.out).toMatch(/bindings: stdin/u);
     }
   });
 
-  it("fails on a missing or frontmatter-less skill file, and on bad usage", () => {
+  it("prints missing instruction lines, one per line", () => {
     const dir = mkdtempSync(join(tmpdir(), "bamboo-skill-"));
-    writeFileSync(join(dir, "SKILL.md"), "no frontmatter\n");
-    expect(runSetup(["agents-md", join(dir, "SKILL.md")], () => "").code).toBe(1);
-    expect(runSetup(["agents-md", join(dir, "missing.md")], () => "").code).toBe(1);
+    writeFileSync(join(dir, "SKILL.md"), SKILL);
+    writeFileSync(join(dir, "AGENTS.md"), INSTRUCTIONS.slice(1).join("\n"));
+    expect(runSetup(["missing", join(dir, "SKILL.md"), join(dir, "AGENTS.md")], () => "")).toEqual({
+      code: 0,
+      out: `${INSTRUCTIONS[0]}\n`,
+    });
+    expect(runSetup(["missing", join(dir, "SKILL.md"), join(dir, "nope.md")], () => "").code).toBe(
+      1,
+    );
     expect(runSetup(["nope"], () => "").code).toBe(2);
   });
 });

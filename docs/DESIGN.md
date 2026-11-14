@@ -565,37 +565,31 @@ model's paraphrase):
 **Privacy**: the skill passes the link or path along and never reads, summarizes or quotes the
 conversation. All model work happens in the worker on local Ollama. If OpenClaw extracts
 attachment text for its own reply model, that model must be local too. PandaBase's household
-configuration already does this (its DESIGN §10 #43). `#bamboo` has its own agent (below), so a
-text-only setup can be applied to that agent alone if that changes.
+configuration already does this (its DESIGN §10 #43). That is the host's setting for the agent
+that serves `#bamboo` (below).
 
-**Dedicated agent** (§10 #50): `#bamboo` is routed to its own OpenClaw agent, `bamboo`, not the
-shared `main` one. Measured on the Mac with the same local model (`ollama/qwen3.5:27b`): through
-`main`, a `#bamboo` message took **75–120 s**, almost all of it the model thinking; with thinking
-off it answers in **~5–25 s**. OpenClaw has no per-channel thinking setting, only a per-agent one,
-hence the agent:
+**The serving agent** (§10 #69; was a dedicated `bamboo` agent, #50): the host binds `#bamboo`
+to an OpenClaw agent of its choosing (on Will's Mac, `willchan`, per the Mac's runbook), and
+Bamboo never adds an agent or changes `bindings`. What Bamboo needs from that agent, which
+`make agent-check` reports (§8.3):
 
-- `agents.entries.bamboo`: `thinkingDefault: "off"`, `skills: ["bamboo"]`, workspace
-  `~/.openclaw/workspace-bamboo`, model from `agent.model` in `bamboo.config.json` (default
-  `ollama/qwen3.8:27b`, was `qwen3.5:27b` until 2026-11, §10 #68; used only when the agent is
-  first added, never changed after: the host sets the model of an existing agent);
-- **instructions inline**: with thinking off, the model doesn't open `SKILL.md` on its own and
-  guessed wrong flags; with the skill's body in the workspace `AGENTS.md` it picked the right
-  command for a link, a PDF, pasted text and chit-chat every time. That `AGENTS.md` is
-  **generated** from `SKILL.md` (a fixed header, "# Bamboo agent" and "You only handle the #bamboo
-  Discord channel. Follow these instructions exactly; they are complete, so you don't need to open
-  any skill file.", then the body after the frontmatter; `agent/tools/src/openclaw/agent.ts`), so
-  the skill stays the one source of truth: `SKILL.md` still serves the channel pin and the
-  `description` the model matches. OpenClaw's generated `AGENTS.md` and `BOOTSTRAP.md` (which
-  starts an identity-onboarding chat on the first message) are moved to `.orig/` in the
-  workspace;
-- **routing**: `agents.defaults.systemAgent.agentId` is `main`, so every other message stays where
-  it was (setting it made OpenClaw write out main's Discord binding, `accountId: "*"`), and
-  `bindings` starts with `{agentId: "bamboo", match: {channel: "discord", accountId: "default",
-  peer: {kind: "channel", id: <#bamboo>}}}`, ahead of main's. The channel pin above still applies
-  to whatever agent serves the channel.
+- **a binding** for the `#bamboo` channel (a ✗ without one: the message would go to OpenClaw's
+  default agent), and a config entry whose `skills` allowlist, if it has one, includes `bamboo`;
+- **thinking off** (`thinkingDefault: "off"`, a ⚠ otherwise). Measured with
+  `ollama/qwen3.5:27b` through the shared `main` agent: a `#bamboo` message took **75–120 s**,
+  almost all of it the model thinking; with thinking off, **~5–25 s**. OpenClaw sets thinking
+  per agent, not per channel;
+- **the instructions inline** in its workspace `AGENTS.md` (a ⚠ otherwise): with thinking off,
+  the model doesn't open `SKILL.md` on its own and guessed wrong flags; with the skill's body in
+  `AGENTS.md` it picked the right command for a link, a PDF, pasted text and chit-chat every
+  time. The host's `AGENTS.md` has its own `#bamboo` section heading and scope; the check is that
+  every non-blank line of `SKILL.md` after its title and `Scope:` paragraph is in that file
+  (`missingInstructions`, `agent/tools/src/openclaw/agent.ts`), so a `SKILL.md` change shows up
+  as a ⚠ until the host copies it. `SKILL.md` stays the one source of truth, and still serves the
+  channel pin and the `description` the model matches.
 
-`make agent-install` applies all of this through `openclaw config set` (live, no restart) and
-`openclaw agents add`, and `make agent-check` verifies it (§8.3).
+The `bamboo-replies` and `bamboo-nudge` automations run on the same agent (§8.3). The channel pin
+below applies to whatever agent serves the channel.
 
 **Channel pin** (§10 #43): a skill is only a suggestion to the model, and the shared agent once
 answered a bare share link in `#bamboo` by calling OpenClaw's `view_image` on it. So
@@ -1171,30 +1165,24 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   `openclaw config set channels.discord.guilds.<guild>.channels.<channel> …` command for Will
   (copy `#pandabase`'s entry: `enabled`, `requireMention: false`, the same `users`; the printed
   entry already includes the pin).
-- **The bamboo agent** (§5.1, §10 #50), also in `make agent-install`, once
-  `discord.channel_id` is set (the only id it needs; nothing is hard-coded): sets
-  `agents.defaults.systemAgent.agentId` to `main` only if it's unset (any other value is left
-  alone, with a warning); runs `openclaw agents add bamboo --workspace
-  ~/.openclaw/workspace-bamboo --model <agent.model> --non-interactive` if
-  `agents.entries.bamboo` is missing; sets its `thinkingDefault` to `off` and `skills` to
-  `["bamboo"]` if they differ (its model is left as it is); writes the workspace `AGENTS.md`
-  generated from `SKILL.md`, moving `BOOTSTRAP.md`, and an `AGENTS.md` that isn't ours, to
-  `.orig/` (never over an earlier copy); and merges the `#bamboo` binding into `bindings`: ours
-  first, every other binding kept in order, minus any other binding for the same channel and the
-  bamboo agent's binding to a stale channel id (`mergeBindings`). If `bindings` doesn't read as a
-  list, it changes nothing and prints the binding to add, so main's can't be lost. Every step is a
-  no-op when already in place, and `openclaw.json` is backed up before the first change. It ends
-  with `make agent-check`.
-- `make agent-check` (`agent/check.sh`, read-only, exits 1 on a problem): systemAgent is `main`;
-  the bamboo agent exists with `thinkingDefault` `off` and `skills` `["bamboo"]`; `#bamboo`
-  routes to it (the first binding matching the channel, `routeFor`, so ours wins whether OpenClaw
-  takes the first or the most specific match); main still has a Discord binding (a warning only);
-  the workspace `AGENTS.md` is byte-for-byte what `SKILL.md` generates; no `BOOTSTRAP.md`.
+- **The serving agent** (§5.1, §10 #69): `make agent-install` only reads which agent the host
+  binds `#bamboo` to (the first binding matching the channel, `routeFor`) and never adds an
+  agent, writes an `AGENTS.md` or changes `bindings` or the system agent. With no matching
+  binding it warns.
+- **Automations** (`bamboo-replies`, `bamboo-nudge`) are added or edited with `--agent` set to
+  that serving agent (`main` if none; `OPENCLAW_AGENT` overrides), so a re-run never moves the
+  host's jobs: it used to pass `main`, which would have moved them off `willchan`.
+- `make agent-check` (`agent/check.sh`, read-only, exits 1 on a ✗): ✗ `#bamboo` isn't bound to
+  an agent, that agent has no config entry, or its `skills` allowlist leaves out `bamboo`; ⚠ its
+  `thinkingDefault` (or the defaults') isn't `off`, its workspace `AGENTS.md` lacks lines of
+  `SKILL.md`'s instructions, or a `bamboo-*` automation runs on another agent. The ⚠s are the
+  host's to fix (the Mac's runbook); Bamboo reports, never changes them.
 - `make mac-update` (as `openclaw-agent`) runs `git pull --ff-only`,
   `pnpm install --frozen-lockfile`, then `worker-install` again: it reloads the LaunchAgent if
   the plist changed, and otherwise `launchctl kickstart -k`s the worker only if the pull brought
-  new commits. `worker.env` is never touched. Then it runs `make agent-install`, so a pulled
-  `SKILL.md` change reaches the agent's `AGENTS.md` (a no-op otherwise).
+  new commits. `worker.env` is never touched. Then it runs `make agent-install` (a no-op when
+  nothing changed), whose `agent-check` flags a pulled `SKILL.md` change the serving agent's
+  `AGENTS.md` doesn't have yet.
 
 ### 8.4 Private data
 
@@ -1381,7 +1369,7 @@ bamboo/
 | 47 | The reminder learns from practice days (first finished round per household day), not every round | "Another round" or an abandoned round would otherwise pull the median; the reminder is about when the day's first round usually happens |
 | 48 | Discord replies show pinyin next to every hanzi, from the phrase's stored pinyin plus overrides; a long summary trims Next up, never the pinyin | New phrases use characters Will can't read yet, so hanzi with English alone isn't readable. Reusing the stored, computed reading (never an LLM's) keeps Discord and the PWA identical, overrides included. Fewer named phrases loses little (the queue is in the PWA); hanzi without pinyin would defeat the point |
 | 49 | The tutor evaluation reads its sample through a read-only agent-token route (`GET /api/agent/eval/turns`), sampled on the engine; its harness is `bamboo-eval`, separate from `bamboo-tools`; its prompt's one copy is in docs/PROMPTS.md, not `worker/prompts/` | The engine owns the data and the sampling rule, and the Mac already holds the agent token, so no new secret or DB access. Returning only the sampled turns keeps the export minimal. A separate entry point keeps model calls out of the CLI OpenClaw invokes. The prompt isn't a worker job prompt (no `prompt_version` on jobs); a run records its hash instead |
-| 50 | `#bamboo` is served by a dedicated OpenClaw agent, `bamboo` (thinking off, the skill's body inline in its workspace `AGENTS.md`, bound to the channel ahead of main's Discord binding); `make agent-install` applies it and `make agent-check` verifies it | The shared `main` agent took 75–120 s per message, nearly all thinking; the same model with thinking off answers in ~5–25 s, and OpenClaw sets thinking per agent, not per channel. With thinking off the model doesn't open `SKILL.md` and guessed flags; inline, it chose right every time. Generating `AGENTS.md` from `SKILL.md` keeps one source of truth. Routing is applied, not just printed: the merge only prepends one binding and keeps every other, refuses an unreadable `bindings`, leaves a non-`main` systemAgent alone, and is backed up and idempotent; the Discord ids come from `bamboo.config.json` |
+| 50 | **Superseded by #69.** `#bamboo` is served by a dedicated OpenClaw agent, `bamboo` (thinking off, the skill's body inline in its workspace `AGENTS.md`, bound to the channel ahead of main's Discord binding); `make agent-install` applies it and `make agent-check` verifies it | The shared `main` agent took 75–120 s per message, nearly all thinking; the same model with thinking off answers in ~5–25 s, and OpenClaw sets thinking per agent, not per channel. With thinking off the model doesn't open `SKILL.md` and guessed flags; inline, it chose right every time. Generating `AGENTS.md` from `SKILL.md` keeps one source of truth. Routing is applied, not just printed: the merge only prepends one binding and keeps every other, refuses an unreadable `bindings`, leaves a non-`main` systemAgent alone, and is backed up and idempotent; the Discord ids come from `bamboo.config.json` |
 | 51 | `replies` and `nudge` swallow transient engine errors (network, timeout, 5xx, 429): one alert only after 30 min of outage, one line on recovery; other errors are reported once per distinct error; they never write stderr | One network blip posted `bamboo-tools replies: GET /api/agent/notifications: fetch failed` to `#bamboo`, because OpenClaw announces stderr when stdout is empty. Polls every 5 minutes make a blip routine and self-healing, so Will should hear only about a real outage. Auth and contract errors don't heal by themselves, so they're still posted, but once rather than every 5 minutes. Exiting 0 while quiet keeps OpenClaw's own failure alerts out of the channel too |
 | 52 | Functions run in `pdx1` (`regions` in `web/vercel.json`), next to Turso in `us-west-2` | Vercel's default `iad1` put every DB round trip across the country; a page with a few sequential reads took seconds on Will's phone. One documented setting, pinned by a test, that must follow the database |
 | 53 | Request timing is our own: a wrapped libSQL client, an `AsyncLocalStorage` per request, one JSON log line, `Server-Timing` on API routes | No dependency or tracing backend for a one-user app. Wrapping the client counts what Drizzle actually sends. Next.js offers no response headers for pages or actions, so the log line is the common denominator. Fixed fields only, so logs never carry Will's data |
@@ -1399,7 +1387,8 @@ bamboo/
 | 65 | Re-run old turns with the current prompt (§4.6.1), on Will's tap, as `reextract` jobs that never count as asking again, never touch their import, and wait behind ordinary jobs | Read-only prod counts (2026-11-13): all but 6 of 125 turns were read by `extract_turn.v1`, which took ~4.6 items per "how do I say" turn and gave about half no sentence; the #64 budget then expired 154 phrases at once, so 17 of 54 such questions had nothing left, while single-character fragments of Gemini's example sentences reached rounds. Re-running beats tuning v1's leftovers: v3 already asks for the sentence and fewer terms. Dating new phrases to the turn keeps decay and the budget honest; not bumping keeps `asked_count` meaning "Will asked"; leaving dropped phrases dropped respects his choice. A tap, not automatic on every prompt bump, because each re-run spends Mac model time and visibly reshuffles Up next; ordering keeps a new import's Discord reply from waiting behind the backlog |
 | 66 | A sentence weighs like a frame (`kindWeight.sentence` 2, was 1), and length costs points only past `phrase.longChars` (20, was 12) | Read-only prod counts (2026-11-13, in memory): sentences had already lost almost nothing to the frequency signal (−0.05 on average; frames +0.46, terms −0.34), but the length penalty cost them about 2 points on average, while every sentence was from a "how do I say" turn, the very thing Will asked for. Under the old weights only 5 of 14 sentences ranked inside the 105-phrase budget (median rank 162 of 294). With these, 9 of 14 do (median 36), and the 5 left out are the long, formal ones (26–44 characters), which should sink. 20 is the existing `long` flag, so "long" means one thing |
 | 67 | A say turn without a sentence gets the shortest example of its kept terms as its sentence (`from_example`), at extraction and, once, by the daily cron for stored results | After the #65 re-run (prod counts, 2026-11-13), the local model returned a sentence for 5 of 47 say turns and exceeded the 2-term cap on many; prompting harder is unreliable with a small local model. The examples are verbatim from Gemini's reply and contain the term, and their English came with them, so promoting one stores no LLM-written Chinese. 42 of the 42 sentence-less say turns had such an example. Shortest, because Gemini's first suggestion is often the long, formal one. A cron backfill rather than another re-run: the stored results already hold the examples, so no model time is spent; existence in any status makes it idempotent and respects Will's drops |
-| 68 | OpenClaw's reply model is `qwen3.8:27b` (was `qwen3.5:27b`): `agent.model`'s default and the tutor eval's default 27B. The worker stays on `qwen3.5:9b` | The host moved every OpenClaw agent on the Mac to `qwen3.8:27b` (~18GB; tools, vision, thinking; Ollama 0.32.12+), so Bamboo's defaults follow it. On the 32GB Mac with one loaded model, the 27B and the 9B still swap rather than coexist. Measurements and the 2026-11-06 eval above were taken with `qwen3.5:27b` and stay as recorded. qwen3.8 takes thinking levels (`false`/`low`/`medium`/`xhigh`); the bamboo agent's `thinkingDefault` stays `off`, and `bamboo-eval --think` (boolean) isn't adapted to levels |
+| 68 | OpenClaw's reply model is `qwen3.8:27b` (was `qwen3.5:27b`): the tutor eval's default 27B (and, until #69, `agent.model`'s default). The worker stays on `qwen3.5:9b` | The host moved every OpenClaw agent on the Mac to `qwen3.8:27b` (~18GB; tools, vision, thinking; Ollama 0.32.12+), so Bamboo's defaults follow it. On the 32GB Mac with one loaded model, the 27B and the 9B still swap rather than coexist. Measurements and the 2026-11-06 eval above were taken with `qwen3.5:27b` and stay as recorded. qwen3.8 takes thinking levels (`false`/`low`/`medium`/`xhigh`); the serving agent's `thinkingDefault` should stay `off` (§5.1), and `bamboo-eval --think` (boolean) isn't adapted to levels |
+| 69 | The host binds `#bamboo` to an agent (on the Mac, `willchan`); `make agent-install` no longer adds a `bamboo` agent, writes its `AGENTS.md` or merges a binding, and drops `agent.model`. It only reads the serving agent and puts the automations on it. `make agent-check` fails on a missing binding, agent or skill access, and warns on thinking, a stale inline copy of `SKILL.md` in the agent's `AGENTS.md`, or automations on another agent | The host's rollout (2026-11-12) replaced the `bamboo` agent with Will's personal `willchan` agent, which also serves `#bamboo`. The old installer would have re-added `bamboo`, put its binding ahead of willchan's and moved the automations back to `main`, undoing that rollout on every `make mac-update`. Routing and agent settings are the host's, like Ollama's; Bamboo keeps the checks that matter for intake (§5.1: thinking off, the instructions inline) as reports |
 
 ## Appendix A — Synthetic fixtures
 

@@ -24,63 +24,36 @@ case "$1 $2" in
     tmp="$(mktemp)"
     jq --argjson p "$(path_json "$3")" --argjson v "$4" 'setpath($p; $v)' "$cfg" >"$tmp"
     mv "$tmp" "$cfg"
-    # As the real one: setting the system agent writes out its implicit Discord binding.
-    if [ "$3" = agents.defaults.systemAgent.agentId ]; then
-      tmp="$(mktemp)"
-      jq --argjson v "$4" 'if .bindings == null
-        then .bindings = [{agentId: $v, match: {channel: "discord", accountId: "*"}}] else . end' \
-        "$cfg" >"$tmp"
-      mv "$tmp" "$cfg"
-    fi
     ;;
   "automations list") cat "$autos" ;;
   "automations add" | "automations edit")
     shift 2
     id=""
     [ "$1" = "--name" ] || { id="$1"; shift; }
-    name="" cron="" command="" to=""
+    name="" cron="" command="" to="" agent=""
     while [ $# -gt 0 ]; do
       case "$1" in
         --name) name="$2"; shift 2 ;;
         --cron) cron="$2"; shift 2 ;;
         --command) command="$2"; shift 2 ;;
         --to) to="$2"; shift 2 ;;
+        --agent) agent="$2"; shift 2 ;;
         --tz | --channel) shift 2 ;;
         *) shift ;;
       esac
     done
     tmp="$(mktemp)"
     if [ -z "$id" ]; then
-      jq --arg n "$name" --arg c "$cron" --arg x "$command" --arg t "$to" \
-        '. + [{id: ("id-" + (length | tostring)), name: $n, cron: $c, command: $x, to: $t}]' "$autos" >"$tmp"
+      jq --arg n "$name" --arg c "$cron" --arg x "$command" --arg t "$to" --arg a "$agent" \
+        '. + [{id: ("id-" + (length | tostring)), name: $n, cron: $c, command: $x, to: $t, agentId: $a}]' "$autos" >"$tmp"
     else
-      jq --arg i "$id" --arg c "$cron" --arg x "$command" --arg t "$to" \
-        'map(if .id == $i then .cron = $c | .command = $x | .to = $t else . end)' "$autos" >"$tmp"
+      jq --arg i "$id" --arg c "$cron" --arg x "$command" --arg t "$to" --arg a "$agent" \
+        'map(if .id == $i then .cron = $c | .command = $x | .to = $t | .agentId = $a else . end)' "$autos" >"$tmp"
     fi
     mv "$tmp" "$autos"
     echo '{"ok": true}'
     ;;
   "skills check") echo "skills ok" ;;
-  "agents add")
-    # As the real one: an entry with the workspace and model, and a workspace with OpenClaw's
-    # own AGENTS.md and BOOTSTRAP.md.
-    id="$3" ws="" model=""
-    shift 3
-    while [ $# -gt 0 ]; do
-      case "$1" in
-        --workspace) ws="$2"; shift 2 ;;
-        --model) model="$2"; shift 2 ;;
-        *) shift ;;
-      esac
-    done
-    tmp="$(mktemp)"
-    jq --arg i "$id" --arg w "$ws" --arg m "$model" \
-      '.agents.entries[$i] = {workspace: $w, model: $m}' "$cfg" >"$tmp"
-    mv "$tmp" "$cfg"
-    mkdir -p "$ws"
-    echo "# AGENTS.md - generated" >"$ws/AGENTS.md"
-    echo "# BOOTSTRAP.md - who am I?" >"$ws/BOOTSTRAP.md"
-    ;;
   *)
     echo "fake openclaw: unsupported: $*" >&2
     exit 2
