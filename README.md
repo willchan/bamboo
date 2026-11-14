@@ -104,8 +104,8 @@ does too (DESIGN §8.3).
 Bamboo shares that Mac's Ollama and never changes its settings or pulls models: the host owns
 those, along with the memory budget. What Bamboo needs from it: the worker's text model
 (`OLLAMA_TEXT_MODEL`, `qwen3.5:9b`, ~7–8GB while loaded, briefly per extraction job) and
-OpenClaw's reply model for the `bamboo` agent (`agent.model`, default `ollama/qwen3.8:27b`,
-~18GB, 32k context in OpenClaw, the same one every OpenClaw agent on the Mac uses). Change either
+OpenClaw's reply model for the agent that serves `#bamboo` (`ollama/qwen3.8:27b`, ~18GB, 32k
+context in OpenClaw, the same one every OpenClaw agent on the Mac uses; the host sets it). Change either
 with the host's memory budget in mind: Ollama keeps one model loaded (`OLLAMA_MAX_LOADED_MODELS=1`
 on the 32GB Mac), so a worker job evicts the reply model for a while and they swap rather than
 coexist. From your own account, `ssh agent`, then:
@@ -121,12 +121,12 @@ It installs dependencies, links `~/.local/bin/bamboo-tools`, creates
 `~/.config/bamboo/bamboo.config.json` and `~/.config/bamboo/agent.env` (only if missing), and
 adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). It
 also pins `#bamboo`'s channel entry to the bamboo skill (`skills`, `systemPrompt`, `tools.deny`;
-DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are, and routes
-`#bamboo` to a dedicated `bamboo` OpenClaw agent with thinking off (much faster replies): it adds
-the agent if missing, writes its workspace `AGENTS.md` from the skill, and puts one binding for
-`#bamboo` first in OpenClaw's `bindings`, keeping every other binding and `main` as the agent for
-everything else. It ends with `make agent-check`, which you can run on its own any time
-(read-only). Then:
+DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. It never adds an
+agent or changes `bindings`: the host binds `#bamboo` to an agent (on Will's Mac, `willchan`, per
+the Mac's runbook), and the automations run on that agent. It ends with `make agent-check`
+(read-only; run it on its own any time), which fails if `#bamboo` isn't bound or the agent can't
+use the skill, and warns if the agent's thinking isn't off or its `AGENTS.md` lacks the skill's
+current instructions (DESIGN §5.1). Then:
 
 1. Put the production `AGENT_API_TOKEN` in `~/.config/bamboo/agent.env` as
    `BAMBOO_AGENT_API_TOKEN=…` with an editor (not on a command line), and run `make agent-install` again: it adds the `bamboo-replies` and

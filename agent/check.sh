@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# `make agent-check` (DESIGN §8.3): read-only check of the dedicated `bamboo` OpenClaw agent
-# (§5.1, §10 #50). Run it as the gateway's user (openclaw-agent); `make agent-install` runs it at
-# the end. Exits 1 if anything is off; `make agent-install` fixes all of it.
+# `make agent-check` (DESIGN §8.3): read-only check of the OpenClaw agent that serves #bamboo
+# (§5.1, §10 #69). The host binds that agent (the Mac's runbook); this only reports. Run it as the
+# gateway's user (openclaw-agent); `make agent-install` runs it at the end. Exits 1 on a ✗.
 #
-#   - agents.defaults.systemAgent.agentId is main (every other message stays there);
-#   - the bamboo agent exists, with thinkingDefault off and skills ["bamboo"];
-#   - #bamboo (discord.channel_id in ~/.config/bamboo/bamboo.config.json) routes to it: the first
-#     binding that matches the channel is the bamboo agent's;
-#   - its workspace AGENTS.md is exactly what SKILL.md generates, and no BOOTSTRAP.md is there.
+#   ✗ #bamboo (discord.channel_id in ~/.config/bamboo/bamboo.config.json) isn't bound to an agent,
+#     the agent has no config entry, or its skills allowlist leaves out bamboo;
+#   ⚠ its thinkingDefault isn't off (slow replies), its workspace AGENTS.md lacks lines of
+#     SKILL.md's instructions (a stale inline copy), or the bamboo-* automations run on another
+#     agent. These are the host's to change.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,70 +30,75 @@ bad() {
   printf '✗ %s\n' "$*"
   failed=1
 }
+heads_up() { printf '⚠ %s\n' "$*"; }
 
 channel_id=""
 [ ! -f "$CONFIG" ] || channel_id="$(jq -r '.discord.channel_id // empty' "$CONFIG")"
 case "$channel_id" in "" | *[!0-9]* | 000*) channel_id="" ;; esac
 [ -x "$SETUP_TSX" ] || bad "missing $SETUP_TSX (pnpm install)"
 
-system_agent="$(cfg_get agents.defaults.systemAgent.agentId | jq -r '. // empty' 2>/dev/null || true)"
-if [ "$system_agent" = "$SYSTEM_AGENT_ID" ]; then
-  ok "systemAgent is $SYSTEM_AGENT_ID"
-else
-  bad "agents.defaults.systemAgent.agentId is '${system_agent:-unset}', not $SYSTEM_AGENT_ID"
-fi
-
-entry="$(cfg_get "agents.entries.$AGENT_ID")"
-if [ -z "$entry" ]; then
-  bad "no $AGENT_ID agent (agents.entries.$AGENT_ID)"
-else
-  ok "the $AGENT_ID agent exists ($(printf '%s' "$entry" | jq -r '.model // "default model"'))"
-  thinking="$(printf '%s' "$entry" | jq -r '.thinkingDefault // empty')"
-  if [ "$thinking" = off ]; then ok "thinkingDefault off"; else bad "thinkingDefault is '${thinking:-unset}', not off"; fi
-  skills="$(printf '%s' "$entry" | jq -c '.skills')"
-  if [ "$skills" = '["bamboo"]' ]; then ok 'skills ["bamboo"]'; else bad "skills is $skills, not [\"bamboo\"]"; fi
-fi
-
+agent=""
 if [ -z "$channel_id" ]; then
   bad "no discord.channel_id in $CONFIG"
 elif [ -x "$SETUP_TSX" ]; then
-  bindings="$(cfg_get bindings)"
-  route="$(printf '%s' "${bindings:-[]}" | setup route "$channel_id" "$account_id" 2>/dev/null || true)"
-  if [ "$route" = "$AGENT_ID" ]; then
-    ok "#bamboo ($channel_id) routes to $AGENT_ID"
+  agent="$(serving_agent "$channel_id")"
+  if [ -n "$agent" ]; then
+    ok "#bamboo ($channel_id) routes to $agent"
   else
-    bad "#bamboo ($channel_id) routes to '${route:-the default agent}', not $AGENT_ID"
-  fi
-  if printf '%s' "${bindings:-[]}" | jq -e --arg a "$SYSTEM_AGENT_ID" \
-    'type == "array" and any(.[]; .agentId == $a and .match.channel == "discord")' >/dev/null 2>&1; then
-    ok "$SYSTEM_AGENT_ID keeps its Discord binding"
-  else
-    printf '⚠ no Discord binding for %s (other channels go to the default agent)\n' "$SYSTEM_AGENT_ID"
+    bad "#bamboo ($channel_id) isn't bound to an agent (it goes to OpenClaw's default); the host's runbook binds it"
   fi
 fi
 
-workspace="$(agent_workspace "$entry")"
-if [ -x "$SETUP_TSX" ]; then
-  if agents_md="$(agents_md_file)"; then
-    if [ -f "$workspace/AGENTS.md" ] && cmp -s "$agents_md" "$workspace/AGENTS.md"; then
-      ok "$workspace/AGENTS.md matches SKILL.md"
-    else
-      bad "$workspace/AGENTS.md is missing or differs from what SKILL.md generates"
-    fi
-    rm -f "$agents_md"
+if [ -n "$agent" ]; then
+  entry="$(cfg_get "agents.entries.$agent")"
+  if [ -z "$entry" ]; then
+    bad "no $agent agent (agents.entries.$agent)"
   else
-    bad "can't generate AGENTS.md from $SKILL_FILE"
+    model="$(printf '%s' "$entry" | jq -r '.model // empty')"
+    [ -n "$model" ] || model="$(cfg_get agents.defaults.model | jq -r 'if type == "object" then .primary else . end // empty' 2>/dev/null || true)"
+    ok "the $agent agent exists (${model:-default model})"
+    if printf '%s' "$entry" | jq -e '(.skills | type) != "array" or (.skills | index("bamboo"))' >/dev/null; then
+      ok "$agent can use the bamboo skill"
+    else
+      bad "$agent's skills allowlist $(printf '%s' "$entry" | jq -c .skills) leaves out bamboo"
+    fi
+    thinking="$(printf '%s' "$entry" | jq -r '.thinkingDefault // empty')"
+    [ -n "$thinking" ] || thinking="$(cfg_get agents.defaults.thinkingDefault | jq -r '. // empty' 2>/dev/null || true)"
+    if [ "$thinking" = off ]; then
+      ok "$agent thinkingDefault off"
+    else
+      heads_up "$agent thinkingDefault is '${thinking:-OpenClaw default}', not off: #bamboo replies can take minutes (DESIGN §5.1)"
+    fi
+
+    agents_md="$(agent_workspace "$agent" "$entry")/AGENTS.md"
+    if [ ! -f "$agents_md" ]; then
+      heads_up "no $agents_md: the agent will need to open SKILL.md itself"
+    elif [ -x "$SETUP_TSX" ]; then
+      if missing="$(setup missing "$SKILL_FILE" "$agents_md" 2>&1)"; then
+        if [ -z "$missing" ]; then
+          ok "$agents_md has SKILL.md's instructions"
+        else
+          heads_up "$agents_md lacks $(printf '%s\n' "$missing" | wc -l | tr -d ' ') line(s) of SKILL.md's instructions; update its #bamboo section (host's runbook). First: $(printf '%s\n' "$missing" | head -n 1)"
+        fi
+      else
+        bad "can't compare $agents_md with $SKILL_FILE: $missing"
+      fi
+    fi
   fi
-fi
-if [ -e "$workspace/BOOTSTRAP.md" ]; then
-  bad "$workspace/BOOTSTRAP.md is active (it starts an onboarding chat)"
-else
-  ok "no BOOTSTRAP.md in the workspace"
+
+  autos="$(openclaw automations list --all --json 2>/dev/null || true)"
+  others="$(printf '%s' "${autos:-[]}" | jq -r --arg a "$agent" '
+    (if type == "array" then . else (.jobs // .automations // []) end)
+    | map(select((.name // "" | startswith("bamboo-")) and has("agentId") and .agentId != $a))
+    | map("\(.name) → \(.agentId)") | join(", ")' 2>/dev/null || true)"
+  if [ -n "$others" ]; then
+    heads_up "automations on another agent than $agent: $others (make agent-install moves them)"
+  fi
 fi
 
 if [ "$failed" = 0 ]; then
   printf 'agent-check: ok\n'
 else
-  printf 'agent-check: problems above; make agent-install fixes them\n'
+  printf 'agent-check: problems above (the host binds #bamboo; see DESIGN §8.3)\n'
   exit 1
 fi
