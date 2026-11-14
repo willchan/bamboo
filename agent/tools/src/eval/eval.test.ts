@@ -303,6 +303,13 @@ describe("replay", () => {
     ]);
     const chat = fake.calls.find((c) => c.path === "/api/chat")!.body!;
     expect(chat).toMatchObject({ stream: false, think: false, options: { num_ctx: 8192 } });
+    // The 27B loads at the host's 32k: the loading request sets the context for OpenClaw too.
+    const big = fake.calls.filter(
+      (c) => c.body?.model === "qwen3.8:27b" && c.body.keep_alive !== 0,
+    );
+    expect(big.map((c) => (c.body!.options as { num_ctx: number }).num_ctx)).toEqual([
+      32768, 32768, 32768, 32768,
+    ]);
     expect((chat.messages as { content: string }[])[0]!.content).toBe(PROMPT.system);
     expect(a.models).toEqual(["qwen3.5:9b", "qwen3.8:27b"]);
     expect(a.questions[0]!.answers["qwen3.5:9b"]).toMatchObject({

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { PHRASE_TAGS } from "@bamboo/shared";
-import { OllamaClient, OllamaError, RESULT_SCHEMA, checkReply, extractTurn } from "./ollama";
+import {
+  OllamaClient,
+  OllamaError,
+  RESULT_SCHEMA,
+  checkReply,
+  extractTurn,
+  modelParams,
+} from "./ollama";
 import { loadPrompt } from "./prompt";
 import { FakeOllama, fixtureTurns, ollamaFixtures as F } from "./test-fakes";
 
@@ -24,6 +31,23 @@ describe("OllamaClient", () => {
     expect(await new OllamaClient("http://o", "qwen3.8:27b", fetchTags).hasModel()).toBe(false);
     // A name without a tag means :latest.
     expect(await new OllamaClient("http://o", "qwen3.5", fetchTags).hasModel()).toBe(false);
+  });
+
+  // The 27B is the host's shared reply model: asking for another num_ctx would reload it, and a
+  // shorter keep_alive would unload it early for OpenClaw (DESIGN §10 #70).
+  it("asks for the host's num_ctx and keep_alive per model, the default for others", async () => {
+    const fake = new FakeOllama();
+    fake.replies = [VALID, VALID, VALID];
+    for (const m of ["qwen3.8:27b", "qwen3.5:9b", "other:1b"])
+      await new OllamaClient("http://ollama.test", m, fake.fetch).chat([
+        { role: "user", content: "x" },
+      ]);
+    expect(fake.chatBodies.map((b) => [b.model, b.options, b.keep_alive])).toEqual([
+      ["qwen3.8:27b", { temperature: 0, num_ctx: 32768 }, "30m"],
+      ["qwen3.5:9b", { temperature: 0, num_ctx: 8192 }, "2m"],
+      ["other:1b", { temperature: 0, num_ctx: 8192 }, "2m"],
+    ]);
+    expect(modelParams("other:1b")).toEqual(modelParams("default"));
   });
 
   it("throws OllamaError when Ollama is down or answers an error", async () => {

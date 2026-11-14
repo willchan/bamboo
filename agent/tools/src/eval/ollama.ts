@@ -3,6 +3,7 @@
 import { sharedConfig } from "@bamboo/shared";
 
 const E = sharedConfig.tutorEval;
+const P = sharedConfig.worker.modelParams;
 
 export type Fetch = typeof fetch;
 
@@ -75,8 +76,12 @@ export class TutorOllama {
     return this.names("/api/ps");
   }
 
-  private options() {
-    return { num_ctx: E.numCtx };
+  /**
+   * The host's `num_ctx` for this model (`worker.modelParams`): the request that loads a model
+   * sets its context for every later caller, OpenClaw's replies included (DESIGN §1.2).
+   */
+  private options(model: string) {
+    return { num_ctx: (P[model] ?? P.default!).numCtx };
   }
 
   /** Load `model` (an empty generate), so answers are timed without the load. */
@@ -84,7 +89,7 @@ export class TutorOllama {
     await this.call(
       "POST",
       "/api/generate",
-      { model, prompt: "", stream: false, keep_alive: E.keepAlive, options: this.options() },
+      { model, prompt: "", stream: false, keep_alive: E.keepAlive, options: this.options(model) },
       this.opts.loadTimeoutMs ?? E.loadTimeoutSeconds * 1000,
     );
   }
@@ -106,7 +111,7 @@ export class TutorOllama {
         stream: false,
         think: this.opts.think ?? E.think,
         keep_alive: E.keepAlive,
-        options: this.options(),
+        options: this.options(model),
       },
       this.opts.answerTimeoutMs ?? E.answerTimeoutSeconds * 1000,
     );

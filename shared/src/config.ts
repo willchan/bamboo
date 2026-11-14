@@ -83,7 +83,7 @@ export const sharedConfig = {
   worker: {
     defaults: {
       ollamaUrl: "http://localhost:11434",
-      model: "qwen3.5:9b",
+      model: "qwen3.8:27b",
       pollIntervalSeconds: 15,
       /** `~` is the home of the account the worker runs as. `BAMBOO_WORKER_ENV` overrides it. */
       envFile: "~/.config/bamboo/worker.env",
@@ -98,16 +98,28 @@ export const sharedConfig = {
     completeRetrySeconds: [5, 20, 60],
     /** One HTTP call to the engine gives up after this long. */
     apiTimeoutSeconds: 30,
-    /** One Ollama chat call gives up after this long (the first call may load the model). */
-    ollamaTimeoutSeconds: 180,
     /**
-     * Ollama request options (DESIGN §1.2). `num_ctx` matches PandaBase's setting for the same
-     * model, so the two workers don't force a reload.
+     * One Ollama chat call gives up after this long: it may wait behind an OpenClaw reply (Ollama
+     * answers one request at a time) or load the model. Under the 10-minute lease.
      */
-    ollama: { think: false, temperature: 0, numCtx: 8192, keepAlive: "2m" },
+    ollamaTimeoutSeconds: 300,
+    /** Ollama request options (DESIGN §1.2). */
+    ollama: { think: false, temperature: 0 },
+    /**
+     * `num_ctx` and `keep_alive` per model, the same as the host gives OpenClaw (and PandaBase) for
+     * that model (§1.2, §10 #70). The request that loads a model sets its context for every later
+     * caller (Ollama 0.40 ignores a later `num_ctx`), so a job that loaded the 27B at 8k would
+     * leave OpenClaw's replies at 8k; and the last request's `keep_alive` wins. The tutor eval
+     * uses the same `numCtx`. A model not listed gets `default`.
+     */
+    modelParams: {
+      default: { numCtx: 8192, keepAlive: "2m" },
+      "qwen3.8:27b": { numCtx: 32768, keepAlive: "30m" },
+      "qwen3.5:9b": { numCtx: 8192, keepAlive: "2m" },
+    } as Record<string, { numCtx: number; keepAlive: string }>,
     /**
      * The reply is cut to this many characters before it goes to the model, so prompt + reply
-     * stay inside `numCtx` tokens. The engine checks verbatim against the whole turn either way.
+     * stay inside the smallest `numCtx` (8192 tokens). The engine checks verbatim against the whole turn either way.
      */
     maxReplyCharsForModel: 6000,
   },
@@ -129,8 +141,6 @@ export const sharedConfig = {
      * (false/low/medium/xhigh), not just true/false (DESIGN §5.4). Sampling: model defaults.
      */
     think: false,
-    /** Same as the worker's, so the 9B isn't reloaded for a different context size. */
-    numCtx: 8192,
     /** One answer gives up after this long (the 27B answers slowly on the 32 GB Mac). */
     answerTimeoutSeconds: 600,
     /** Loading a model (the warm-up call before timing answers) gives up after this long. */

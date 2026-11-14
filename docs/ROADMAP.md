@@ -42,7 +42,7 @@
 - **Quiz mode in Discord.** "Quiz me": a few Say cards as messages, graded with reactions; the
   results go to Bamboo as reviews.
 - **Instant `#bamboo` replies without a model.** Today the channel's OpenClaw agent runs
-  `qwen3.8:27b`, which cold-loads after idle (and after a worker job swaps in the 9B), so a reply
+  `qwen3.8:27b`, which cold-loads after idle (and after PandaBase's vision jobs swap in the 9B), so a reply
   can take ~35–70 s (measured with `qwen3.5:27b`). Will accepts that for
   now. Option: an OpenClaw plugin (or similar deterministic handler) that recognises a share link
   or PDF in `#bamboo` and calls `bamboo-tools` directly, so no LLM is in the path and replies are

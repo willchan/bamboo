@@ -54,13 +54,21 @@ PandaBase already runs on this Mac (its DESIGN §1.2). Its host settings
 `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=1` apply to Bamboo too. Therefore:
 
 - Worker concurrency = **1**.
-- Default model **`qwen3.5:9b`**, the same model PandaBase uses for vision, so the two workers
-  rarely force a model swap. It is configurable via `OLLAMA_TEXT_MODEL`. Qwen is strong at
-  Chinese, and the task is copy, classify and rate, not writing Chinese.
-- Requests: `think: false`, `temperature: 0`, `num_ctx: 8192`, `keep_alive: "2m"`, `format` set
-  to the JSON schema of the result contract.
-- The first (backlog) import of ~70 turns takes roughly 20–40 min of model time; later imports
-  take minutes.
+- Default model **`qwen3.8:27b`** (was `qwen3.5:9b` until 2026-11, §10 #70), the model the host
+  keeps loaded for every OpenClaw agent, so an extraction job uses the loaded model instead of
+  swapping it out. It is configurable via `OLLAMA_TEXT_MODEL`. Qwen is strong at Chinese, and the
+  task is copy, classify and rate, not writing Chinese. Swaps stop only once PandaBase's vision
+  jobs also leave the 9B; that's PandaBase's and the host's call.
+- Requests: `think: false`, `temperature: 0`, `format` set to the JSON schema of the result
+  contract, and `num_ctx` / `keep_alive` per model (`worker.modelParams`), the same as the host
+  gives OpenClaw for that model: `qwen3.8:27b` 32768 / `"30m"`, `qwen3.5:9b` 8192 / `"2m"`. The
+  request that loads a model sets its context for every later caller: on Ollama 0.40.14 a later
+  request's `num_ctx` neither reloads nor resizes it (seen 2026-11-14), so a job that loaded the
+  27B at 8k left OpenClaw's replies at 8k. The last request's `keep_alive` wins.
+- Ollama answers one request at a time, so a job can wait behind an OpenClaw reply and a reply
+  behind a job (~10–20 s per turn on the 27B); a chat call gives up after 300 s.
+- The first (backlog) import of ~70 turns takes roughly 20–40 min of model time on the 9B,
+  about twice that on the 27B; later imports take minutes.
 - Share-link imports make two plain HTTPS requests (~1–2 s) and start no browser (§5.2, M0).
 
 ## 2. Data model
@@ -911,7 +919,8 @@ can't reach it; like the worker it calls only the local Ollama.
    `--models` overrides) through `POST /api/chat`, non-streaming, `think: false` (`--think`
    sends `true`; qwen3.8 takes thinking levels `false`/`low`/`medium`/`xhigh`, so a thinking run
    of it would need a level flag, not built), model
-   default sampling, `num_ctx` 8192. The system prompt's only copy is in docs/PROMPTS.md › *Tutor
+   default sampling, `num_ctx` from `worker.modelParams` (so the eval never leaves the shared 27B
+   at a smaller context). The system prompt's only copy is in docs/PROMPTS.md › *Tutor
    evaluation* (between markers); each run records its hash. The user message is the question as
    asked. Models run **one at a time**: a warm-up load (timed apart), every question, then unload
    with `keep_alive: 0`, except a model that was already loaded when the run began (PandaClaw's
@@ -1077,7 +1086,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1). On a 401, `bamboo-tools` names where its token came from (`BAMBOO_AGENT_API_TOKEN in <agent.env path>`, or `environment variable BAMBOO_AGENT_API_TOKEN`), never the value (§10 #46) |
-| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.5:9b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env for every key it lists (§10 #45): its keys are generic, so an inherited `WORKER_API_TOKEN` or `OLLAMA_URL` can't override Bamboo's. A key the file leaves out still comes from the env |
+| `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.8:27b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env for every key it lists (§10 #45): its keys are generic, so an inherited `WORKER_API_TOKEN` or `OLLAMA_URL` can't override Bamboo's. A key the file leaves out still comes from the env |
 
 ### 8.2 Deploy
 
@@ -1389,6 +1398,7 @@ bamboo/
 | 67 | A say turn without a sentence gets the shortest example of its kept terms as its sentence (`from_example`), at extraction and, once, by the daily cron for stored results | After the #65 re-run (prod counts, 2026-11-13), the local model returned a sentence for 5 of 47 say turns and exceeded the 2-term cap on many; prompting harder is unreliable with a small local model. The examples are verbatim from Gemini's reply and contain the term, and their English came with them, so promoting one stores no LLM-written Chinese. 42 of the 42 sentence-less say turns had such an example. Shortest, because Gemini's first suggestion is often the long, formal one. A cron backfill rather than another re-run: the stored results already hold the examples, so no model time is spent; existence in any status makes it idempotent and respects Will's drops |
 | 68 | OpenClaw's reply model is `qwen3.8:27b` (was `qwen3.5:27b`): the tutor eval's default 27B (and, until #69, `agent.model`'s default). The worker stays on `qwen3.5:9b` | The host moved every OpenClaw agent on the Mac to `qwen3.8:27b` (~18GB; tools, vision, thinking; Ollama 0.32.12+), so Bamboo's defaults follow it. On the 32GB Mac with one loaded model, the 27B and the 9B still swap rather than coexist. Measurements and the 2026-11-06 eval above were taken with `qwen3.5:27b` and stay as recorded. qwen3.8 takes thinking levels (`false`/`low`/`medium`/`xhigh`); the serving agent's `thinkingDefault` should stay `off` (§5.1), and `bamboo-eval --think` (boolean) isn't adapted to levels |
 | 69 | The host binds `#bamboo` to an agent (on the Mac, `willchan`); `make agent-install` no longer adds a `bamboo` agent, writes its `AGENTS.md` or merges a binding, and drops `agent.model`. It only reads the serving agent and puts the automations on it. `make agent-check` fails on a missing binding, agent or skill access, and warns on thinking, a stale inline copy of `SKILL.md` in the agent's `AGENTS.md`, or automations on another agent | The host's rollout (2026-11-12) replaced the `bamboo` agent with Will's personal `willchan` agent, which also serves `#bamboo`. The old installer would have re-added `bamboo`, put its binding ahead of willchan's and moved the automations back to `main`, undoing that rollout on every `make mac-update`. Routing and agent settings are the host's, like Ollama's; Bamboo keeps the checks that matter for intake (§5.1: thinking off, the instructions inline) as reports |
+| 70 | The worker extracts with `qwen3.8:27b` (was `qwen3.5:9b`), with `num_ctx` and `keep_alive` per model matching the host's OpenClaw settings (`worker.modelParams`) | With one loaded model, every 9B job evicted the shared reply model, so the next Discord reply cold-loaded. Background jobs can be slower. On the 8 synthetic fixture turns (`test:ollama`, `extract_turn.v3`, 2026-11-14) the 27B was better: 8/8 valid either way, turn kind 8/8 vs 6/8, items verbatim 14/14 vs 11/12, examples verbatim 7/7 vs 8/10, model time 78 s vs 42 s. Matching `num_ctx` matters because the request that loads a model sets its context for everyone (a job that loaded the 27B at 8k left OpenClaw at 8k); matching `keep_alive` keeps a job from unloading it early. With the 32k settings: 8/8 valid, turn kind 8/8, items 15/15, examples 8/8, model time 56 s. Removing the 9B entirely waits on PandaBase's vision jobs |
 
 ## Appendix A — Synthetic fixtures
 
