@@ -133,7 +133,8 @@ export const sharedConfig = {
     defaultSeed: "bamboo",
     maxSeedChars: 100,
     /** Replayed one at a time, in this order. */
-    defaultModels: ["qwen3.5:9b", "qwen3.8:27b"],
+    /** The one model on the Mac (§10 #71); `--models` compares others, which must be pulled. */
+    defaultModels: ["qwen3.8:27b"],
     /** Keep the model loaded between questions; it's unloaded (`keep_alive: 0`) after its last. */
     keepAlive: "10m",
     /**

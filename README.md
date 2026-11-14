@@ -146,9 +146,9 @@ Is a local model a good enough Mandarin tutor? (docs/ROADMAP.md › Tutor; DESIG
 `GET /api/agent/eval/turns` deploy and `make mac-update`. As `openclaw-agent`, in `~/Code/bamboo`:
 
 ```
-make tutor-eval ARGS="run --seed <any word>"     # sample ~20 questions, replay through qwen3.5:9b
-                                                  # then qwen3.8:27b, one at a time: ~20–45 min
-make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(tailscale ip -4)"
+make tutor-eval ARGS="run --seed <any word>"     # sample ~20 questions, replay through qwen3.8:27b
+                                                  # (--models a,b,… for more, each pulled): ~10–20 min
+make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(/opt/homebrew/bin/tailscale ip -4)"
 make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
 ```
 
@@ -156,5 +156,5 @@ make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
 rates every answer 1–5 for accuracy and naturalness, marks the one he prefers, and taps **Save to
 Mac** (ratings survive reloads; **Export** downloads the JSON instead, to put in the run directory
 as `results.json`). Answers are labeled A, B, C… with no model names; the key is `key.json` in the
-run directory. Add the 4B with `--models qwen3.5:4b,qwen3.5:9b,qwen3.8:27b`; an interrupted run
+run directory. Compare more models with `--models <a>,<b>` (each must be pulled); an interrupted run
 resumes with `run --out <run dir>`. Everything stays in `~/bamboo-eval/`, never the checkout.
