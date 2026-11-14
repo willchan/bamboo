@@ -41,7 +41,7 @@ const PROMPT = { system: "You are a test tutor.", sha: "abc123abc123" };
 
 /** A fake Ollama: models pulled/loaded, every call recorded, answers per model. */
 class FakeOllama {
-  pulled = ["qwen3.5:9b", "qwen3.5:27b", "qwen3.5:4b"];
+  pulled = ["qwen3.5:9b", "qwen3.8:27b", "qwen3.5:4b"];
   loaded: string[] = [];
   calls: { path: string; body: Record<string, unknown> | null }[] = [];
   failChat: ((model: string, q: string) => boolean) | null = null;
@@ -80,7 +80,7 @@ class FakeOllama {
   };
 }
 
-const answersFor = (models = ["qwen3.5:9b", "qwen3.5:27b"]) => {
+const answersFor = (models = ["qwen3.5:9b", "qwen3.8:27b"]) => {
   const a = newAnswers(SAMPLE, {
     run_id: "run-1",
     seed: "s",
@@ -164,7 +164,7 @@ describe("blinding", () => {
         Object.values(q.labels)
           .map((l) => l.source)
           .sort(),
-      ).toEqual([GEMINI, "qwen3.5:27b", "qwen3.5:9b"].sort());
+      ).toEqual([GEMINI, "qwen3.8:27b", "qwen3.5:9b"].sort());
     }
     // Not the same order every time (with this seed the three questions differ).
     const orders = key.questions.map((q) =>
@@ -211,7 +211,7 @@ describe("blinding", () => {
 
   it("leaves failed answers off the page and lists them in the key", () => {
     const a = answersFor();
-    a.questions[1]!.answers["qwen3.5:27b"] = {
+    a.questions[1]!.answers["qwen3.8:27b"] = {
       text: null,
       latency_ms: 5,
       eval_count: null,
@@ -220,7 +220,7 @@ describe("blinding", () => {
     };
     const { page, key } = buildBlind(a);
     expect(page.questions[1]!.answers).toHaveLength(2);
-    expect(key.questions[1]!.missing).toEqual([{ source: "qwen3.5:27b", error: "HTTP 500" }]);
+    expect(key.questions[1]!.missing).toEqual([{ source: "qwen3.8:27b", error: "HTTP 500" }]);
   });
 });
 
@@ -235,9 +235,9 @@ describe("score", () => {
         ratings: {
           [labelOf(qi, GEMINI)]: { accuracy: 5, naturalness: 4 },
           [labelOf(qi, "qwen3.5:9b")]: { accuracy: 3, naturalness: qi === 0 ? 2 : 3 },
-          [labelOf(qi, "qwen3.5:27b")]: { accuracy: 4, naturalness: null },
+          [labelOf(qi, "qwen3.8:27b")]: { accuracy: 4, naturalness: null },
         },
-        preferred: qi < 2 ? labelOf(qi, GEMINI) : labelOf(qi, "qwen3.5:27b"),
+        preferred: qi < 2 ? labelOf(qi, GEMINI) : labelOf(qi, "qwen3.8:27b"),
       };
     });
     const rows = Object.fromEntries(score(results, key).map((r) => [r.source, r]));
@@ -249,14 +249,14 @@ describe("score", () => {
       preferred: 0,
       medianLatencyMs: 10_000,
     });
-    expect(rows["qwen3.5:27b"]).toMatchObject({ accuracy: 4, naturalness: null, rated: 3 });
-    expect(rows["qwen3.5:27b"]!.preferred).toBeCloseTo(1 / 3);
+    expect(rows["qwen3.8:27b"]).toMatchObject({ accuracy: 4, naturalness: null, rated: 3 });
+    expect(rows["qwen3.8:27b"]!.preferred).toBeCloseTo(1 / 3);
     const table = formatScores(score(results, key));
     expect(table.split("\n")[0]).toMatch(
       /^source\s+accuracy\s+natural\s+preferred\s+median latency/u,
     );
     expect(table).toMatch(/gemini\s+5\.00\s+4\.00\s+67%\s+—/u);
-    expect(table).toMatch(/qwen3\.5:27b\s+4\.00\s+—\s+33%\s+30\.0 s\s+8\.0\s+3\/3\s+0/u);
+    expect(table).toMatch(/qwen3\.8:27b\s+4\.00\s+—\s+33%\s+30\.0 s\s+8\.0\s+3\/3\s+0/u);
   });
 
   it("refuses results from another run; handles no ratings", () => {
@@ -279,7 +279,7 @@ describe("replay", () => {
     let t = 0;
     const a = newAnswers(SAMPLE, answersFor([]));
     let saves = 0;
-    await replay(a, ["qwen3.5:9b", "qwen3.5:27b"], {
+    await replay(a, ["qwen3.5:9b", "qwen3.8:27b"], {
       ollama,
       prompt: PROMPT,
       save: () => saves++,
@@ -295,16 +295,16 @@ describe("replay", () => {
       "/api/chat qwen3.5:9b",
       "/api/chat qwen3.5:9b",
       "/api/generate qwen3.5:9b unload",
-      "/api/generate qwen3.5:27b",
-      "/api/chat qwen3.5:27b",
-      "/api/chat qwen3.5:27b",
-      "/api/chat qwen3.5:27b",
-      "/api/generate qwen3.5:27b unload",
+      "/api/generate qwen3.8:27b",
+      "/api/chat qwen3.8:27b",
+      "/api/chat qwen3.8:27b",
+      "/api/chat qwen3.8:27b",
+      "/api/generate qwen3.8:27b unload",
     ]);
     const chat = fake.calls.find((c) => c.path === "/api/chat")!.body!;
     expect(chat).toMatchObject({ stream: false, think: false, options: { num_ctx: 8192 } });
     expect((chat.messages as { content: string }[])[0]!.content).toBe(PROMPT.system);
-    expect(a.models).toEqual(["qwen3.5:9b", "qwen3.5:27b"]);
+    expect(a.models).toEqual(["qwen3.5:9b", "qwen3.8:27b"]);
     expect(a.questions[0]!.answers["qwen3.5:9b"]).toMatchObject({
       latency_ms: 1000,
       eval_count: 100,
@@ -320,9 +320,9 @@ describe("replay", () => {
 
   it("leaves a model loaded if it was loaded before the run", async () => {
     const fake = new FakeOllama();
-    fake.loaded = ["qwen3.5:27b"];
+    fake.loaded = ["qwen3.8:27b"];
     const a = newAnswers(SAMPLE, answersFor([]));
-    await replay(a, ["qwen3.5:27b"], {
+    await replay(a, ["qwen3.8:27b"], {
       ollama: new TutorOllama("http://ollama.test", fake.fetch),
       prompt: PROMPT,
       save: () => {},
@@ -349,21 +349,21 @@ describe("replay", () => {
   it("records errors, retries only failed answers on resume, survives a failed load", async () => {
     const fake = new FakeOllama();
     fake.failChat = (m, q) => m === "qwen3.5:9b" && q.includes("soup");
-    fake.failLoad = "qwen3.5:27b";
+    fake.failLoad = "qwen3.8:27b";
     const ollama = new TutorOllama("http://ollama.test", fake.fetch);
     const deps = { ollama, prompt: PROMPT, save: () => {}, log: (l: string) => log.push(l) };
     const a = newAnswers(SAMPLE, answersFor([]));
-    await replay(a, ["qwen3.5:9b", "qwen3.5:27b"], deps);
+    await replay(a, ["qwen3.5:9b", "qwen3.8:27b"], deps);
     expect(a.questions[0]!.answers["qwen3.5:9b"]!.error).toMatch(/HTTP 500 boom/u);
     expect(a.questions[1]!.answers["qwen3.5:9b"]!.error).toBeNull();
-    expect(a.questions.every((q) => /load failed/u.test(q.answers["qwen3.5:27b"]!.error!))).toBe(
+    expect(a.questions.every((q) => /load failed/u.test(q.answers["qwen3.8:27b"]!.error!))).toBe(
       true,
     );
 
     fake.failChat = null;
     fake.failLoad = null;
     fake.calls = [];
-    await replay(a, ["qwen3.5:9b", "qwen3.5:27b"], deps);
+    await replay(a, ["qwen3.5:9b", "qwen3.8:27b"], deps);
     expect(fake.calls.filter((c) => c.path === "/api/chat")).toHaveLength(1 + 3);
     expect(a.questions.every((q) => Object.values(q.answers).every((x) => !x.error))).toBe(true);
   });
@@ -467,7 +467,7 @@ describe("bamboo-eval CLI (dry run end to end)", () => {
                   { accuracy: v.source === GEMINI ? 5 : 3, naturalness: 4 },
                 ]),
               ),
-              preferred: labelOf(qi, "qwen3.5:27b"),
+              preferred: labelOf(qi, "qwen3.8:27b"),
             },
           ]),
         ),
@@ -488,7 +488,7 @@ describe("bamboo-eval CLI (dry run end to end)", () => {
     const sc = await runEval(["score", "--out", dir], deps);
     expect(sc.code).toBe(0);
     expect(sc.out).toMatch(/gemini\s+5\.00\s+4\.00\s+0%/u);
-    expect(sc.out).toMatch(/qwen3\.5:27b\s+3\.00\s+4\.00\s+100%/u);
+    expect(sc.out).toMatch(/qwen3\.8:27b\s+3\.00\s+4\.00\s+100%/u);
 
     // build rewrites the same page (labels are seeded).
     const b = await runEval(["build", "--out", dir], deps);

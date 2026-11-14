@@ -104,9 +104,11 @@ does too (DESIGN §8.3).
 Bamboo shares that Mac's Ollama and never changes its settings or pulls models: the host owns
 those, along with the memory budget. What Bamboo needs from it: the worker's text model
 (`OLLAMA_TEXT_MODEL`, `qwen3.5:9b`, ~7–8GB while loaded, briefly per extraction job) and
-OpenClaw's reply model for the `bamboo` agent (`agent.model`, default `ollama/qwen3.5:27b`,
-the same one PandaBase's agent uses). Change either with the host's memory budget in mind:
-Ollama keeps one model loaded, so a worker job evicts the reply model for a while. From your own account, `ssh agent`, then:
+OpenClaw's reply model for the `bamboo` agent (`agent.model`, default `ollama/qwen3.8:27b`,
+~18GB, 32k context in OpenClaw, the same one every OpenClaw agent on the Mac uses). Change either
+with the host's memory budget in mind: Ollama keeps one model loaded (`OLLAMA_MAX_LOADED_MODELS=1`
+on the 32GB Mac), so a worker job evicts the reply model for a while and they swap rather than
+coexist. From your own account, `ssh agent`, then:
 
 ```
 git clone https://github.com/willchan/bamboo.git ~/Code/bamboo && cd ~/Code/bamboo
@@ -145,7 +147,7 @@ Is a local model a good enough Mandarin tutor? (docs/ROADMAP.md › Tutor; DESIG
 
 ```
 make tutor-eval ARGS="run --seed <any word>"     # sample ~20 questions, replay through qwen3.5:9b
-                                                  # then qwen3.5:27b, one at a time: ~20–45 min
+                                                  # then qwen3.8:27b, one at a time: ~20–45 min
 make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(tailscale ip -4)"
 make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
 ```
@@ -154,5 +156,5 @@ make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
 rates every answer 1–5 for accuracy and naturalness, marks the one he prefers, and taps **Save to
 Mac** (ratings survive reloads; **Export** downloads the JSON instead, to put in the run directory
 as `results.json`). Answers are labeled A, B, C… with no model names; the key is `key.json` in the
-run directory. Add the 4B with `--models qwen3.5:4b,qwen3.5:9b,qwen3.5:27b`; an interrupted run
+run directory. Add the 4B with `--models qwen3.5:4b,qwen3.5:9b,qwen3.8:27b`; an interrupted run
 resumes with `run --out <run dir>`. Everything stays in `~/bamboo-eval/`, never the checkout.

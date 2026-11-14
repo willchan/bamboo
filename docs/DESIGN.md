@@ -576,7 +576,8 @@ hence the agent:
 
 - `agents.entries.bamboo`: `thinkingDefault: "off"`, `skills: ["bamboo"]`, workspace
   `~/.openclaw/workspace-bamboo`, model from `agent.model` in `bamboo.config.json` (default
-  `ollama/qwen3.5:27b`; used only when the agent is first added, never changed after);
+  `ollama/qwen3.8:27b`, was `qwen3.5:27b` until 2026-11, §10 #68; used only when the agent is
+  first added, never changed after: the host sets the model of an existing agent);
 - **instructions inline**: with thinking off, the model doesn't open `SKILL.md` on its own and
   guessed wrong flags; with the skill's body in the workspace `AGENTS.md` it picked the right
   command for a link, a PDF, pasted text and chit-chat every time. That `AGENTS.md` is
@@ -912,8 +913,10 @@ can't reach it; like the worker it calls only the local Ollama.
 1. **Sample.** `GET /api/agent/eval/turns` with the agent token from `~/.config/bamboo/agent.env`
    (read like `bamboo-tools`; no new secret): ~20 questions and Gemini's answers, spread across
    imports, image-only turns skipped, deterministic for `--seed` and the same data.
-2. **Replay.** Each question goes to each model (default `qwen3.5:9b`, `qwen3.5:27b`;
-   `--models` overrides) through `POST /api/chat`, non-streaming, `think: false` (`--think`), model
+2. **Replay.** Each question goes to each model (default `qwen3.5:9b`, `qwen3.8:27b`;
+   `--models` overrides) through `POST /api/chat`, non-streaming, `think: false` (`--think`
+   sends `true`; qwen3.8 takes thinking levels `false`/`low`/`medium`/`xhigh`, so a thinking run
+   of it would need a level flag, not built), model
    default sampling, `num_ctx` 8192. The system prompt's only copy is in docs/PROMPTS.md › *Tutor
    evaluation* (between markers); each run records its hash. The user message is the question as
    asked. Models run **one at a time**: a warm-up load (timed apart), every question, then unload
@@ -951,10 +954,11 @@ make tutor-eval ARGS="serve --out ~/bamboo-eval/<run id> --host $(tailscale ip -
 make tutor-eval ARGS="score --out ~/bamboo-eval/<run id>"
 ```
 
-`--models qwen3.5:4b,qwen3.5:9b,qwen3.5:27b` adds the 4B; `--limit`, `--ollama-url` and
+`--models qwen3.5:4b,qwen3.5:9b,qwen3.8:27b` adds the 4B; `--limit`, `--ollama-url` and
 `--fixture <turns.json>` (a synthetic sample, no engine call: a dry run) are also accepted.
-Runtime is dominated by the 27B: roughly 30–90 s per answer on the 32 GB Mac (9B: 10–30 s),
-plus a minute or two per model load.
+Runtime is dominated by the 27B: roughly 30–90 s per answer on the 32 GB Mac (measured with
+`qwen3.5:27b`; 9B: 10–30 s), plus a minute or two per model load. The 2026-11-06 outcome above
+compared `qwen3.5:9b` and `qwen3.5:27b`.
 
 ## 6. Web UI (PWA)
 
@@ -1395,6 +1399,7 @@ bamboo/
 | 65 | Re-run old turns with the current prompt (§4.6.1), on Will's tap, as `reextract` jobs that never count as asking again, never touch their import, and wait behind ordinary jobs | Read-only prod counts (2026-11-13): all but 6 of 125 turns were read by `extract_turn.v1`, which took ~4.6 items per "how do I say" turn and gave about half no sentence; the #64 budget then expired 154 phrases at once, so 17 of 54 such questions had nothing left, while single-character fragments of Gemini's example sentences reached rounds. Re-running beats tuning v1's leftovers: v3 already asks for the sentence and fewer terms. Dating new phrases to the turn keeps decay and the budget honest; not bumping keeps `asked_count` meaning "Will asked"; leaving dropped phrases dropped respects his choice. A tap, not automatic on every prompt bump, because each re-run spends Mac model time and visibly reshuffles Up next; ordering keeps a new import's Discord reply from waiting behind the backlog |
 | 66 | A sentence weighs like a frame (`kindWeight.sentence` 2, was 1), and length costs points only past `phrase.longChars` (20, was 12) | Read-only prod counts (2026-11-13, in memory): sentences had already lost almost nothing to the frequency signal (−0.05 on average; frames +0.46, terms −0.34), but the length penalty cost them about 2 points on average, while every sentence was from a "how do I say" turn, the very thing Will asked for. Under the old weights only 5 of 14 sentences ranked inside the 105-phrase budget (median rank 162 of 294). With these, 9 of 14 do (median 36), and the 5 left out are the long, formal ones (26–44 characters), which should sink. 20 is the existing `long` flag, so "long" means one thing |
 | 67 | A say turn without a sentence gets the shortest example of its kept terms as its sentence (`from_example`), at extraction and, once, by the daily cron for stored results | After the #65 re-run (prod counts, 2026-11-13), the local model returned a sentence for 5 of 47 say turns and exceeded the 2-term cap on many; prompting harder is unreliable with a small local model. The examples are verbatim from Gemini's reply and contain the term, and their English came with them, so promoting one stores no LLM-written Chinese. 42 of the 42 sentence-less say turns had such an example. Shortest, because Gemini's first suggestion is often the long, formal one. A cron backfill rather than another re-run: the stored results already hold the examples, so no model time is spent; existence in any status makes it idempotent and respects Will's drops |
+| 68 | OpenClaw's reply model is `qwen3.8:27b` (was `qwen3.5:27b`): `agent.model`'s default and the tutor eval's default 27B. The worker stays on `qwen3.5:9b` | The host moved every OpenClaw agent on the Mac to `qwen3.8:27b` (~18GB; tools, vision, thinking; Ollama 0.32.12+), so Bamboo's defaults follow it. On the 32GB Mac with one loaded model, the 27B and the 9B still swap rather than coexist. Measurements and the 2026-11-06 eval above were taken with `qwen3.5:27b` and stay as recorded. qwen3.8 takes thinking levels (`false`/`low`/`medium`/`xhigh`); the bamboo agent's `thinkingDefault` stays `off`, and `bamboo-eval --think` (boolean) isn't adapted to levels |
 
 ## Appendix A — Synthetic fixtures
 

@@ -121,10 +121,13 @@ export const sharedConfig = {
     defaultSeed: "bamboo",
     maxSeedChars: 100,
     /** Replayed one at a time, in this order. */
-    defaultModels: ["qwen3.5:9b", "qwen3.5:27b"],
+    defaultModels: ["qwen3.5:9b", "qwen3.8:27b"],
     /** Keep the model loaded between questions; it's unloaded (`keep_alive: 0`) after its last. */
     keepAlive: "10m",
-    /** Thinking off by default (as the worker); `--think` turns it on. Sampling: model defaults. */
+    /**
+     * Thinking off by default (as the worker); `--think` sends `think: true`. qwen3.8 takes levels
+     * (false/low/medium/xhigh), not just true/false (DESIGN §5.4). Sampling: model defaults.
+     */
     think: false,
     /** Same as the worker's, so the 9B isn't reloaded for a different context size. */
     numCtx: 8192,

@@ -379,7 +379,7 @@ describe("agent/install.sh: the bamboo agent, and agent/check.sh", () => {
     const c = cfg();
     expect(c.agents?.defaults?.systemAgent?.agentId).toBe("main");
     expect(c.agents?.entries?.bamboo).toMatchObject({
-      model: "ollama/qwen3.5:27b",
+      model: "ollama/qwen3.8:27b",
       thinkingDefault: "off",
       skills: ["bamboo"],
     });
