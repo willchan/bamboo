@@ -417,6 +417,16 @@ describe("agent/install.sh and agent/check.sh: the agent the host binds to #bamb
     expect(automations().map((a) => a.agentId)).toEqual(["other", "other"]);
   });
 
+  // Regression: with several agents, `openclaw skills check` refuses to run without --agent.
+  it("runs the skills check for the serving agent", () => {
+    setUp();
+    install();
+    const checks = calls()
+      .split("\n")
+      .filter((l) => l.startsWith("skills check"));
+    expect(checks.at(-1)).toBe("skills check --agent willchan");
+  });
+
   it("follows main's wildcard; fails with no binding, and the jobs fall back to main", () => {
     setUp();
     patchCfg((c) => {

@@ -21,7 +21,7 @@
 #     bindings; DESIGN §10 #69);
 #  7. once BAMBOO_AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
 #     and bamboo-nudge (no model call), announcing to #bamboo;
-#  8. openclaw skills check, then agent/check.sh (make agent-check).
+#  8. openclaw skills check (for the agent that serves #bamboo), then agent/check.sh (make agent-check).
 #
 #   DRY_RUN=1            print what would change, change nothing
 #   SKIP_PNPM_INSTALL=1  skip step 1 (tests)
@@ -274,9 +274,10 @@ fi
 
 # 8. Report
 if [ "$DRY_RUN" = 1 ]; then
-  info "[dry-run] would run: openclaw skills check"
+  info "[dry-run] would run: openclaw skills check --agent ${serving:-main}"
 else
-  openclaw skills check || warn "openclaw skills check reported problems (see above)"
+  # --agent: with several agents, the check has no default owner and refuses to run.
+  openclaw skills check --agent "${serving:-main}" || warn "openclaw skills check reported problems (see above)"
   "$ROOT/agent/check.sh" || warn "make agent-check reported problems (see above)"
 fi
 info "New OpenClaw sessions pick the skill up; existing ones keep their snapshot."
