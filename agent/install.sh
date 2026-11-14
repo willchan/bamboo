@@ -221,7 +221,7 @@ if [ -n "$channel_id" ] && [ -n "$guild_id" ]; then
 fi
 
 # 6. The agent that serves #bamboo (DESIGN §5.1, §10 #69). The host binds it (the Mac's runbook:
-# on Will's Mac, `willchan`); Bamboo only reads which one it is, for the automations below.
+# on Will's Mac, a dedicated `bamboo` agent); Bamboo only reads which one it is, for the automations below.
 # shellcheck source=agent/openclaw-agent.sh
 . "$ROOT/agent/openclaw-agent.sh"
 serving=""

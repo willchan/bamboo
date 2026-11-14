@@ -97,7 +97,7 @@ Lessons from live runs (November 2026). Ask before anything that changes product
 - **Shared with PandaBase:** the OpenClaw gateway and Ollama. Ollama's settings, models and memory
   budget belong to the host's runbook, not to Bamboo: don't change them from here. New
   automations need `--agent` (the installer passes the agent the host binds `#bamboo` to, on
-  the Mac `willchan`). Routing and agents are the host's too: Bamboo never adds an agent or
+  the Mac a dedicated `bamboo` agent). Routing and agents are the host's too: Bamboo never adds an agent or
   changes `bindings` (DESIGN §10 #69).
 - **"ok" isn't proof.** An automation can finish "ok" without doing its work. Check the run
   (`openclaw automations runs <id> --json`) and the output it should have produced.
