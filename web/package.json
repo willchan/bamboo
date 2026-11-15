@@ -14,6 +14,7 @@
     "dev:seeded": "tsx scripts/dev-server.ts --mode seeded",
     "dev:prod-copy": "tsx scripts/dev-server.ts --mode prod-copy",
     "shot": "tsx scripts/shot.ts",
+    "repinyin": "tsx scripts/repinyin.ts",
     "seed": "tsx scripts/seed.ts",
     "smoke": "tsx scripts/smoke.ts"
   },

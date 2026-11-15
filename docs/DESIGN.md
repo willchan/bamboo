@@ -269,6 +269,9 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
   得 after a subject or adverb (我/你/们/还/就…) before a verb → `děi`; 长 before 大/高/胖/牙/得…
   → `zhǎng`. Words that keep `dé` (得到, 获得, 值得, 不得不) are excluded. Will's overrides fix the
   rest. Extend the table when a misreading turns up.
+- **Stored pinyin follows the code.** Whenever `computePinyin` changes (a rule, a dictionary or
+  the library), the build's `repinyin` step (§8.2) rewrites stored phrase pinyin that now
+  differs. Overrides are kept, since the hanzi didn't change.
 - Computed for the phrase (stored) **and** each example (computed at read time, not stored).
   Recomputed whenever hanzi changes. If an override exists and the new hanzi differs, the
   override is dropped and the UI says so. Overrides store only the changed syllables (`null`
@@ -1115,8 +1118,10 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 - **Turso**: two databases, `bamboo` (prod) and `bamboo-preview`. Vercel env vars are scoped
   per environment; previews get their own `AUTH_SECRET` and machine tokens.
 - **Migrations**: the Vercel build command (`web/vercel.json`) is
-  `pnpm --dir .. db:migrate && pnpm build`, i.e. `pnpm db:migrate && pnpm --filter web build`
-  from the repo root, run against whichever DB that environment points at. On Vercel,
+  `pnpm --dir .. db:migrate && pnpm repinyin && pnpm build`, i.e. `pnpm db:migrate`, then
+  `pnpm --filter web repinyin` (recompute stored phrase pinyin when `computePinyin` changed, §4.2;
+  idempotent, prints a count), then `pnpm --filter web build` from the repo root, run against
+  whichever DB that environment points at. On Vercel,
   `db:migrate` fails the build if `TURSO_DATABASE_URL` is missing or local, or
   `TURSO_AUTH_TOKEN` is missing, so a misconfigured environment never deploys. Migrations must be **expand → contract**:
   add freely; drop or rename only in a later PR once no deployed code uses the column.
@@ -1371,7 +1376,7 @@ bamboo/
 | 20 | Read share links through Gemini's share RPC over plain HTTPS, not headless Chromium (M0) | The page HTML has no conversation; the RPC returns it whole (prompts verbatim, checklist data the DOM hides) in ~1 s with no browser on the Mac; both are undocumented, and the PDF path covers breakage |
 | 21 | Image-only prompts are keyed on the reply (§4.5) | Found in M0: an empty prompt would collide with every other empty prompt; the reply is the only stable text the turn has |
 | 22 | FSRS-7 through ts-fsrs 6's `DefaultScheduler`, with `allowModelOverride: false` | No history to migrate, so start on the library's current model; the explicit 1m/10m learning steps keep Again-within-a-round predictable. The model is in `config.fsrs.version`, and `review_log.fsrs_log` keeps what a later replay needs |
-| 23 | pinyin-pro plus a small table of context rules (得, 长) | pinyin-pro alone misreads the most common household polyphones; a rule table is cheap, tested, and Will's overrides remain the final word |
+| 23 | pinyin-pro plus a small table of context rules (得, 长, 只), re-applied to stored phrases on each deploy | pinyin-pro alone misreads the most common household polyphones; a rule table is cheap, tested, and Will's overrides remain the final word |
 | 24 | Turning a card type off suspends the card | Deleting it would drop its review history; suspending keeps `review_log` append-only and makes the toggle reversible |
 | 25 | A finished round meets the daily goal even if more is due; "Another round" stays optional | The daily unit is one round (PRD §3.4); showing "✓ Done" with an optional extra matches the habit model |
 | 26 | A frame's slot (`…`) matches anything in the verbatim check (§4.6) | Gemini writes the full sentence ("阿姨，您是说要加水吗？") more often than the frame itself; a plain substring check would drop every reusable frame, the item kind the ranking values most. Each fixed part must still be copied, in order |

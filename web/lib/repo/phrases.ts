@@ -324,3 +324,22 @@ export async function allTags(db: Db): Promise<string[]> {
   const rows = await db.select({ tags: phrase.tags }).from(phrase);
   return [...new Set(rows.flatMap((r) => r.tags))].sort();
 }
+
+/**
+ * Recompute stored phrase pinyin from the hanzi and rewrite the rows whose reading changed (a
+ * context rule was added or fixed, DESIGN §4.2). Overrides line up with unchanged hanzi, so they
+ * stay. Idempotent: the Vercel build runs it after migrations. Returns how many rows changed.
+ */
+export async function recomputeStoredPinyin(db: Db): Promise<number> {
+  const rows = await db
+    .select({ id: phrase.id, hanzi: phrase.hanzi, pinyin: phrase.pinyin })
+    .from(phrase);
+  const updates = rows.flatMap((r) => {
+    const computed = computePinyin(r.hanzi);
+    return JSON.stringify(computed) === JSON.stringify(r.pinyin)
+      ? []
+      : [db.update(phrase).set({ pinyin: computed }).where(eq(phrase.id, r.id))];
+  });
+  await runBatch(db, updates);
+  return updates.length;
+}

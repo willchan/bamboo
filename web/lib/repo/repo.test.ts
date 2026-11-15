@@ -13,6 +13,7 @@ import {
   listQueue,
   phraseRows,
   pinPhrase,
+  recomputeStoredPinyin,
   restorePhrase,
   updatePhrase,
 } from "./phrases";
@@ -192,6 +193,30 @@ describe("phrases", () => {
       [rows.phrase.id, 1],
       [manual, 2],
     ]);
+  });
+});
+
+describe("recomputeStoredPinyin", () => {
+  it("rewrites only rows whose computed pinyin changed, keeping overrides", async () => {
+    const stale = await add({ hanzi: "只要你高兴" });
+    const fine = await add({ hanzi: "泡打粉" });
+    // As saved by an older computePinyin, with an override on another syllable.
+    const old = (await getPhrase(db, stale))!.pinyin.map(
+      ([c, s]) => [c, c === "只" ? "zhī" : s] as [string, string | null],
+    );
+    const override = old.map(([c]) => [c, c === "兴" ? "xing" : null] as [string, string | null]);
+    await db
+      .update(phrase)
+      .set({ pinyin: old, pinyinOverride: override })
+      .where(eq(phrase.id, stale));
+    const fineBefore = (await getPhrase(db, fine))!.updatedAt;
+
+    expect(await recomputeStoredPinyin(db)).toBe(1);
+    const p = (await getPhrase(db, stale))!;
+    expect(p.pinyin.find(([c]) => c === "只")?.[1]).toBe("zhǐ");
+    expect(p.pinyinOverride).toEqual(override);
+    expect((await getPhrase(db, fine))!.updatedAt).toBe(fineBefore);
+    expect(await recomputeStoredPinyin(db)).toBe(0);
   });
 });
 
