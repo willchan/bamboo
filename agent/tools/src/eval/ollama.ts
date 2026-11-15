@@ -84,12 +84,26 @@ export class TutorOllama {
     return { num_ctx: (P[model] ?? P.default!).numCtx };
   }
 
+  /**
+   * The host's `keep_alive` for a model it keeps loaded (`worker.modelParams`), else the eval's
+   * own: the last request's value wins, so a shorter one would unload OpenClaw's model early.
+   */
+  private keepAlive(model: string): string {
+    return P[model]?.keepAlive ?? E.keepAlive;
+  }
+
   /** Load `model` (an empty generate), so answers are timed without the load. */
   async load(model: string): Promise<void> {
     await this.call(
       "POST",
       "/api/generate",
-      { model, prompt: "", stream: false, keep_alive: E.keepAlive, options: this.options(model) },
+      {
+        model,
+        prompt: "",
+        stream: false,
+        keep_alive: this.keepAlive(model),
+        options: this.options(model),
+      },
       this.opts.loadTimeoutMs ?? E.loadTimeoutSeconds * 1000,
     );
   }
@@ -110,7 +124,7 @@ export class TutorOllama {
         ],
         stream: false,
         think: this.opts.think ?? E.think,
-        keep_alive: E.keepAlive,
+        keep_alive: this.keepAlive(model),
         options: this.options(model),
       },
       this.opts.answerTimeoutMs ?? E.answerTimeoutSeconds * 1000,

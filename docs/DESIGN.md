@@ -57,8 +57,8 @@ PandaBase already runs on this Mac (its DESIGN §1.2). Its host settings
 - Default model **`qwen3.8:27b`** (was `qwen3.5:9b` until 2026-11, §10 #70), the model the host
   keeps loaded for every OpenClaw agent, so an extraction job uses the loaded model instead of
   swapping it out. It is configurable via `OLLAMA_TEXT_MODEL`. Qwen is strong at Chinese, and the
-  task is copy, classify and rate, not writing Chinese. Swaps stop only once PandaBase's vision
-  jobs also leave the 9B; that's PandaBase's and the host's call.
+  task is copy, classify and rate, not writing Chinese. PandaBase's worker is on the same model
+  (its DESIGN §10 #70), so nothing on the Mac swaps it out.
 - Requests: `think: false`, `temperature: 0`, `format` set to the JSON schema of the result
   contract, and `num_ctx` / `keep_alive` per model (`worker.modelParams`), the same as the host
   gives OpenClaw for that model: `qwen3.8:27b` 32768 / `"30m"`, `qwen3.5:9b` 8192 / `"2m"`. The
@@ -931,7 +931,8 @@ can't reach it; like the worker it calls only the local Ollama.
    evaluation* (between markers); each run records its hash. The user message is the question as
    asked. Models run **one at a time**: a warm-up load (timed apart), every question, then unload
    with `keep_alive: 0`, except a model that was already loaded when the run began (PandaClaw's
-   27B), which is left loaded. An unpulled model stops the run before anything loads; a failed
+   27B), which is left loaded. Every request for a model in `worker.modelParams` sends the host's
+   `keep_alive` (`30m` for the 27B; §10 #72), others `tutorEval.keepAlive` (10m). An unpulled model stops the run before anything loads; a failed
    load or answer is recorded and the run goes on. Per answer: latency (ms), `eval_count`,
    tokens/s (`eval_count / eval_duration`) and any error. `answers.json` is rewritten after each
    answer; re-running with the same `--out` retries only missing or failed answers.
@@ -1142,7 +1143,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   `make mac-update` as `openclaw-agent`. Development sessions in Will's own account can run
   `bamboo-tools segment` (no API calls), but never install anything for the gateway.
 - Prereqs: `brew install poppler` (for `pdftotext`, at `/opt/homebrew/bin`), Node 24, pnpm, and
-  Ollama with `qwen3.5:9b` pulled (already there for PandaBase). No browser: share links are read
+  Ollama with `qwen3.8:27b` pulled (the host's one model). No browser: share links are read
   over HTTPS (§5.2). The `bamboo-tools` wrapper puts `/opt/homebrew/bin` on its PATH, since
   OpenClaw's command automations run `sh -lc` with whatever PATH the gateway has.
 - **Worker**: everything below runs as `openclaw-agent`, from its own checkout (`~/Code/bamboo`).
@@ -1191,7 +1192,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   binding it warns.
 - **Automations** (`bamboo-replies`, `bamboo-nudge`) are added or edited with `--agent` set to
   that serving agent (`main` if none; `OPENCLAW_AGENT` overrides), so a re-run never moves the
-  host's jobs: it used to pass `main`, which would have moved them off `willchan`.
+  host's jobs: it used to pass `main`, which would have moved them off the serving agent.
 - `make agent-check` (`agent/check.sh`, read-only, exits 1 on a ✗): ✗ `#bamboo` isn't bound to
   an agent, that agent has no config entry, or its `skills` allowlist leaves out `bamboo`; ⚠ its
   `thinkingDefault` (or the defaults') isn't `off`, its workspace `AGENTS.md` lacks lines of
@@ -1408,9 +1409,10 @@ bamboo/
 | 66 | A sentence weighs like a frame (`kindWeight.sentence` 2, was 1), and length costs points only past `phrase.longChars` (20, was 12) | Read-only prod counts (2026-11-13, in memory): sentences had already lost almost nothing to the frequency signal (−0.05 on average; frames +0.46, terms −0.34), but the length penalty cost them about 2 points on average, while every sentence was from a "how do I say" turn, the very thing Will asked for. Under the old weights only 5 of 14 sentences ranked inside the 105-phrase budget (median rank 162 of 294). With these, 9 of 14 do (median 36), and the 5 left out are the long, formal ones (26–44 characters), which should sink. 20 is the existing `long` flag, so "long" means one thing |
 | 67 | A say turn without a sentence gets the shortest example of its kept terms as its sentence (`from_example`), at extraction and, once, by the daily cron for stored results | After the #65 re-run (prod counts, 2026-11-13), the local model returned a sentence for 5 of 47 say turns and exceeded the 2-term cap on many; prompting harder is unreliable with a small local model. The examples are verbatim from Gemini's reply and contain the term, and their English came with them, so promoting one stores no LLM-written Chinese. 42 of the 42 sentence-less say turns had such an example. Shortest, because Gemini's first suggestion is often the long, formal one. A cron backfill rather than another re-run: the stored results already hold the examples, so no model time is spent; existence in any status makes it idempotent and respects Will's drops |
 | 68 | OpenClaw's reply model is `qwen3.8:27b` (was `qwen3.5:27b`): the tutor eval's default 27B (and, until #69, `agent.model`'s default). The worker stays on `qwen3.5:9b` | The host moved every OpenClaw agent on the Mac to `qwen3.8:27b` (~18GB; tools, vision, thinking; Ollama 0.32.12+), so Bamboo's defaults follow it. On the 32GB Mac with one loaded model, the 27B and the 9B still swap rather than coexist. Measurements and the 2026-11-06 eval above were taken with `qwen3.5:27b` and stay as recorded. qwen3.8 takes thinking levels (`false`/`low`/`medium`/`xhigh`); the serving agent's `thinkingDefault` should stay `off` (§5.1), and `bamboo-eval --think` (boolean) isn't adapted to levels |
-| 69 | The host binds `#bamboo` to an agent (on the Mac, `willchan`); `make agent-install` no longer adds a `bamboo` agent, writes its `AGENTS.md` or merges a binding, and drops `agent.model`. It only reads the serving agent and puts the automations on it. `make agent-check` fails on a missing binding, agent or skill access, and warns on thinking, a stale inline copy of `SKILL.md` in the agent's `AGENTS.md`, or automations on another agent | The host's rollout (2026-11-12) replaced the `bamboo` agent with Will's personal `willchan` agent, which also serves `#bamboo`. The old installer would have re-added `bamboo`, put its binding ahead of willchan's and moved the automations back to `main`, undoing that rollout on every `make mac-update`. Routing and agent settings are the host's, like Ollama's; Bamboo keeps the checks that matter for intake (§5.1: thinking off, the instructions inline) as reports. Later that day the host moved `#bamboo` from `willchan` to a dedicated `bamboo` agent of its own (§5.1); nothing in Bamboo changed for it |
+| 69 | The host binds `#bamboo` to an agent (on the Mac, `willchan` at first; a dedicated `bamboo` agent since 2026-11-14, §5.1); `make agent-install` no longer adds a `bamboo` agent, writes its `AGENTS.md` or merges a binding, and drops `agent.model`. It only reads the serving agent and puts the automations on it. `make agent-check` fails on a missing binding, agent or skill access, and warns on thinking, a stale inline copy of `SKILL.md` in the agent's `AGENTS.md`, or automations on another agent | The host's rollout (2026-11-12) replaced the `bamboo` agent with Will's personal `willchan` agent, which also serves `#bamboo`. The old installer would have re-added `bamboo`, put its binding ahead of willchan's and moved the automations back to `main`, undoing that rollout on every `make mac-update`. Routing and agent settings are the host's, like Ollama's; Bamboo keeps the checks that matter for intake (§5.1: thinking off, the instructions inline) as reports. Later that day the host moved `#bamboo` from `willchan` to a dedicated `bamboo` agent of its own (§5.1); nothing in Bamboo changed for it |
 | 70 | The worker extracts with `qwen3.8:27b` (was `qwen3.5:9b`), with `num_ctx` and `keep_alive` per model matching the host's OpenClaw settings (`worker.modelParams`) | With one loaded model, every 9B job evicted the shared reply model, so the next Discord reply cold-loaded. Background jobs can be slower. On the 8 synthetic fixture turns (`test:ollama`, `extract_turn.v3`, 2026-11-14) the 27B was better: 8/8 valid either way, turn kind 8/8 vs 6/8, items verbatim 14/14 vs 11/12, examples verbatim 7/7 vs 8/10, model time 78 s vs 42 s. Matching `num_ctx` matters because the request that loads a model sets its context for everyone (a job that loaded the 27B at 8k left OpenClaw at 8k); matching `keep_alive` keeps a job from unloading it early. With the 32k settings: 8/8 valid, turn kind 8/8, items 15/15, examples 8/8, model time 56 s. Removing the 9B entirely waits on PandaBase's vision jobs |
 | 71 | `bamboo-eval`'s default models are `qwen3.8:27b` alone (was `qwen3.5:9b`, `qwen3.5:27b`, then `qwen3.5:9b`, `qwen3.8:27b`) | Every caller on the Mac (OpenClaw, Bamboo's worker, PandaBase's worker) is on `qwen3.8:27b` as of 2026-11-14, so the 9B and 4B can be removed; a default that names an unpulled model stops the run. The 9B lost both tutor evaluations, so it isn't a candidate worth a default. Other models are compared with `--models` |
+| 72 | `bamboo-eval` sends the host's `keep_alive` (`worker.modelParams`) for the shared 27B, and its own 10m only for models it compares | The last request's `keep_alive` wins and the eval leaves an already-loaded 27B loaded, so its 10m would have cut OpenClaw's reply model to 10 min of residency after a run (pandaden *Memory budget*: every client sends 30m) |
 
 ## Appendix A — Synthetic fixtures
 

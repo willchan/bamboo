@@ -336,6 +336,13 @@ describe("replay", () => {
       log: (l) => log.push(l),
     });
     expect(fake.calls.some((c) => c.body?.keep_alive === 0)).toBe(false);
+    // The shared model stays loaded, so it must keep the host's keep_alive: the last request's
+    // value wins, and a shorter one would unload OpenClaw's reply model early.
+    const sent = fake.calls
+      .filter((c) => c.body?.model === "qwen3.8:27b")
+      .map((c) => c.body!.keep_alive);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(new Set(sent)).toEqual(new Set(["30m"]));
     expect(log.at(-1)).toMatch(/left loaded/u);
   });
 

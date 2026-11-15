@@ -135,7 +135,10 @@ export const sharedConfig = {
     /** Replayed one at a time, in this order. */
     /** The one model on the Mac (§10 #71); `--models` compares others, which must be pulled. */
     defaultModels: ["qwen3.8:27b"],
-    /** Keep the model loaded between questions; it's unloaded (`keep_alive: 0`) after its last. */
+    /**
+     * Keep a compared model loaded between questions; it's unloaded (`keep_alive: 0`) after its
+     * last. A model in `worker.modelParams` (the host's shared 27B) gets the host's value instead.
+     */
     keepAlive: "10m",
     /**
      * Thinking off by default (as the worker); `--think` sends `think: true`. qwen3.8 takes levels
