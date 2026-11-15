@@ -593,16 +593,18 @@ Bamboo never adds an agent or changes `bindings`. What Bamboo needs from that ag
   time. The host's `AGENTS.md` has its own `#bamboo` section heading and scope; the check is that
   every non-blank line of `SKILL.md` after its title and `Scope:` paragraph is in that file
   (`missingInstructions`, `agent/tools/src/openclaw/agent.ts`), so a `SKILL.md` change shows up
-  as a ⚠ until the host copies it. `SKILL.md` stays the one source of truth, and still serves the
+  as a ⚠ until it's in step. For a dedicated agent, `make agent-install` writes that file itself
+(§8.3); a shared agent's host copies it. `SKILL.md` stays the one source of truth, and still serves the
   channel pin and the `description` the model matches.
 
 On Will's Mac (since 2026-11-14) that is a dedicated `bamboo` agent again, set up by the host:
 `qwen3.8:27b`, `thinkingDefault: "off"`, `skills: ["bamboo"]`, `tools.allow: ["exec", "write"]`
 (`write` only for a pasted answer's text file; bamboo-tools reads a PDF's path itself), and exec
 in allowlist mode with only `bamboo-tools` allowed (the `~/.local/bin` symlink and its target).
-Its workspace `AGENTS.md` is a short header plus the hand copy of `SKILL.md`; OpenClaw's
-generated `AGENTS.md` and `BOOTSTRAP.md` (an onboarding chat on the first message) were moved
-to `.orig/`. Briefly before that, `#bamboo` was served by Will's personal `willchan` agent.
+Its workspace files come from this repo (§8.3, §10 #73): `AGENTS.md` is
+`agent/workspace/AGENTS.header.md` plus `SKILL.md`'s instructions, and `SOUL.md`, `IDENTITY.md`
+and a starting `USER.md` are in `agent/workspace/`. OpenClaw's generated files and `BOOTSTRAP.md`
+(an onboarding chat on the first message) are in the workspace's `.orig/`. Briefly before that, `#bamboo` was served by Will's personal `willchan` agent.
 The `bamboo-replies` and `bamboo-nudge` automations run on the same agent (§8.3). The channel pin
 below applies to whatever agent serves the channel.
 
@@ -1188,8 +1190,14 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   entry already includes the pin).
 - **The serving agent** (§5.1, §10 #69): `make agent-install` only reads which agent the host
   binds `#bamboo` to (the first binding matching the channel, `routeFor`) and never adds an
-  agent, writes an `AGENTS.md` or changes `bindings` or the system agent. With no matching
-  binding it warns.
+  agent or changes `bindings` or the system agent. With no matching binding it warns.
+- **A dedicated agent's workspace files** (§10 #73): when the serving agent's `skills` allowlist
+  is exactly `["bamboo"]`, `make agent-install` writes its `AGENTS.md`
+  (`agent/workspace/AGENTS.header.md` + `SKILL.md` after its title and `Scope:` paragraph,
+  `agentsMd`), `SOUL.md` and `IDENTITY.md`, keeping a replaced file in `<workspace>/.orig/`,
+  and writes `USER.md` only over OpenClaw's placeholder (the agent records preferences there).
+  A shared agent's workspace (e.g. a personal agent that also serves `#bamboo`) is the host's,
+  and is left alone.
 - **Automations** (`bamboo-replies`, `bamboo-nudge`) are added or edited with `--agent` set to
   that serving agent (`main` if none; `OPENCLAW_AGENT` overrides), so a re-run never moves the
   host's jobs: it used to pass `main`, which would have moved them off the serving agent.
@@ -1203,7 +1211,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   the plist changed, and otherwise `launchctl kickstart -k`s the worker only if the pull brought
   new commits. `worker.env` is never touched. Then it runs `make agent-install` (a no-op when
   nothing changed), whose `agent-check` flags a pulled `SKILL.md` change the serving agent's
-  `AGENTS.md` doesn't have yet.
+  `AGENTS.md` doesn't have yet (a dedicated agent's is rewritten in the same run).
 
 ### 8.4 Private data
 
@@ -1413,6 +1421,7 @@ bamboo/
 | 70 | The worker extracts with `qwen3.8:27b` (was `qwen3.5:9b`), with `num_ctx` and `keep_alive` per model matching the host's OpenClaw settings (`worker.modelParams`) | With one loaded model, every 9B job evicted the shared reply model, so the next Discord reply cold-loaded. Background jobs can be slower. On the 8 synthetic fixture turns (`test:ollama`, `extract_turn.v3`, 2026-11-14) the 27B was better: 8/8 valid either way, turn kind 8/8 vs 6/8, items verbatim 14/14 vs 11/12, examples verbatim 7/7 vs 8/10, model time 78 s vs 42 s. Matching `num_ctx` matters because the request that loads a model sets its context for everyone (a job that loaded the 27B at 8k left OpenClaw at 8k); matching `keep_alive` keeps a job from unloading it early. With the 32k settings: 8/8 valid, turn kind 8/8, items 15/15, examples 8/8, model time 56 s. Removing the 9B entirely waits on PandaBase's vision jobs |
 | 71 | `bamboo-eval`'s default models are `qwen3.8:27b` alone (was `qwen3.5:9b`, `qwen3.5:27b`, then `qwen3.5:9b`, `qwen3.8:27b`) | Every caller on the Mac (OpenClaw, Bamboo's worker, PandaBase's worker) is on `qwen3.8:27b` as of 2026-11-14, so the 9B and 4B can be removed; a default that names an unpulled model stops the run. The 9B lost both tutor evaluations, so it isn't a candidate worth a default. Other models are compared with `--models` |
 | 72 | `bamboo-eval` sends the host's `keep_alive` (`worker.modelParams`) for the shared 27B, and its own 10m only for models it compares | The last request's `keep_alive` wins and the eval leaves an already-loaded 27B loaded, so its 10m would have cut OpenClaw's reply model to 10 min of residency after a run (pandaden *Memory budget*: every client sends 30m) |
+| 73 | Bamboo's dedicated agent gets its workspace files from this repo (`agent/workspace/`, written by `make agent-install`): `AGENTS.md` generated from a header plus `SKILL.md`, `SOUL.md` and `IDENTITY.md` replaced, `USER.md` only seeded. A shared agent's workspace stays the host's. Refines #69: the host still adds the agent, binds it and sets its tools and thinking | The hand copy of `SKILL.md` in `AGENTS.md` fell behind until someone re-copied it, and `agents add` left a personal assistant's generic `SOUL.md`, `USER.md` and `IDENTITY.md` ("have opinions", "search for it") on an intake bot (2026-11-14). What the agent says belongs with the app, like the skill; that it exists and what it can reach belong to the host. Same split as PandaBase's `agent/workspace/` |
 
 ## Appendix A — Synthetic fixtures
 

@@ -121,7 +121,9 @@ It installs dependencies, links `~/.local/bin/bamboo-tools`, creates
 `~/.config/bamboo/bamboo.config.json` and `~/.config/bamboo/agent.env` (only if missing), and
 adds `agent/skills` to OpenClaw's `skills.load.extraDirs` (backing up `openclaw.json` first). It
 also pins `#bamboo`'s channel entry to the bamboo skill (`skills`, `systemPrompt`, `tools.deny`;
-DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. It never adds an
+DESIGN §5.1), keeping its `enabled`, `requireMention` and `users` as they are. When that agent is Bamboo's own (`skills: ["bamboo"]`), it also writes its workspace
+`AGENTS.md` (from `SKILL.md`), `SOUL.md`, `IDENTITY.md` and a starting `USER.md` from
+`agent/workspace/` (old copies in the workspace's `.orig/`). It never adds an
 agent or changes `bindings`: the host binds `#bamboo` to an agent (on Will's Mac, a dedicated `bamboo` agent, per
 the Mac's runbook), and the automations run on that agent. It ends with `make agent-check`
 (read-only; run it on its own any time), which fails if `#bamboo` isn't bound or the agent can't

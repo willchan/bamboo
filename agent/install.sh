@@ -19,9 +19,14 @@
 #     other channel, changes); if the entry is missing, print the command for Will instead;
 #  6. find the agent the host binds #bamboo to (read-only: Bamboo never adds an agent or changes
 #     bindings; DESIGN §10 #69);
-#  7. once BAMBOO_AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
+#  7. if that agent is Bamboo's own (its skills allowlist is just ["bamboo"]), write its
+#     workspace files from agent/workspace/: AGENTS.md (AGENTS.header.md + SKILL.md's
+#     instructions), SOUL.md and IDENTITY.md are replaced, the old copy kept in
+#     <workspace>/.orig/; USER.md is written only over OpenClaw's placeholder. A shared agent's
+#     workspace is the host's and is left alone (DESIGN §10 #73);
+#  8. once BAMBOO_AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
 #     and bamboo-nudge (no model call), announcing to #bamboo;
-#  8. openclaw skills check (for the agent that serves #bamboo), then agent/check.sh (make agent-check).
+#  9. openclaw skills check (for the agent that serves #bamboo), then agent/check.sh (make agent-check).
 #
 #   DRY_RUN=1            print what would change, change nothing
 #   SKIP_PNPM_INSTALL=1  skip step 1 (tests)
@@ -235,7 +240,45 @@ if [ -n "$channel_id" ]; then
   fi
 fi
 
-# 7. Command automations (no model call), once the token is there.
+# 7. A dedicated agent's workspace files (DESIGN §8.3, §10 #73). OpenClaw's `agents add` writes a
+# personal assistant's generic files; Bamboo's agent needs its intake script and nothing else.
+if [ -n "$serving" ]; then
+  entry="$(cfg_get "agents.entries.$serving")"
+  if [ -z "$entry" ] || ! printf '%s' "$entry" | jq -e '.skills == ["bamboo"]' >/dev/null 2>&1; then
+    note "left the $serving agent's workspace files alone: it isn't Bamboo's own (skills [\"bamboo\"])"
+  else
+    [ -x "$SETUP_TSX" ] || die "missing $SETUP_TSX: run make agent-install without SKIP_PNPM_INSTALL"
+    ws="$(agent_workspace "$serving" "$entry")"
+    [ -d "$ws" ] || die "the $serving agent's workspace $ws doesn't exist (the host creates the agent)"
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    generated="$(mktemp)"
+    setup agents-md "$ROOT/agent/workspace/AGENTS.header.md" "$SKILL_FILE" >"$generated"
+    put() { # $1 file name, $2 source
+      if [ -f "$ws/$1" ] && cmp -s "$2" "$ws/$1"; then
+        note "kept $1 in $ws"
+        return 0
+      fi
+      if [ -f "$ws/$1" ]; then
+        run mkdir -p "$ws/.orig"
+        run cp -p "$ws/$1" "$ws/.orig/$1.$stamp"
+      fi
+      run cp "$2" "$ws/$1"
+      info "wrote $1 in $ws"
+    }
+    put AGENTS.md "$generated"
+    put SOUL.md "$ROOT/agent/workspace/SOUL.md"
+    put IDENTITY.md "$ROOT/agent/workspace/IDENTITY.md"
+    # USER.md is where the agent records preferences: seed it, never overwrite real directives.
+    if [ ! -f "$ws/USER.md" ] || grep -qF 'Replace the example below with a real directive' "$ws/USER.md"; then
+      put USER.md "$ROOT/agent/workspace/USER.md"
+    else
+      note "kept USER.md in $ws (it has directives)"
+    fi
+    rm -f "$generated"
+  fi
+fi
+
+# 8. Command automations (no model call), once the token is there.
 if ! grep -Eq '^BAMBOO_AGENT_API_TOKEN=.+' "$AGENT_ENV" 2>/dev/null; then
   warn "skipped the automations: BAMBOO_AGENT_API_TOKEN is empty in $AGENT_ENV (fill it in, then re-run)"
 elif [ -z "$channel_id" ]; then
@@ -272,7 +315,7 @@ else
   upsert bamboo-nudge "$nudge_cron" "$bin nudge"
 fi
 
-# 8. Report
+# 9. Report
 if [ "$DRY_RUN" = 1 ]; then
   info "[dry-run] would run: openclaw skills check --agent ${serving:-main}"
 else

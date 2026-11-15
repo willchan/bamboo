@@ -31,6 +31,22 @@ export function instructionLines(skill: string): string[] {
   return out;
 }
 
+/**
+ * A dedicated agent's AGENTS.md (DESIGN §8.3, §10 #73): agent/workspace/AGENTS.header.md (its own
+ * heading and scope), then the skill's body after its title and `Scope:` paragraph, unchanged, so
+ * `missingInstructions` finds nothing missing.
+ */
+export function agentsMd(header: string, skill: string): string {
+  const lines = skillBody(skill).replace(/\r\n/gu, "\n").split("\n");
+  const scope = lines.findIndex((l) => l.startsWith("Scope:"));
+  if (scope < 0) throw new Error("SKILL.md has no Scope: paragraph");
+  let end = scope;
+  while (end < lines.length && lines[end]!.trim() !== "") end++;
+  const rest = lines.slice(end).join("\n").trim();
+  if (rest === "") throw new Error("SKILL.md has no instructions after its Scope: paragraph");
+  return `${header.replace(/\r\n/gu, "\n").trimEnd()}\n\n${rest}\n`;
+}
+
 /** The skill's instruction lines that the AGENTS.md text doesn't have (empty: it's in step). */
 export function missingInstructions(skill: string, agentsMd: string): string[] {
   const have = new Set(

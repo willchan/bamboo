@@ -78,7 +78,7 @@ if [ -n "$agent" ]; then
         if [ -z "$missing" ]; then
           ok "$agents_md has SKILL.md's instructions"
         else
-          heads_up "$agents_md lacks $(printf '%s\n' "$missing" | wc -l | tr -d ' ') line(s) of SKILL.md's instructions; update its #bamboo section (host's runbook). First: $(printf '%s\n' "$missing" | head -n 1)"
+          heads_up "$agents_md lacks $(printf '%s\n' "$missing" | wc -l | tr -d ' ') line(s) of SKILL.md's instructions; run make agent-install (a dedicated agent) or update its #bamboo section (a shared agent). First: $(printf '%s\n' "$missing" | head -n 1)"
         fi
       else
         bad "can't compare $agents_md with $SKILL_FILE: $missing"
