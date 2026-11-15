@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { instructionLines, missingInstructions, routeFor, skillBody } from "./agent";
+import { agentsMd, instructionLines, missingInstructions, routeFor, skillBody } from "./agent";
 import { runSetup } from "./main";
 
 const SKILL = `---
@@ -126,5 +126,20 @@ describe("runSetup (the helper CLI install.sh and check.sh call)", () => {
       1,
     );
     expect(runSetup(["nope"], () => "").code).toBe(2);
+  });
+});
+
+describe("agentsMd", () => {
+  it("puts the header before the skill's instructions, so nothing is missing", () => {
+    const md = agentsMd("# AGENTS.md - demo\n\nOnly #demo.\n\n", SKILL);
+    expect(md.startsWith("# AGENTS.md - demo\n\nOnly #demo.\n\nRun `demo-tools")).toBe(true);
+    expect(md).not.toContain("Scope:");
+    expect(md).not.toContain("# Demo intake");
+    expect(md.endsWith("| x | y |\n")).toBe(true);
+    expect(missingInstructions(SKILL, md)).toEqual([]);
+  });
+
+  it("refuses a skill without a Scope: paragraph", () => {
+    expect(() => agentsMd("# h\n", "---\nname: x\n---\n\n# X\n\nDo things.\n")).toThrow(/Scope:/u);
   });
 });

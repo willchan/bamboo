@@ -471,6 +471,74 @@ describe("agent/install.sh and agent/check.sh: the agent the host binds to #bamb
     expect(check().out).toContain("thinkingDefault is 'OpenClaw default', not off");
   });
 
+  // Bug: `openclaw agents add` left Bamboo's dedicated agent on OpenClaw's generic SOUL.md,
+  // USER.md and IDENTITY.md ("have opinions", "search for it"), and its AGENTS.md was a hand copy
+  // of SKILL.md that fell behind until someone re-copied it.
+  describe("a dedicated agent's workspace files", () => {
+    const dws = () => join(oc(), "workspace-bamboo");
+    const dedicated = () => {
+      setUp();
+      patchCfg((c) => {
+        c.agents!.entries!.bamboo = { skills: ["bamboo"], thinkingDefault: "off" };
+        c.bindings = [{ ...HOST, agentId: "bamboo" }, MAIN_ALL];
+      });
+      mkdirSync(dws(), { recursive: true });
+      for (const f of ["AGENTS.md", "SOUL.md", "IDENTITY.md"])
+        writeFileSync(join(dws(), f), `# ${f} - generic\n\nHave opinions.\n`);
+      writeFileSync(
+        join(dws(), "USER.md"),
+        "Replace the example below with a real directive and a real observation date.\n",
+      );
+    };
+    const repoFile = (f: string) => readFileSync(join(repo, "agent/workspace", f), "utf8");
+
+    it("writes AGENTS.md from SKILL.md, replaces SOUL and IDENTITY, seeds USER, keeps old copies", () => {
+      dedicated();
+      const r = install();
+      expect(r.code, r.out).toBe(0);
+      const agentsMd = readFileSync(join(dws(), "AGENTS.md"), "utf8");
+      expect(agentsMd.startsWith(repoFile("AGENTS.header.md").trimEnd())).toBe(true);
+      expect(agentsMd).toContain("bamboo-tools import --url");
+      for (const f of ["SOUL.md", "IDENTITY.md", "USER.md"])
+        expect(readFileSync(join(dws(), f), "utf8")).toBe(repoFile(f));
+      const orig = readdirSync(join(dws(), ".orig")).sort();
+      expect(orig.map((f) => f.split(".md.")[0])).toEqual(["AGENTS", "IDENTITY", "SOUL", "USER"]);
+      expect(r.out).toContain("has SKILL.md's instructions");
+      expect(r.out).toContain("agent-check: ok");
+      // A second run changes nothing.
+      const again = install();
+      expect(again.out).toContain("kept AGENTS.md in");
+      expect(again.out).not.toMatch(/^wrote /mu);
+      expect(readdirSync(join(dws(), ".orig"))).toHaveLength(4);
+    });
+
+    it("keeps a USER.md that has directives", () => {
+      dedicated();
+      writeFileSync(join(dws(), "USER.md"), "- Always call the user Sam.\n");
+      const r = install();
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("kept USER.md in");
+      expect(readFileSync(join(dws(), "USER.md"), "utf8")).toBe("- Always call the user Sam.\n");
+    });
+
+    it("changes nothing in a dry run", () => {
+      dedicated();
+      install({ DRY_RUN: "1" });
+      expect(readFileSync(join(dws(), "SOUL.md"), "utf8")).toContain("generic");
+      expect(existsSync(join(dws(), ".orig"))).toBe(false);
+    });
+
+    it("leaves a shared agent's workspace to the host", () => {
+      setUp({ skills: ["bamboo", "browser-automation"] });
+      const before = readFileSync(join(ws(), "AGENTS.md"), "utf8");
+      const r = install();
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("left the willchan agent's workspace files alone");
+      expect(readFileSync(join(ws(), "AGENTS.md"), "utf8")).toBe(before);
+      expect(existsSync(join(ws(), "SOUL.md"))).toBe(false);
+    });
+  });
+
   it("skips the lookup without a channel id", () => {
     const r = install({ BAMBOO_DISCORD_CHANNEL_ID: "" });
     expect(r.code, r.out).toBe(0);
