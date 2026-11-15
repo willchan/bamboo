@@ -64,6 +64,28 @@ describe("computePinyin", () => {
     expect(at("宝宝在长牙", "长")).toBe("zhǎng");
     expect(at("她长得很像你", "长")).toBe("zhǎng");
     expect(at("她长得很像你", "得")).toBe("de");
+    // Grew by an amount: 长了 + a quantity, or a body measure that grows.
+    expect(at("宝宝的体重长了48克。", "长")).toBe("zhǎng");
+    expect(at("她长了两颗牙", "长")).toBe("zhǎng");
+    expect(at("个子长了一点", "长")).toBe("zhǎng");
+    expect(at("身高长了", "长")).toBe("zhǎng");
+    expect(at("头发长了", "长")).toBe("cháng");
+    expect(at("这条路很长了", "长")).toBe("cháng");
+  });
+
+  it("reads 只 by context: zhǐ (only) unless it's the measure word zhī", () => {
+    expect(at("宝宝只需要维生素D", "只")).toBe("zhǐ");
+    expect(at("只需要一点", "只")).toBe("zhǐ");
+    expect(at("我只想睡觉", "只")).toBe("zhǐ");
+    expect(at("只要", "只")).toBe("zhǐ");
+    expect(at("这只是开始", "只")).toBe("zhǐ");
+    expect(at("不只一次", "只")).toBe("zhǐ");
+    expect(at("船只", "只")).toBe("zhī");
+    expect(at("一只猫", "只")).toBe("zhī");
+    expect(at("两只手", "只")).toBe("zhī");
+    expect(at("这只狗", "只")).toBe("zhī");
+    expect(at("3只鸭子", "只")).toBe("zhī");
+    expect(at("几只鸟", "只")).toBe("zhī");
   });
 
   it("applies tone sandhi to 一 and 不 only", () => {

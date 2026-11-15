@@ -72,6 +72,7 @@ pnpm --filter web test:e2e                 # Playwright, phone viewport; servers
 pnpm --filter web exec playwright install chromium   # once, before the first e2e run
 pnpm db:generate                           # after editing db/src/schema/*: new migration (commit it)
 pnpm db:migrate                            # apply migrations to TURSO_DATABASE_URL (default file:db/dev.db)
+pnpm --filter web repinyin                 # recompute stored phrase pinyin after a pinyin rule change (the Vercel build runs it)
 pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
 pnpm --filter web dev:seeded               # next dev on a throwaway seeded db/dev-seeded.db (dev sign-in)
 pnpm --filter web shot / /review/back /imports /stats   # phone shots, light + dark → web/.shots; nonzero on console/request errors
