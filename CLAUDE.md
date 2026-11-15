@@ -59,6 +59,10 @@ Read only the sections your task needs.
   or chat (counts and pass/fail only). Ask Will before `make prod-copy`; delete the copy when done.
 - **Opened a PR?** Turn on its Auto-fix (the app's PR monitor) so CI failures, merge conflicts
   and review comments wake you.
+- **Merge when green.** Will doesn't review PRs here. Once a PR you opened (or were asked to drive)
+  is mergeable, every required check on its head commit has passed, and no review thread is
+  unresolved, merge it yourself (squash) without asking. Don't merge on red, pending or
+  conflicting; anything that needs `sudo` or touches production still needs asking first.
 
 ## Commands
 
