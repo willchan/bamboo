@@ -1,8 +1,8 @@
 // Pinyin (DESIGN §4.2): always computed from the characters, never taken from an LLM. pinyin-pro
 // with tone marks, aligned per character, with tone sandhi shown only for 一/不. pinyin-pro reads
-// some everyday polyphones wrongly out of context (跑得快 → dé, 我得走 → dé, 长高 → cháng,
-// 只需要 → zhī), so a small table of context rules corrects the common cases; Will's per-syllable
-// overrides fix the rest.
+// some everyday polyphones wrongly out of context (跑得快 → dé, 我得走 → dé, 长高 → cháng), so a
+// small table of context rules corrects the common cases; Will's per-syllable overrides fix the
+// rest.
 import { convert, pinyin } from "pinyin-pro";
 import type { PinyinPairs } from "@bamboo/db";
 
@@ -21,71 +21,34 @@ const DEI_BEFORE = new Set([..."我你他她它们咱谁还就也都又总可必
 const DE_WORD_AFTER = new Set([..."到罪意分奖病失逞力体手出知"]);
 /** 长 read zhǎng, "to grow" (长大, 长高, 长牙, 长得像). */
 const ZHANG_BEFORE_NEXT = new Set([..."大高胖得牙个肉出成辈"]);
-/** Body measures that grow: 体重长了, 个子长了, 身高长了. */
-const ZHANG_AFTER_WORD = ["体重", "个子", "身高"];
-/** Adverbs that make a following 长 the adjective "long" (很长了, 太长了). */
-const CHANG_AFTER = new Set([..."很太真好挺更最越多这那"]);
-/** Numerals and demonstratives that make 只 the measure word zhī (一只猫, 这只狗, 3只鸭子). */
-const MEASURE_BEFORE = new Set([..."一二两三四五六七八九十百几半每这那哪某"]);
-/** Words that follow 只 "only" (只需要, 只是, 只想, 这只是). */
-const ZHI3_BEFORE_NEXT = new Set([..."需要是有能想好会剩在用给吃喝说看听管顾怕知差够不得可"]);
-const isNumeral = (c: string | undefined): boolean =>
-  !!c && (/^[0-9０-９]$/u.test(c) || MEASURE_BEFORE.has(c));
 
 interface ContextRule {
   char: string;
   reading: string;
-  /** Whether the rule fits `chars[i]` (which is `char`) in its context. */
-  applies: (chars: readonly string[], i: number) => boolean;
+  applies: (prev: string | undefined, next: string | undefined) => boolean;
 }
 
 const CONTEXT_RULES: readonly ContextRule[] = [
   {
     char: "得",
     reading: "de",
-    applies: (chars, i) => {
-      const [prev, next] = [chars[i - 1], chars[i + 1]];
-      return isHanzi(prev) && !DE_WORD_BEFORE.has(prev) && !!next && DE_COMPLEMENT.has(next);
-    },
+    applies: (prev, next) =>
+      isHanzi(prev) && !DE_WORD_BEFORE.has(prev) && !!next && DE_COMPLEMENT.has(next),
   },
   {
     char: "得",
     reading: "děi",
-    applies: (chars, i) => {
-      const [prev, next] = [chars[i - 1], chars[i + 1]];
-      return (
-        !!prev &&
-        DEI_BEFORE.has(prev) &&
-        isHanzi(next) &&
-        !DE_COMPLEMENT.has(next) &&
-        !DE_WORD_AFTER.has(next)
-      );
-    },
+    applies: (prev, next) =>
+      !!prev &&
+      DEI_BEFORE.has(prev) &&
+      isHanzi(next) &&
+      !DE_COMPLEMENT.has(next) &&
+      !DE_WORD_AFTER.has(next),
   },
   {
     char: "长",
     reading: "zhǎng",
-    applies: (chars, i) => {
-      const next = chars[i + 1];
-      if (next && ZHANG_BEFORE_NEXT.has(next)) return true;
-      const before = chars.slice(Math.max(0, i - 2), i).join("");
-      if (ZHANG_AFTER_WORD.includes(before)) return true;
-      // Grew by an amount: 长了48克, 长了两颗牙 (but 很长了 stays "long").
-      return next === "了" && isNumeral(chars[i + 2]) && !CHANG_AFTER.has(chars[i - 1] ?? "");
-    },
-  },
-  {
-    char: "只",
-    reading: "zhǐ",
-    applies: (chars, i) => {
-      const next = chars[i + 1];
-      return chars[i - 1] === "不" || (!!next && ZHI3_BEFORE_NEXT.has(next));
-    },
-  },
-  {
-    char: "只",
-    reading: "zhī",
-    applies: (chars, i) => isNumeral(chars[i - 1]),
+    applies: (_prev, next) => !!next && ZHANG_BEFORE_NEXT.has(next),
   },
 ];
 
@@ -105,7 +68,7 @@ export function computePinyin(hanzi: string): PinyinPairs {
     let syllable = isHanzi(c) ? (aligned[i] ?? null) : null;
     if (syllable !== null) {
       for (const rule of CONTEXT_RULES) {
-        if (rule.char === c && rule.applies(chars, i)) {
+        if (rule.char === c && rule.applies(chars[i - 1], chars[i + 1])) {
           syllable = rule.reading;
           break;
         }

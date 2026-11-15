@@ -198,13 +198,13 @@ describe("phrases", () => {
 
 describe("recomputeStoredPinyin", () => {
   it("rewrites only rows whose computed pinyin changed, keeping overrides", async () => {
-    const stale = await add({ hanzi: "宝宝只需要维生素D" });
+    const stale = await add({ hanzi: "只要你高兴" });
     const fine = await add({ hanzi: "泡打粉" });
-    // As saved before the 只 rule existed, with an override on another syllable.
+    // As saved by an older computePinyin, with an override on another syllable.
     const old = (await getPhrase(db, stale))!.pinyin.map(
       ([c, s]) => [c, c === "只" ? "zhī" : s] as [string, string | null],
     );
-    const override = old.map(([c]) => [c, c === "素" ? "su" : null] as [string, string | null]);
+    const override = old.map(([c]) => [c, c === "兴" ? "xing" : null] as [string, string | null]);
     await db
       .update(phrase)
       .set({ pinyin: old, pinyinOverride: override })

@@ -264,14 +264,14 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
 - `pinyin-pro` with tone marks, output aligned per character: `[char, syllable | null]`, with
   `null` for non-hanzi. Tone sandhi is shown only for 一/不.
 - pinyin-pro 3.29 reads some everyday polyphones wrongly out of context (跑得很快 → dé, 我得走
-  → dé, 长高 → cháng, 只需要 → zhī). A small table of **context rules** in `pinyin.ts` corrects the common
+  → dé, 长高 → cháng). A small table of **context rules** in `pinyin.ts` corrects the common
   cases from the neighbouring characters: structural 得 before a degree/manner word → `de`; modal
-  得 after a subject or adverb (我/你/们/还/就…) before a verb → `děi`; 长 before 大/高/胖/牙/得…,
-  after 体重/个子/身高, or in 长了 + a quantity (长了48克, but not 很长了) → `zhǎng`; 只 after 不 or
-  before 需/要/是/有/能/想… → `zhǐ`, and after a numeral or demonstrative (一只, 这只狗, 3只)
-  → `zhī`. Words that keep `dé` (得到, 获得, 值得, 不得不) are excluded. Will's overrides fix the
-  rest. Extend the table when a misreading turns up; the build's `repinyin` step then rewrites
-  stored phrase pinyin that changed (overrides kept, since the hanzi didn't change).
+  得 after a subject or adverb (我/你/们/还/就…) before a verb → `děi`; 长 before 大/高/胖/牙/得…
+  → `zhǎng`. Words that keep `dé` (得到, 获得, 值得, 不得不) are excluded. Will's overrides fix the
+  rest. Extend the table when a misreading turns up.
+- **Stored pinyin follows the code.** Whenever `computePinyin` changes (a rule, a dictionary or
+  the library), the build's `repinyin` step (§8.2) rewrites stored phrase pinyin that now
+  differs. Overrides are kept, since the hanzi didn't change.
 - Computed for the phrase (stored) **and** each example (computed at read time, not stored).
   Recomputed whenever hanzi changes. If an override exists and the new hanzi differs, the
   override is dropped and the UI says so. Overrides store only the changed syllables (`null`
@@ -1117,7 +1117,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   per environment; previews get their own `AUTH_SECRET` and machine tokens.
 - **Migrations**: the Vercel build command (`web/vercel.json`) is
   `pnpm --dir .. db:migrate && pnpm repinyin && pnpm build`, i.e. `pnpm db:migrate`, then
-  `pnpm --filter web repinyin` (recompute stored phrase pinyin when a context rule changed, §4.2;
+  `pnpm --filter web repinyin` (recompute stored phrase pinyin when `computePinyin` changed, §4.2;
   idempotent, prints a count), then `pnpm --filter web build` from the repo root, run against
   whichever DB that environment points at. On Vercel,
   `db:migrate` fails the build if `TURSO_DATABASE_URL` is missing or local, or
