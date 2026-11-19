@@ -7,7 +7,7 @@
 // config; EVAL_MIN_VERBATIM (0.8) is the lowest verbatim pass rate that passes.
 import { sharedConfig } from "@bamboo/shared";
 import { describe, expect, it } from "vitest";
-import { readGeminiKey } from "./config";
+import { readGeminiKeys } from "./config";
 import { runEval } from "./eval-run";
 import { GeminiClient } from "./gemini";
 import { RateLimiter } from "./rate-limit";
@@ -21,8 +21,9 @@ describe.skipIf(!enabled)(`extract_turn eval on ${model}`, () => {
   it(
     "fixture turns give contract-valid results whose hanzi is copied from the turn",
     async () => {
-      const { key } = readGeminiKey();
-      expect(key, "BAMBOO_GEMINI_API_KEY is not set (agent.env)").toBeTruthy();
+      // The free key: the eval is everyday work (DESIGN §5.5.7).
+      const key = readGeminiKeys().free?.key;
+      expect(key, "BAMBOO_GEMINI_API_KEY_FREE is not set (agent.env)").toBeTruthy();
       const limiter = new RateLimiter({
         requestsPerMinute: Number(process.env.GEMINI_RPM ?? G.requestsPerMinute),
         requestsPerDay: Number(process.env.GEMINI_RPD ?? G.requestsPerDay),

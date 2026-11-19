@@ -36,8 +36,11 @@ export {
   agentEnvPath,
   envFilePath,
   loadEnvFile,
+  geminiKeyChoice,
+  geminiKeyLog,
   readConfig,
-  readGeminiKey,
+  readGeminiKeys,
+  selectGeminiKey,
 } from "./config";
 export { EngineClient } from "./api";
 export { extractTurn } from "./extract";

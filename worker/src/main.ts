@@ -1,5 +1,5 @@
 // Entry point (launchd: ops/launchd/com.bamboo.worker.plist; by hand: pnpm --filter @bamboo/worker
-// start). Exits 78 (EX_CONFIG) when worker.env is missing or incomplete.
+// start; H7's backfill: `... start -- --gemini-key=paid`, DESIGN §5.5.7). Exits 78 (EX_CONFIG) when worker.env is missing or incomplete.
 import { sharedConfig } from "@bamboo/shared";
 import {
   ConfigError,
@@ -15,8 +15,11 @@ import {
   loadDenyList,
   loadEnvFile,
   loadPrompt,
+  geminiKeyChoice,
+  geminiKeyLog,
   readConfig,
-  readGeminiKey,
+  readGeminiKeys,
+  selectGeminiKey,
   workerVersion,
 } from "./index";
 import { consoleLog as log } from "./log";
@@ -26,9 +29,15 @@ if (!envFile.loaded) log(`no env file at ${envFile.path}; using the process envi
 else log(`env file ${envFile.path}: ${envFile.keys.length} variable(s)`);
 if (envFile.tooOpen) log(`warning: ${envFile.path} is readable by others; run chmod 600 on it`);
 
+const keyPath = agentEnvPath();
 let config;
+let keys;
+let selection;
 try {
   config = readConfig();
+  // Free key for everyday work; the paid key only when this run asks for it (DESIGN §5.5.7).
+  keys = readGeminiKeys(process.env, keyPath);
+  selection = selectGeminiKey(keys, geminiKeyChoice(process.argv.slice(2)), config.gemini);
 } catch (e) {
   if (!(e instanceof ConfigError)) throw e;
   log(`config error: ${e.message} (see ops/worker.env.example)`);
@@ -41,28 +50,20 @@ const version = workerVersion();
 const sha = gitSha();
 log(`${WORKER_NAME} ${version} (${sha ?? "no git sha"}) → ${config.apiUrl}`);
 
-// The free-tier key (DESIGN §5.5.7): from agent.env, never logged.
-const key = readGeminiKey(process.env, agentEnvPath());
-if (key.source === "file") log(`gemini key: BAMBOO_GEMINI_API_KEY in ${agentEnvPath()}`);
-else if (key.source === "env") log("gemini key: environment variable BAMBOO_GEMINI_API_KEY");
-if (key.tooOpen) log(`warning: ${agentEnvPath()} is readable by others; run chmod 600 on it`);
-const gemini = key.key
+// Variables only, never a key's value.
+for (const line of geminiKeyLog(keys, selection, keyPath)) log(line);
+const gemini = selection
   ? new GeminiClient(
       config.gemini.model,
-      key.key,
+      selection.key.key,
       new RateLimiter({
-        requestsPerMinute: config.gemini.requestsPerMinute,
-        requestsPerDay: config.gemini.requestsPerDay,
+        ...selection.limits,
         timeZone: sharedConfig.worker.gemini.quotaTimeZone,
       }),
       { log },
     )
   : null;
-if (gemini) {
-  log(
-    `gemini: ${gemini.model}, ${config.gemini.requestsPerMinute}/min, ${config.gemini.requestsPerDay}/day`,
-  );
-}
+if (gemini) log(`gemini model: ${gemini.model}`);
 
 const worker = new Worker({
   engine: new EngineClient(config.apiUrl, config.token),
