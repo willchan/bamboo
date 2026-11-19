@@ -1,56 +1,19 @@
-// Pinyin (DESIGN §4.2): always computed from the characters, never taken from an LLM. pinyin-pro
-// with tone marks, aligned per character, with tone sandhi shown only for 一/不. pinyin-pro reads
-// some everyday polyphones wrongly out of context (跑得快 → dé, 我得走 → dé, 长高 → cháng), so a
-// small table of context rules corrects the common cases; Will's per-syllable overrides fix the
-// rest.
-import { convert, pinyin } from "pinyin-pro";
+// Pinyin (DESIGN §4.2, §5.5.3): always computed from the characters, never taken from an LLM.
+// pinyin-pro with tone marks, aligned per character, with tone sandhi shown only for 一/不. It
+// loads pinyin-pro's large dictionary (`@pinyin-pro/data/complete`), trimmed by
+// `scripts/pinyin-dict.ts` to the entries that change a reading, which fixes everyday neutral tones
+// (梯子, 肚子, 舒服, 里脊, 芝麻). No context rules: polyphones are settled by H4's per-syllable merge,
+// and Will's overrides win.
+import { addDict, convert, pinyin } from "pinyin-pro";
 import type { PinyinPairs } from "@bamboo/db";
+import largeDict from "../data/pinyin-dict.json";
 
 export type { PinyinPairs };
 
+addDict(largeDict, "bamboo-large");
+
 const HANZI = /\p{Script=Han}/u;
 const isHanzi = (c: string | undefined): c is string => !!c && HANZI.test(c);
-
-/** Degree/manner words that follow a structural 得 (跑得很快, 说得好, 长得像). */
-const DE_COMPLEMENT = new Set([..."很太好快慢多少真非挺特越清干不这那跟像满一早晚累饱香舒"]);
-/** Characters that make 得 part of a word read dé (获得, 值得, 不得不), not a complement. */
-const DE_WORD_BEFORE = new Set([..."获取赢值所难懂心求贪博不总使免记觉晓舍显"]);
-/** Subjects and adverbs before the modal 得 "must" (我得走, 还得去, 我们得给…). */
-const DEI_BEFORE = new Set([..."我你他她它们咱谁还就也都又总可必"]);
-/** Characters that make 得 part of a word read dé after a subject (你得到了, 他得罪了). */
-const DE_WORD_AFTER = new Set([..."到罪意分奖病失逞力体手出知"]);
-/** 长 read zhǎng, "to grow" (长大, 长高, 长牙, 长得像). */
-const ZHANG_BEFORE_NEXT = new Set([..."大高胖得牙个肉出成辈"]);
-
-interface ContextRule {
-  char: string;
-  reading: string;
-  applies: (prev: string | undefined, next: string | undefined) => boolean;
-}
-
-const CONTEXT_RULES: readonly ContextRule[] = [
-  {
-    char: "得",
-    reading: "de",
-    applies: (prev, next) =>
-      isHanzi(prev) && !DE_WORD_BEFORE.has(prev) && !!next && DE_COMPLEMENT.has(next),
-  },
-  {
-    char: "得",
-    reading: "děi",
-    applies: (prev, next) =>
-      !!prev &&
-      DEI_BEFORE.has(prev) &&
-      isHanzi(next) &&
-      !DE_COMPLEMENT.has(next) &&
-      !DE_WORD_AFTER.has(next),
-  },
-  {
-    char: "长",
-    reading: "zhǎng",
-    applies: (_prev, next) => !!next && ZHANG_BEFORE_NEXT.has(next),
-  },
-];
 
 /** Per-character pinyin with tone marks; `null` for anything that isn't hanzi. */
 export function computePinyin(hanzi: string): PinyinPairs {
@@ -64,18 +27,7 @@ export function computePinyin(hanzi: string): PinyinPairs {
       ? all.map((a) => (a.isZh && a.pinyin ? a.pinyin : null))
       : chars.map((c) => (isHanzi(c) ? pinyin(c) || null : null));
 
-  return chars.map((c, i) => {
-    let syllable = isHanzi(c) ? (aligned[i] ?? null) : null;
-    if (syllable !== null) {
-      for (const rule of CONTEXT_RULES) {
-        if (rule.char === c && rule.applies(chars[i - 1], chars[i + 1])) {
-          syllable = rule.reading;
-          break;
-        }
-      }
-    }
-    return [c, syllable];
-  });
+  return chars.map((c, i) => [c, isHanzi(c) ? (aligned[i] ?? null) : null]);
 }
 
 /** What to display: the computed pinyin with Will's overrides on top (same alignment). */

@@ -100,7 +100,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | M4 Worker | merged | [#9](https://github.com/willchan/bamboo/pull/9) |
 | M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
 | M6 Reminder & stats | merged | [#13](https://github.com/willchan/bamboo/pull/13) |
-| H1 Pinyin: large dictionary | planned | |
+| H1 Pinyin: large dictionary | in review | |
 | H2 Frames retired; new-card policy | planned | |
 | H3 Card back: breakdowns and glosses | planned | |
 | H4 Worker on Gemini | planned | |
@@ -1007,6 +1007,32 @@ table.
   build` passes (the function bundle stays under Vercel's limit; record its size).
 
 **Notes:**
+- **Dictionary:** `@pinyin-pro/data` 1.3.1, the `complete` dictionary (348,838 entries), with
+  pinyin-pro 3.29.5. Trimmed to 15,684 entries (607,000 bytes) in `web/lib/data/pinyin-dict.json`,
+  kept with their frequencies. `complete` over `modern` (58,907 entries, 2,630 kept, 70 KB): both
+  fix the five words, but on synthetic household sentences `complete` also reads 睡不着 zháo, 长牙
+  zhǎng, 点儿 er and 等一等 yi, which `modern` misses. `@pinyin-pro/data` is a devDependency: only
+  the generator reads it, and the build doesn't trace it.
+- **Generator:** `web/scripts/pinyin-dict.ts` (`pnpm --filter web gen:pinyin-dict`, `--check`);
+  `scripts/pinyin-dict.test.ts` asserts byte-for-byte reproduction in CI (about 0.3 s). The trim
+  compares each entry in isolation with the built-in reading; a dropped entry could still have
+  mattered for segmentation inside a longer sentence, which is accepted. Re-run it whenever
+  pinyin-pro or `@pinyin-pro/data` is bumped (the test fails until you do).
+- **Data file location:** `web/lib/data/` (with `wordfreq-zh.ts`) rather than `lib/domain/`, and
+  added to `.prettierignore`, since it's generated.
+- **Context rules removed** with their tests (得, 长, and the 行 context test). As decided, the
+  readings they fixed regress until H4's merge (or Will's override): structural 得 (跑得很快) and
+  modal 得 (我得走) read dé, and 长高 / 长得 read cháng; 长大 still reads zhǎng from the dictionary.
+  行不行 now reads xíng bu xíng. Tests in `capture.test.ts` and `repo.test.ts` that relied on
+  得 → děi now set a děi override instead.
+- **Function size:** `pnpm --filter web build` passes; the largest traced function
+  (`/phrases/[id]`) is 35.4 MB, far under Vercel's 250 MB.
+- **Acceptance:** standard commands pass (web 263 tests; lib/domain coverage 99.5% statements,
+  97.2% branches); e2e 9/9. `pnpm db:seed` with main's pinyin then `repinyin` with H1's: 3 of the
+  17 synthetic phrases changed; a second run: 0.
+- **For H4:** load the dictionary before any `pinyin(…, { multiple: true })` call, which means
+  importing `web/lib/domain/pinyin.ts` (it calls `addDict` at module load). If the merge has to
+  run in `shared/` or the worker, move the data file and the `addDict` call there.
 
 ## H2 — Frames retired; new-card policy *(depends on: docs)*
 

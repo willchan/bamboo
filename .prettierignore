@@ -14,3 +14,5 @@ playwright-report/
 test-results/
 # Generated from wordfreq (web/scripts/wordfreq-zh.py): never reformat it.
 web/lib/data/wordfreq-zh.ts
+# Generated from @pinyin-pro/data (web/scripts/pinyin-dict.ts): never reformat it.
+web/lib/data/pinyin-dict.json

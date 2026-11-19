@@ -88,10 +88,10 @@ describe("phrases", () => {
   });
 
   it("stores pinyin overrides from the editor", async () => {
-    const id = await add({ kind: "sentence", hanzi: "我得走", pinyinEdits: ["", "de2", ""] });
+    const id = await add({ kind: "sentence", hanzi: "我得走", pinyinEdits: ["", "dei3", ""] });
     expect((await getPhrase(db, id))!.pinyinOverride).toEqual([
       ["我", null],
-      ["得", "dé"],
+      ["得", "děi"],
       ["走", null],
     ]);
   });
@@ -105,7 +105,7 @@ describe("phrases", () => {
   });
 
   it("edits: recomputes pinyin, keeps or drops the override, toggles card types", async () => {
-    const id = await add({ kind: "sentence", hanzi: "我得走", pinyinEdits: ["", "de2", ""] });
+    const id = await add({ kind: "sentence", hanzi: "我得走", pinyinEdits: ["", "dei3", ""] });
     const same = await updatePhrase(db, id, input({ kind: "sentence", hanzi: "我得走" }), T0 + 1);
     expect(same).toEqual({ ok: true, id, overrideDropped: false });
     expect((await getPhrase(db, id))!.pinyinOverride).not.toBeNull();

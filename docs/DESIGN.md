@@ -269,12 +269,15 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
 
 - `pinyin-pro` with tone marks, output aligned per character: `[char, syllable | null]`, with
   `null` for non-hanzi. Tone sandhi is shown only for 一/不.
-- pinyin-pro 3.29 reads some everyday polyphones wrongly out of context (跑得很快 → dé, 我得走
-  → dé, 长高 → cháng). A small table of **context rules** in `pinyin.ts` corrects the common
-  cases from the neighbouring characters: structural 得 before a degree/manner word → `de`; modal
-  得 after a subject or adverb (我/你/们/还/就…) before a verb → `děi`; 长 before 大/高/胖/牙/得…
-  → `zhǎng`. Words that keep `dé` (得到, 获得, 值得, 不得不) are excluded. Will's overrides fix the
-  rest. Extend the table when a misreading turns up.
+- **Large dictionary, no rules** (H1, §5.5.3a, §10 #80). pinyin-pro loads its large dictionary
+  (`@pinyin-pro/data` 1.3.1, `complete`) with `addDict`, trimmed to the entries whose reading
+  differs from pinyin-pro's built-in one: 15,684 of 348,838 entries, 607 KB, in
+  `web/lib/data/pinyin-dict.json`. `web/scripts/pinyin-dict.ts` generates it deterministically
+  (`pnpm --filter web gen:pinyin-dict`; `--check` and a unit test assert the committed file is
+  byte-identical). `@pinyin-pro/data` is a dev dependency only; the runtime loads the trimmed file.
+  It fixes everyday neutral tones (梯子 tī zi, 肚子, 舒服, 里脊, 芝麻, 明白, 谢谢, 窗户). The old table
+  of context rules (得 → de/děi, 长 → zhǎng) is **removed**, and none are added: polyphones such
+  as modal 得 (我得走 now reads dé) are settled by H4's merge (§5.5.3b) or Will's override.
 - **Stored pinyin follows the code.** Whenever `computePinyin` changes (a rule, a dictionary or
   the library), the build's `repinyin` step (§8.2) rewrites stored phrase pinyin that now
   differs. Overrides are kept, since the hanzi didn't change.
@@ -284,9 +287,9 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
   elsewhere); the editor accepts tone marks or numbers (`dei3` → `děi`, `de5` → `de`).
 - Display (§6): ruby text above each hanzi, using the override where present.
 - Gemini's own pinyin is **never stored**. Its errors are the reason this module exists.
-- **Changing (§5.5.3, §10 #80):** H1 replaces the context rules with pinyin-pro's large dictionary
-  (trimmed); H4 merges Gemini's pinyin per syllable, choosing only among valid dictionary
-  readings, with a referee for real disputes. Stored pinyin stays a valid dictionary reading.
+- **Changing (§5.5.3, §10 #80):** H4 merges Gemini's pinyin per syllable, choosing only among
+  valid dictionary readings, with a referee for real disputes. Stored pinyin stays a valid
+  dictionary reading.
 
 ### 4.3 Scheduling (FSRS)
 
@@ -1067,8 +1070,8 @@ until a later contract PR (H2b).
 
 #### 5.5.3 Pinyin: computed, then merged (H1, H4; §10 #80)
 
-**(a) Computed** (H1). pinyin-pro loads its **large dictionary** (`@pinyin-pro/data`), trimmed to
-the entries that change a reading, so it fits a Vercel function. It fixes neutral tones the default
+**(a) Computed** (H1; built, now in §4.2). pinyin-pro loads its **large dictionary**
+(`@pinyin-pro/data`), trimmed to the entries that change a reading, so it fits a Vercel function. It fixes neutral tones the default
 misses (梯子, 肚子, 舒服, 里脊, 芝麻), which keeps referee calls down. The context-rule table of
 §4.2 (得, 长) is **removed** with its tests, and no rules are added: polyphones are settled by
 reading the sentence in (b), not by heuristics. `repinyin` runs on deploy (§8.2). This is the
@@ -1521,7 +1524,8 @@ bamboo/
   CLAUDE.md  README.md  Makefile  package.json  pnpm-workspace.yaml  tsconfig.base.json
   docs/       PRD.md DESIGN.md PLAN.md ROADMAP.md
   web/        Next.js app — app/, components/, lib/domain/ (pure), lib/repo/ (DB), lib/config.ts,
-              lib/api/ (machine-route auth and bodies), scripts/seed.ts (`pnpm db:seed`) and
+              lib/api/ (machine-route auth and bodies), lib/data/ (generated: wordfreq-zh.ts,
+              pinyin-dict.json via scripts/pinyin-dict.ts), scripts/seed.ts (`pnpm db:seed`) and
               seed-data.ts, scripts/dev-server.ts + shot.ts (§8.6), scripts/smoke.ts
               (`pnpm smoke`), e2e/ (Playwright; e2e/seeded/ on the seeded server)
   db/         @bamboo/db — src/schema/*, migrations/, migrate script, prod-copy.ts (§8.6)
