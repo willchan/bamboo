@@ -20,8 +20,9 @@ import {
   type PhraseKind,
   type TurnKind,
 } from "@bamboo/db";
-import { hanziKey } from "@bamboo/shared";
+import { hanziKey, type PhraseBreakdown } from "@bamboo/shared";
 import { count, eq } from "drizzle-orm";
+import { checkBreakdown } from "../lib/domain/breakdown";
 import { reviewCard, type FsrsColumns, type Grade } from "../lib/domain/fsrs";
 import { initialCardTypes } from "../lib/domain/phrase";
 import { eventRow, newId } from "../lib/repo/db";
@@ -34,6 +35,8 @@ export interface Seed {
   note?: string;
   heardAs?: string;
   examples?: { hanzi: string; english: string }[];
+  /** A synthetic card-back breakdown (DESIGN §5.5.4); must match the hanzi (`checkBreakdown`). */
+  breakdown?: PhraseBreakdown;
   tags: string[];
   turnKind: TurnKind;
   usefulness: number;
@@ -78,7 +81,15 @@ export const SEEDS: Seed[] = [
     english: "baby's solid food",
     examples: [
       { hanzi: "宝宝今天的辅食吃完了吗？", english: "Did the baby finish today's solids?" },
+      { hanzi: "辅食要做得软一点。", english: "Make the solids a bit softer." },
     ],
+    breakdown: {
+      parts: [
+        { hanzi: "辅", gloss: "supplementary, assist" },
+        { hanzi: "食", gloss: "food, eat" },
+      ],
+      meaning: "food added alongside milk: a baby's first solids",
+    },
     tags: ["feeding", "baby"],
     turnKind: "say",
     usefulness: 5,
@@ -110,6 +121,15 @@ export const SEEDS: Seed[] = [
     kind: "sentence",
     hanzi: "宝宝喝完奶了。",
     english: "The baby finished the milk.",
+    breakdown: {
+      parts: [
+        { hanzi: "宝宝", gloss: "baby" },
+        { hanzi: "喝完", gloss: "drink + finish" },
+        { hanzi: "奶", gloss: "milk" },
+        { hanzi: "了", gloss: "(done, a change)" },
+      ],
+      note: "Verb + 'finish' says the drinking is done; the final particle marks the new situation.",
+    },
     tags: ["feeding", "baby"],
     turnKind: "say",
     usefulness: 4,
@@ -271,6 +291,7 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
         note: s.note,
         heardAs: s.heardAs,
         examples: (s.examples ?? []).map((e) => ({ ...e, turn_id: null })),
+        breakdown: s.breakdown ? checkBreakdown(s.kind, s.hanzi, s.breakdown).breakdown : null,
         tags: s.tags,
         usefulness: s.usefulness,
         turnKind: s.turnKind,

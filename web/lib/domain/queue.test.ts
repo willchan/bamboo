@@ -217,6 +217,7 @@ describe("planReextract", () => {
     example: null,
     usefulness: 3,
     tags: ["cooking"],
+    breakdown: null,
     flags: [],
     ...o,
   });

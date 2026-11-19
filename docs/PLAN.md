@@ -102,7 +102,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | M6 Reminder & stats | merged | [#13](https://github.com/willchan/bamboo/pull/13) |
 | H1 Pinyin: large dictionary | in review | |
 | H2 Frames retired; new-card policy | planned | |
-| H3 Card back: breakdowns and glosses | planned | |
+| H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
 | H4 Worker on Gemini | planned | |
 | H5 Tutor capture | planned | |
 | H6 Re-run extension | planned | |
@@ -1115,6 +1115,23 @@ for sentences.
   with breakdowns and one without; no console or request errors.
 
 **Notes:**
+- Migration `0004_phrase_breakdown.sql`: one `ALTER TABLE phrase ADD breakdown text` (expand only).
+- Contract `shared/src/contracts/breakdown.ts`: `PhraseBreakdown` = `TermBreakdown {parts,
+  meaning}` | `SentenceBreakdown {parts, note}`; limits in `sharedConfig.extraction`
+  (`maxBreakdownParts` 40, `maxGlossChars` 60, `maxBreakdownSummaryChars` 160). `ExtractItem`
+  has an optional `breakdown`; `ModelExtractTurnResult` (the Ollama schema) omits it, so the
+  worker's current prompt and grammar are unchanged. **H4:** add it to the v4 output schema.
+- Checks beyond the exact-match rule: every part must contain Chinese, the shape must fit the kind
+  (frames get none), and the whole breakdown is dropped (not just one gloss) when anything fails.
+  The exact match is on `hanziKey`, so ASCII letters and digits count as characters too.
+- "English only" means a note on how a sentence is built can't quote the characters it explains
+  (e.g. "Verb + 'finish'…"). **H4's prompt** should say so.
+- Merges (asked again, re-extraction) fill in a breakdown only when the phrase has none. Editing a
+  phrase re-runs the check against the new hanzi and kind.
+- With a breakdown, a term's back shows all its examples (≤ 3), not just the first: Will asked for
+  "example sentence(s)". Without one, the back is unchanged.
+- `pnpm --filter web shot` gained `/review/back/<hanzi>` (the round's order varies, so a position
+  isn't stable); the seeded term with a breakdown is `辅食` (泡打粉 isn't always in the round).
 
 ## H4 — Worker on Gemini *(depends on: H1, H3)*
 

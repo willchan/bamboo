@@ -102,6 +102,7 @@ pnpm --filter web gen:pinyin-dict          # regenerate web/lib/data/pinyin-dict
 pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
 pnpm --filter web dev:seeded               # next dev on a throwaway seeded db/dev-seeded.db (dev sign-in)
 pnpm --filter web shot / /review/back /imports /stats   # phone shots, light + dark → web/.shots; nonzero on console/request errors
+pnpm --filter web shot /review/back/辅食    # the answer of the round's card showing that hanzi (one /review/… path per run)
 make prod-copy                             # ask Will first: prod → .scratch/prod-copy.db, READ-ONLY token, counts only (DESIGN §8.6)
 pnpm --filter web dev:prod-copy            # next dev on the prod copy (refuses non-file: DBs)
 make prod-copy-clean                       # delete the copy when you're done

@@ -105,8 +105,9 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   - **A richer back** (H3, H4): a term's back shows a **character breakdown** (each character with
     its pinyin and a short gloss, then the word's overall meaning) and its example sentence(s); a
     sentence's back shows a **word-by-word gloss** and one short note on how the sentence is
-    built. Gemini writes the glosses; the breakdown always matches the phrase's characters, and
-    its pinyin is the phrase's own.
+    built. Gemini writes the glosses (from H4; H3 built the card back); the breakdown always
+    matches the phrase's characters, and its pinyin is the phrase's own. A card without one
+    looks as before.
   - **Listen**: the front only plays audio; he recalls the meaning; the back shows everything
     including the example, and, if he typed what he heard when he asked, a small "you first heard:
     *podafen*" under the answer, so he sees his guess next to the real thing. (On the front it

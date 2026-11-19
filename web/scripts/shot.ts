@@ -30,7 +30,10 @@ const out = path.resolve(
 );
 
 /** `/cleanup/receipts/abc?x=1` → `cleanup-receipts-abc-x-1`; `/` → `home`. */
-const slug = (p: string) => p.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "home";
+const slug = (p: string) =>
+  encodeURI(p)
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-|-$/g, "") || "home";
 
 async function waitFor(url: string, ms: number, alive: () => boolean) {
   const deadline = Date.now() + ms;
@@ -73,23 +76,59 @@ const problems: string[] = [];
 const files: string[] = [];
 
 /**
- * Two pseudo-paths: `/review/start` starts a round (the Start button's action) and shoots its first
+ * Pseudo-paths: `/review/start` starts a round (the Start button's action) and shoots its first
  * card; `/review/back` does the same, then taps Show and shoots the answer (pinyin, buttons).
+ * `/review/back/<hanzi>` grades cards Good until one whose answer shows that hanzi (the round's
+ * order varies), on the server's database: use it on the throwaway seeded one. The next scheme
+ * reopens the same round, which resumes at that card, so both schemes show the same one. Shoot one
+ * `/review/…` path per run: a round left open changes what the next one starts.
  */
+const roundUrls = new Map<string, string>();
+const REVIEW_BACK_FIND = /^\/review\/back\/(.+)$/u;
+
+async function showAnswer(page: Page, timeout: number) {
+  // Past the reveal guard (config.review.revealGuardMs) a tap shows the answer.
+  await page.waitForTimeout(1000);
+  await page.getByRole("button", { name: "Show", exact: true }).click();
+  await page.getByTestId("card-back").waitFor({ timeout });
+}
+
 async function open(page: Page, p: string) {
   const timeout = 120_000;
-  if (p !== "/review/start" && p !== "/review/back")
+  const find = REVIEW_BACK_FIND.exec(p)?.[1];
+  if (p !== "/review/start" && p !== "/review/back" && !find)
     return page.goto(new URL(p, baseUrl).href, { waitUntil: "load", timeout });
+  const resume = roundUrls.get(p);
+  if (resume) {
+    await page.goto(resume, { waitUntil: "load", timeout });
+    await page.getByTestId("card-front").waitFor({ timeout });
+    return showAnswer(page, timeout);
+  }
   await page.goto(new URL("/", baseUrl).href, { waitUntil: "load", timeout });
   await page.getByRole("button", { name: /^(Start|Another round)/ }).click();
   await page.waitForURL(/\/review\//, { timeout });
   await page.getByTestId("card-front").waitFor({ timeout });
-  if (p === "/review/back") {
-    // Past the reveal guard (config.review.revealGuardMs) a tap shows the answer.
-    await page.waitForTimeout(1000);
-    await page.getByRole("button", { name: "Show", exact: true }).click();
-    await page.getByTestId("card-back").waitFor({ timeout });
+  if (p === "/review/start") return;
+  await showAnswer(page, timeout);
+  if (!find) return;
+  const want = decodeURIComponent(find);
+  // The answer's text without the ruby pinyin, so `泡打粉` matches `泡<rt>pào</rt>打…`.
+  const shown = () =>
+    page.getByTestId("card-back").evaluate((el) => {
+      const c = el.cloneNode(true) as HTMLElement;
+      for (const rt of c.querySelectorAll("rt")) rt.remove();
+      return c.textContent ?? "";
+    });
+  for (let i = 0; !(await shown()).includes(want); i++) {
+    if (i >= 30) throw new Error(`no card in the round shows ${want}`);
+    await page.getByRole("button", { name: /^Good/ }).click();
+    await page.getByTestId("card-front").waitFor({ timeout });
+    await showAnswer(page, timeout);
   }
+  // Let the grades land before the next scheme reloads the round.
+  await page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  roundUrls.set(p, page.url());
 }
 
 try {

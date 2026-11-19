@@ -9,8 +9,10 @@ import {
   sharedConfig,
   turnTextKey,
   type ExtractTurnResult,
+  type PhraseBreakdown,
 } from "@bamboo/shared";
 import { config, type ExtractionConfig, type QueueConfig, type RankConfig } from "../config";
+import { checkBreakdown } from "./breakdown";
 import { bundledFrequencies, commonness, type WordFrequencies } from "./frequency";
 
 export interface ScoreInput {
@@ -128,7 +130,9 @@ export interface ValidItem {
   example: { hanzi: string; english: string | null } | null;
   usefulness: number;
   tags: string[];
-  /** `heard_as_dropped`, `example_dropped`. */
+  /** The card back's breakdown, if it passed `checkBreakdown` (DESIGN §5.5.4). */
+  breakdown: PhraseBreakdown | null;
+  /** `heard_as_dropped`, `example_dropped`, `breakdown_dropped`. */
   flags: string[];
 }
 
@@ -147,6 +151,8 @@ export interface Validation {
   tagsDropped: number;
   /** 1 when a say turn's sentence was made from a term's example (`from_example`). */
   sentencePromoted: number;
+  /** Breakdowns that didn't match their item's hanzi, or had Chinese in a gloss or note. */
+  breakdownsDropped: number;
 }
 
 const KNOWN_TAGS: ReadonlySet<string> = new Set(PHRASE_TAGS);
@@ -196,6 +202,7 @@ export function validateExtraction(
     droppedOverCap: 0,
     tagsDropped: 0,
     sentencePromoted: 0,
+    breakdownsDropped: 0,
   };
   const seen = new Set<string>();
   let terms = 0;
@@ -239,6 +246,12 @@ export function validateExtraction(
       }
     }
 
+    const bd = checkBreakdown(raw.kind, hanzi, raw.breakdown);
+    if (bd.dropped) {
+      flags.push("breakdown_dropped");
+      out.breakdownsDropped += 1;
+    }
+
     const tags = cleanTags(raw.tags);
     out.tagsDropped += tags.dropped;
     out.items.push({
@@ -251,6 +264,7 @@ export function validateExtraction(
       example,
       usefulness: raw.usefulness,
       tags: tags.tags,
+      breakdown: bd.breakdown,
       flags,
     });
   }
@@ -289,6 +303,7 @@ function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): Vali
     example: null,
     usefulness: best.term.usefulness,
     tags: best.term.tags,
+    breakdown: null,
     flags: ["from_example"],
   };
 }
@@ -321,7 +336,16 @@ export interface ExistingPhrase {
   turnKind: TurnKind | null;
   tags: string[];
   flags: string[];
+  /** Optional so older callers and fixtures needn't carry it; absent means none yet. */
+  breakdown?: PhraseBreakdown | null;
 }
+
+/** A merge fills in a breakdown only when the phrase has none: the first good one stays. */
+const filledBreakdown = (
+  p: Pick<ExistingPhrase, "breakdown">,
+  item: Pick<ValidItem, "breakdown">,
+): { breakdown?: PhraseBreakdown } =>
+  !p.breakdown && item.breakdown ? { breakdown: item.breakdown } : {};
 
 export interface MergePlan {
   /** `asked_count` went up: the first time this import asks about the phrase. */
@@ -340,6 +364,7 @@ export interface MergePlan {
     examples: PhraseExample[];
     baseScore: number;
     flags: string[];
+    breakdown?: PhraseBreakdown;
     droppedAt?: null;
     updatedAt: number;
   };
@@ -353,7 +378,7 @@ export interface MergePlan {
  */
 export function planMerge(
   p: ExistingPhrase,
-  item: Pick<ValidItem, "heardAs" | "example" | "flags">,
+  item: Pick<ValidItem, "heardAs" | "example" | "flags"> & Partial<Pick<ValidItem, "breakdown">>,
   ctx: { importId: string; turnId: string; now: number },
   rank: RankConfig = config.rank,
 ): MergePlan {
@@ -392,6 +417,7 @@ export function planMerge(
         rank,
       ),
       flags,
+      ...filledBreakdown(p, { breakdown: item.breakdown ?? null }),
       ...(revived ? { droppedAt: null } : {}),
       updatedAt: ctx.now,
     },
@@ -415,6 +441,7 @@ export interface ReextractPatch {
   tags: string[];
   baseScore: number;
   flags: string[];
+  breakdown?: PhraseBreakdown;
   updatedAt: number;
 }
 
@@ -491,6 +518,7 @@ export function planReextract(
           rank,
         ),
         flags,
+        ...filledBreakdown(p, item),
         updatedAt: now,
       },
     });

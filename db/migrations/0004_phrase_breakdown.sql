@@ -1,0 +1,1 @@
+ALTER TABLE `phrase` ADD `breakdown` text;
