@@ -27,6 +27,10 @@
   └──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+> **Changing (§5.5, §10 #74–#83):** Gemini replaces Ollama for tutoring (the `#bamboo` agent)
+> and extraction (the worker); Ollama stays only as the worker's fallback. The engine on Vercel
+> still makes no LLM call.
+
 **Ownership rule (same as PandaBase):** the State Engine (`/web` + `/db`) owns all data and
 business logic: dedupe, ranking, validation of LLM output, scheduling, the reminder decision.
 `bamboo-tools` and the worker are stateless clients of the HTTP API. They read pages and files and
@@ -49,6 +53,8 @@ normalization and turn keys (§4.1, §4.5) and share API contracts, so both impo
 | Ollama | Mac, native | Local LLM. **Shared with PandaBase**; see §1.2 |
 
 ### 1.2 Mac mini resource budget
+
+Since §10 #74 the worker calls Gemini; what follows applies to the Ollama fallback (§5.5.2).
 
 PandaBase already runs on this Mac (its DESIGN §1.2). Its host settings
 `OLLAMA_NUM_PARALLEL=1` and `OLLAMA_MAX_LOADED_MODELS=1` apply to Bamboo too. Therefore:
@@ -85,7 +91,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 |---|---|---|
 | `id` | text pk | |
 | `status` | `'queued' \| 'active' \| 'dropped' \| 'expired'` | §4.6 |
-| `kind` | `'term' \| 'frame' \| 'sentence'` | frames contain `…` as the slot |
+| `kind` | `'term' \| 'frame' \| 'sentence'` | frames contain `…` as the slot; frames are being retired (§10 #77, H2b) |
 | `hanzi` | text | normalized (§4.1) |
 | `hanzi_key` | text **unique** | dedupe key (§4.1) |
 | `english` | text | meaning (term) or intent (frame/sentence) |
@@ -94,7 +100,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; verbatim from Gemini (§4.6) |
 | `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
-| `pinyin` | json `[char, syllable \| null][]` | computed (§4.2), never from the LLM |
+| `pinyin` | json `[char, syllable \| null][]` | computed (§4.2); from H4, merged with Gemini's among valid readings only (§5.5.3) |
 | `pinyin_override` | json null | same shape; Will's per-syllable edits |
 | `usefulness` | int null | 1–5 from the model (§5.4); null for manual |
 | `turn_kind` | text null | kind of the source turn (for ranking) |
@@ -278,6 +284,9 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
   elsewhere); the editor accepts tone marks or numbers (`dei3` → `děi`, `de5` → `de`).
 - Display (§6): ruby text above each hanzi, using the override where present.
 - Gemini's own pinyin is **never stored**. Its errors are the reason this module exists.
+- **Changing (§5.5.3, §10 #80):** H1 replaces the context rules with pinyin-pro's large dictionary
+  (trimmed); H4 merges Gemini's pinyin per syllable, choosing only among valid dictionary
+  readings, with a referee for real disputes. Stored pinyin stays a valid dictionary reading.
 
 ### 4.3 Scheduling (FSRS)
 
@@ -316,6 +325,9 @@ cards, in this order:
    round the count is past the cap and only another opt-in adds more (§10 #61).
    They come first from `active` phrases whose second card is still New, then from the queue
    (§4.6): the top phrase's first card (Listen before Say), one phrase at a time.
+
+**Changing (§5.5.5, §10 #79, H2):** new cards come freshest first and `newPerDay` is raised or
+removed, to a setting Will chooses from an FSRS estimate.
 
 A round never holds two cards of one phrase. The round's card ids are stored on `round`, so a
 reload resumes it without the cards already graded.
@@ -413,6 +425,9 @@ On `extract_turn` completion, for each raw item:
      cards, so its reviewed cards would never come back (§10 #29).
 5. Else, create a `queued` phrase with its cards (§4.8), `last_asked_import_id = import`.
 
+**Changing (§5.5.2, §10 #76, #77):** v4 returns no frames (frame items are dropped and counted),
+the per-turn caps are loosened, and every check above stays.
+
 The verbatim check itself (`occursVerbatim`, `cleanHanzi`, `turnTextKey`) lives in
 `shared/src/verbatim.ts` (since M4), so the worker's eval measures exactly what the engine drops;
 `queue.ts` re-exports it.
@@ -442,6 +457,10 @@ again (`planReextract` in `queue.ts`), after the same validation and caps (steps
 - `queued` phrases first made from this turn (`source_turn_id`) that the new result no longer
   picks are **superseded**: `expired`, with a `phrase_superseded` event. Pinned ones, ones asked
   about more than once and active ones stay.
+
+**Changing (§5.5.6, §10 #81, H6):** a re-run will refresh English, note and breakdown on every
+phrase it picks, in any status, and report the active, pinned or asked-again ones it no longer
+picks (a Phrases filter and a bulk Retire that keeps `review_log`).
 
 A re-run never touches its import: no `phrases_new`/`phrases_again`, no `jobs_failed`, no
 summary or Discord reply, and Retry failed requeues a failed re-run without reopening its import.
@@ -484,6 +503,9 @@ billion words: 谢谢 5.2, 冰箱 4.1, 奶瓶 3.0, 生抽 2.0.
 The **Up next** page lists the queue, with **Move to top** (sets `pinned`) and **Remove** (drop).
 
 ### 4.7 Expiry and the queue budget
+
+**Changing (§5.5.5, §10 #79, H2b):** the queue budget and the expiry of unseen phrases go; the
+sentence backfill and the daily re-score stay.
 
 The daily cron first **backfills sentences** (`promoteMissingSentences` in `capture.ts`): a `say`
 turn whose latest stored result has no sentence gets the one §4.6's rule promotes from it, unless a
@@ -574,7 +596,9 @@ model's paraphrase):
   (`FAILURE_REPLIES` in `agent/tools/src/cli.ts`). The diagnostic goes to stderr.
 
 **Privacy**: the skill passes the link or path along and never reads, summarizes or quotes the
-conversation. All model work happens in the worker on local Ollama. If OpenClaw extracts
+conversation. (**Changing, §5.5.1, H5:** the agent becomes the tutor on Gemini Flash; it answers
+questions asked in `#bamboo` and hands each question and answer to Bamboo, but still never reads a
+share link, PDF or pasted answer itself.) All model work happens in the worker on local Ollama. If OpenClaw extracts
 attachment text for its own reply model, that model must be local too. PandaBase's household
 configuration already does this (its DESIGN §10 #43). That is the host's setting for the agent
 that serves `#bamboo` (below).
@@ -824,6 +848,10 @@ count, and the first and last 5 user prompts, and makes no API calls.
 
 ### 5.3 `extract_turn` (worker → Ollama)
 
+**Changing (§5.5.2, §10 #74, #76, H4):** the worker sends each turn to Gemini with
+`extract_turn.v4` (no frames; Gemini's pinyin; breakdowns and glosses), rate-limited to the free
+tier, with Ollama as the fallback and a Mac-side name filter. What follows is v3 on Ollama.
+
 Input: `{turn_id, conversation_title, user_text, reply_text}`. Prompt:
 `worker/prompts/extract_turn.v{N}.md` (the highest N wins). Output contract `ExtractTurnResult`:
 
@@ -920,7 +948,8 @@ each result for the `extraction` event.
 A one-off measurement for docs/ROADMAP.md › Tutor: is a local model a good enough Mandarin tutor
 to replace asking Gemini? Not product behavior. **Outcome (2026-11-06):** no. In Will's blind judging,
 Gemini Flash was clearly better than both local models, so Gemini stays the tutor (§10 #58); the
-harness stays for a re-run with a stronger local model. `bamboo-eval` (`agent/tools/src/eval/`, run with
+harness stays for a re-run with a stronger local model. This measurement is why Gemini now also
+serves the `#bamboo` tutor and extraction (§5.5, §10 #74). `bamboo-eval` (`agent/tools/src/eval/`, run with
 `make tutor-eval ARGS="…"`) is a separate entry point from `bamboo-tools`, so the OpenClaw skill
 can't reach it; like the worker it calls only the local Ollama.
 
@@ -979,6 +1008,160 @@ outcome above compared `qwen3.5:9b` and `qwen3.5:27b`. **Re-run 2026-11-14** (`q
 `qwen3.8:27b`, 20 questions, thinking off), judged by Claude at Will's request rather than blind
 by Will: both far below Gemini; `qwen3.8:27b` was no better than `qwen3.5:27b` (usable on ~3 vs
 ~7 of 16 scoreable questions, more errors on basic vocabulary). Gemini stays the tutor.
+
+### 5.5 Gemini-backed hybrid *(decided 2026-11; built in H1–H7)*
+
+Will's decisions of 2026-11 (§10 #74–#83) move tutoring and extraction to Gemini. This section is
+the target design; docs/PLAN.md › *Hybrid H1–H7* builds it. Until a milestone lands, the sections
+it changes still describe the running code; each milestone moves its part from here into them.
+
+```
+ #bamboo ── question ─▶ bamboo agent (OpenClaw, Gemini Flash) ── answer ─▶ #bamboo
+                              │ question + answer (by file path)
+                              ▼
+                        bamboo-tools ─▶ engine: one turn ─┐
+ share link / PDF / paste ─▶ bamboo-tools import (today) ─┴─▶ extract_turn job
+                                                               │
+                         worker ── prompt + one turn ─▶ Gemini (free-tier key, rate-limited)
+                                 └─ fallback ─▶ Ollama (local)
+                         name filter (names.deny) ─▶ engine: verbatim, pinyin merge, dedupe
+```
+
+#### 5.5.1 Tutor and capture (H5; §10 #75)
+
+The tutor is the `#bamboo` OpenClaw agent (`bamboo`), running Gemini Flash. Will asks his
+questions there instead of in the Gemini app. Every question and its answer go to Bamboo as a
+**turn** automatically: the agent hands both to `bamboo-tools` by file path, and the engine stores
+the turn and queues its `extract_turn` job, as for any import. No share link. Gemini share links,
+PDFs and pasted answers still import as today (§5.1). The tutor **never writes cards**: its
+answer is just the turn's reply text, and extraction is the worker's job. Its prompt (a versioned
+file, with the rules of §5.5.8) lives in the repo with the agent's workspace files (§10 #73).
+
+#### 5.5.2 Extraction: `extract_turn.v4` (H4; §10 #74, #76, #77)
+
+There is **one extraction path**, whatever the turn's source. The worker sends each turn to Gemini
+**on its own** (one turn per request) with `worker/prompts/extract_turn.v4.md`:
+
+- **Kinds**: terms and sentences. **No frames** (§10 #77).
+- **Fields**: as v3 (§5.3), plus Gemini's pinyin for each item (§5.5.3) and the breakdown or
+  gloss (§5.5.4). Examples are copied verbatim from the turn; more than one per term is allowed.
+- **Caps**: the per-turn caps of §4.6 (errand 1 item, say 2 terms) are loosened, with evidence: a
+  comparison with decks Gemini made from the same conversations showed Bamboo missing real words.
+  H4 records the new values.
+- **The model sees** only the prompt and the turn (§5.5.8), the whole stored turn (≤ 12,000
+  characters).
+- **Rate limit**: the free tier's per-minute and per-day limits (`sharedConfig.worker.gemini`);
+  429 backs off, and a used-up daily quota waits for the reset (no fallback for quota).
+- **Fallback**: when Gemini is unreachable or keeps failing, the job runs on the local Ollama
+  model (§1.2) with the same contract and the same v4 prompt, the reply cut to 6,000 characters as today (§10 #40).
+  Fallback items carry no Gemini pinyin, so they keep the computed reading until a `pinyin` job
+  (§5.5.3) has run. `job.model` records which model ran.
+- **Name filter**: before posting, the worker drops anything extracted that contains a name from
+  the deny-list (§5.5.8); only a count (`dropped_name`) leaves the Mac.
+
+Every engine check stays (§4.6): hanzi, examples included, must appear verbatim in the turn;
+pinyin is merged (§5.5.3); dedupe; and asking again counts as forgetting. Frame items, if a model
+returns one, are dropped and counted. Existing frame phrases are **retired**: set to `dropped`
+(rows, cards and `review_log` kept), with no frame ranking weight. The `kind` enum keeps `frame`
+until a later contract PR (H2b).
+
+#### 5.5.3 Pinyin: computed, then merged (H1, H4; §10 #80)
+
+**(a) Computed** (H1). pinyin-pro loads its **large dictionary** (`@pinyin-pro/data`), trimmed to
+the entries that change a reading, so it fits a Vercel function. It fixes neutral tones the default
+misses (梯子, 肚子, 舒服, 里脊, 芝麻), which keeps referee calls down. The context-rule table of
+§4.2 (得, 长) is **removed** with its tests, and no rules are added: polyphones are settled by
+reading the sentence in (b), not by heuristics. `repinyin` runs on deploy (§8.2). This is the
+only source for hand-added and fallback-extracted phrases until (b) has run for them. Tests use
+synthetic sentences.
+
+**(b) Merged** (H4). v4 returns Gemini's pinyin. Per syllable:
+
+1. computed and Gemini's agree → accept;
+2. Gemini's syllable isn't a valid reading of that character (pinyin-pro `multiple: true`) → the
+   computed reading wins, with no extra call;
+3. both are valid readings → a **referee** decides: one small Gemini call per phrase (a versioned
+   prompt, run by the worker), which must choose among that character's valid readings plus the
+   neutral tone; anything else is rejected and the computed reading stays;
+4. Will's override wins over everything (§4.2).
+
+Phrases Will adds or edits by hand get the same pass: the engine queues a small `pinyin` job for
+the worker (Gemini's reading of the phrase, then the referee if needed). Until it runs, the phrase
+shows the dictionary reading. The phrase stores which source won for each disputed syllable
+(`pinyin_sources`); each disagreement and its outcome is logged as a `pinyin_disagreement` event,
+and Stats shows the counts. **Stored pinyin is always a valid dictionary reading; Gemini only
+chooses among those readings.**
+
+#### 5.5.4 Card back (H3, H4; §10 #78)
+
+- **Terms**: a character breakdown (each character with its pinyin and a short gloss, then the
+  word's overall meaning), plus the example sentence(s).
+- **Sentences**: a word-by-word gloss, plus one short note on how the sentence is built.
+
+Gemini writes the glosses (v4). A breakdown is stored only if its parts' hanzi, concatenated,
+exactly match the phrase's hanzi (punctuation ignored); glosses and notes are English only. Its
+pinyin isn't stored: each part's pinyin comes from the phrase's merged pinyin (§5.5.3), overrides
+applied. This is an expand migration (`phrase.breakdown`, nullable json) and a contract in
+`shared/src/contracts/`.
+
+#### 5.5.5 New cards: learned while fresh (H2; §10 #79)
+
+- The **queue budget and the expiry of unseen phrases** (§4.7) are removed. Not useful and Already
+  know stay.
+- New cards are introduced **freshest first**: pins (newest first), then the most recently asked
+  (`last_asked_at`), then `effective_score` as the tie-break.
+- The daily limit on new cards (`newPerDay`, §4.4) is raised or removed. Will prefers working
+  through a burst of new cards and then reaching a steady state; H2 estimates the daily reviews
+  during the burst and at steady state from FSRS, and Will picks the setting.
+
+#### 5.5.6 Rebuilding the queue from stored turns (H6, H7; §10 #81)
+
+Prod isn't wiped. All 147 stored turns go through v4 by the Re-run path (§4.6.1), one turn per
+request, at the free-tier rate. Learning cards and review history must survive. The re-run is
+extended first (H6):
+
+- it refreshes the English, note and breakdown of **every phrase it picks, in any status**,
+  leaving the hanzi, the cards and their FSRS state alone;
+- it refreshes pinyin through the merge (§5.5.3), keeping Will's overrides;
+- plain queued phrases it no longer picks are **dropped** (not expired, as §4.6.1's superseding
+  does today);
+- it **reports** active, pinned or asked-again phrases it no longer picks: a Phrases filter lists
+  them, and a bulk **Retire** drops them and keeps `review_log`;
+- it can be limited to N turns.
+
+H7 runs 10 turns as a dry run (counts only), then, after Will approves, the rest.
+
+#### 5.5.7 Keys (H4, H5; §10 #82)
+
+- A new **free-tier** Gemini key, in its own Google project, becomes an OpenClaw auth profile for
+  the `bamboo` agent only, and the agent is pinned to it:
+  `openclaw models auth paste-token --provider google --agent bamboo --profile-id google:bamboo-free`,
+  then `openclaw models auth order set --provider google google:bamboo-free --agent bamboo`.
+- PandaDen's paid key in `~/.openclaw/.env` stays; falling back to it is acceptable.
+- The worker reads the free key from `openclaw-agent`'s `~/.config/bamboo/agent.env`
+  as `BAMBOO_GEMINI_API_KEY` (`BAMBOO_`-prefixed per §10 #42). Will renames the existing entry in
+  `agent.env` to this name.
+- Check which key serves requests with `openclaw models status --agent bamboo --probe` and one
+  real request. The host setup is recorded in PandaDen's host runbook (H5), and applied by the
+  orchestrator via `ssh agent` after Will approves.
+
+#### 5.5.8 Privacy on the Gemini path (§10 #83)
+
+These apply to every milestone and to every prompt it writes.
+
+- **Prompts**: the tutor prompt and v4 say never to put a person's name in an answer or a card
+  (use 宝宝, 孩子, 阿姨, 月嫂 or 妈妈), and to keep personal health specifics (diagnoses, doses,
+  measurements) out of cards. Ordinary words like 胀气 are fine.
+- **Name deny-list**: `~/.config/bamboo/names.deny` in the `openclaw-agent` account (mode 600),
+  kept on the Mac only and filled in by Will himself: UTF-8, one name per line (hanzi or a Latin
+  spelling), blank lines and `#` comments ignored, Latin matched case-insensitively. Anything
+  extracted that contains a listed name is dropped (an English field may instead be rewritten to
+  a role word). The file is never read into a chat, committed, logged or used in tests; logs and
+  events carry only a count. Fixtures use synthetic placeholder names.
+- **What goes to Gemini**: only the turn and the prompt. No phrase history, stats or other
+  turns. The tutor agent's workspace files carry no names or health details either.
+- **Prod data**: counts only, anywhere. Ask Will before `make prod-copy`, and delete the copy
+  afterwards (§8.6).
 
 ## 6. Web UI (PWA)
 
@@ -1067,6 +1250,9 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 - `round_finished {cards, ms}`
 - `nudge_sent {local_time, nudge_at}` (`HH:MM`, household time)
 - `worker_heartbeat {...}`
+- *from H2b–H6 (§5.5):* `phrase_retired {phrase_id, reason}` (a retired frame, or a bulk Retire),
+  `pinyin_disagreement {phrase_id, syllables, outcome}`; `extraction` gains `dropped_frame` and
+  `dropped_name` (a count, never the name)
 
 The Stats page shows, for the last 4 weeks (`config.stats`; pure measures in
 `web/lib/domain/stats.ts`, queries in `web/lib/repo/stats.ts`):
@@ -1103,6 +1289,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1). On a 401, `bamboo-tools` names where its token came from (`BAMBOO_AGENT_API_TOKEN in <agent.env path>`, or `environment variable BAMBOO_AGENT_API_TOKEN`), never the value (§10 #46) |
+| `BAMBOO_GEMINI_API_KEY` *(from H4)* | worker | the free-tier Gemini key (§5.5.7, §10 #82), in `openclaw-agent`'s `~/.config/bamboo/agent.env`; not in `worker.env` or the gateway env. `~/.config/bamboo/names.deny` (§5.5.8) sits beside it |
 | `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.8:27b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env for every key it lists (§10 #45): its keys are generic, so an inherited `WORKER_API_TOKEN` or `OLLAMA_URL` can't override Bamboo's. A key the file leaves out still comes from the env |
 
 ### 8.2 Deploy
@@ -1219,6 +1406,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   `AGENTS.md` doesn't have yet (a dedicated agent's is rewritten in the same run).
 
 ### 8.4 Private data
+
+The Gemini-path rules (prompts, the `names.deny` list, what goes to Gemini) are in §5.5.8.
 
 Real conversations reach the Mac only through Discord, as links or as attachments that OpenClaw
 stores. Will never needs to put files on the Mac's filesystem. If a developer session saves a
@@ -1354,15 +1543,15 @@ bamboo/
 
 | # | Decision | Why |
 |---|---|---|
-| 1 | Keep Gemini as the in-the-moment tutor; Bamboo owns memory | A 9B local model is clearly worse than Gemini Flash at decoding guesses in context and at natural Mandarin, and lacks voice/photo input; revisit with a measured comparison (ROADMAP) |
+| 1 | **Refined by #75:** Gemini stays the tutor, but as the `#bamboo` agent, which feeds Bamboo directly. Keep Gemini as the in-the-moment tutor; Bamboo owns memory | A 9B local model is clearly worse than Gemini Flash at decoding guesses in context and at natural Mandarin, and lacks voice/photo input; revisit with a measured comparison (ROADMAP) |
 | 2 | Review in a PWA, not Discord | Audio, big grade buttons and short rounds work better in a page than as chat turns |
 | 3 | Capture = share link (primary), PDF (always supported), pasted answer, all via OpenClaw in `#bamboo` | Share link is ~3 taps from the Gemini app; a share page's layout can change without notice, so the PDF path is required, not optional; reuses PandaBase's Discord intake pattern and replies in-thread |
 | 4 | Read pages and PDFs on the Mac; upload only new turns as text | The Mac can reach Gemini and has `pdftotext`; no file storage or presigned uploads; small payloads |
 | 5 | Turn identity = hash of Will's prompt text | Stable across re-shares, formats and multiple conversations |
-| 6 | Local LLM extracts and rates; it never writes Chinese for study | 9B models copy and classify Chinese well; the verbatim check enforces it, examples included |
+| 6 | **Superseded by #74, #76** (Gemini extracts; the verbatim rule stays). Local LLM extracts and rates; it never writes Chinese for study | 9B models copy and classify Chinese well; the verbatim check enforces it, examples included |
 | 7 | Terms carry example sentences copied from Gemini | Will needs usage, not just the word; copying keeps Chinese generation out of the local model |
-| 8 | Automatic selection: ranked queue → ≤ 3 new/day (5 since #64); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
-| 9 | Pinyin computed (pinyin-pro) with overrides | Gemini's pinyin is inconsistent even within a single reply |
+| 8 | **Daily cap superseded by #79.** Automatic selection: ranked queue → ≤ 3 new/day (5 since #64); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
+| 9 | **Refined by #80** (computed, then merged with Gemini's among valid readings). Pinyin computed (pinyin-pro) with overrides | Gemini's pinyin is inconsistent even within a single reply |
 | 10 | "Asked again" = Again on active phrases, revives dropped/expired ones | Re-asking is the clearest forgetting (and usefulness) signal available |
 | 11 | Daily unit = one round of ~10 cards; FSRS at 0.85 | Tiny required unit plus optional extra, as habit-forming apps do; smaller review load |
 | 12 | No "Used it" button | Will wouldn't tap it |
@@ -1376,7 +1565,7 @@ bamboo/
 | 20 | Read share links through Gemini's share RPC over plain HTTPS, not headless Chromium (M0) | The page HTML has no conversation; the RPC returns it whole (prompts verbatim, checklist data the DOM hides) in ~1 s with no browser on the Mac; both are undocumented, and the PDF path covers breakage |
 | 21 | Image-only prompts are keyed on the reply (§4.5) | Found in M0: an empty prompt would collide with every other empty prompt; the reply is the only stable text the turn has |
 | 22 | FSRS-7 through ts-fsrs 6's `DefaultScheduler`, with `allowModelOverride: false` | No history to migrate, so start on the library's current model; the explicit 1m/10m learning steps keep Again-within-a-round predictable. The model is in `config.fsrs.version`, and `review_log.fsrs_log` keeps what a later replay needs |
-| 23 | pinyin-pro plus a small table of context rules (得, 长, 只), re-applied to stored phrases on each deploy | pinyin-pro alone misreads the most common household polyphones; a rule table is cheap, tested, and Will's overrides remain the final word |
+| 23 | **Superseded by #80** (large dictionary, no rule table). pinyin-pro plus a small table of context rules (得, 长, 只), re-applied to stored phrases on each deploy | pinyin-pro alone misreads the most common household polyphones; a rule table is cheap, tested, and Will's overrides remain the final word |
 | 24 | Turning a card type off suspends the card | Deleting it would drop its review history; suspending keeps `review_log` append-only and makes the toggle reversible |
 | 25 | A finished round meets the daily goal even if more is due; "Another round" stays optional | The daily unit is one round (PRD §3.4); showing "✓ Done" with an optional extra matches the habit model |
 | 26 | A frame's slot (`…`) matches anything in the verbatim check (§4.6) | Gemini writes the full sentence ("阿姨，您是说要加水吗？") more often than the frame itself; a plain substring check would drop every reusable frame, the item kind the ranking values most. Each fixed part must still be copied, in order |
@@ -1411,22 +1600,32 @@ bamboo/
 | 55 | Grading shows the next card at once and saves in the background (ordered queue, retries, idempotent `reviewId`) | The round's cards and each grade's interval preview are already on the client, so nothing about the next card depends on the save. Ordered saves keep a card's repeated grades in sequence; the client id makes a retry safe when only the response was lost; a stuck save is shown with Retry and blocks finishing, so Today never counts a round with lost answers |
 | 56 | Slow replay is 0.45 (was 0.6); `cancel()` only when busy | iOS compresses Web Speech rates (WebKit → AVSpeechSynthesizer), so 0.6 vs 0.9 was barely audible. Half the normal rate stays clear on desktop voices too. Must be checked by ear on an iPhone |
 | 57 | Learning cards in a round come in a per-round seeded order; review cards stay most overdue first, new cards stay in queue order | With all-Good answers, a new card rated Good is due again in 10 minutes (the second learning step, inside learn-ahead), so it's in the next round; ordered by due, the card graded first always led that round, which Will noticed as "the same card first every round". The shuffle is seeded by the round's start, so `buildRound` stays pure and testable. It changes no scheduling: whether a card answered right should come back the same evening at all (the 10-minute step) is a separate question for Will |
-| 58 | Keep Gemini as the tutor after the local evaluation (2026-11-06); no local "Ask" page yet | Judged blind with `make tutor-eval` (§5.4), one local model was much worse than Gemini Flash and the other, though closer, still clearly worse. Confirms #1 with a measurement; re-run the evaluation when a stronger local model fits the Mac |
+| 58 | Keep Gemini as the tutor after the local evaluation (2026-11-06); no local "Ask" page yet. **Its measurement is the basis of #74** | Judged blind with `make tutor-eval` (§5.4), one local model was much worse than Gemini Flash and the other, though closer, still clearly worse. Confirms #1 with a measurement; re-run the evaluation when a stronger local model fits the Mac |
 | 59 | `heard_as` is shown only on a Listen card's back, as "you first heard: …" under the answer; the front is the audio alone | On the front, Will's own misheard spelling (often one run-together guess for a whole phrase) was the first thing he read, which reinforced the mistake, and when one question became two cards both showed the same guess. Under the correct pinyin it becomes a contrast instead. `heard_as` is still stored and still used for ranking and dedupe |
 | 60 | Slow replay is 0.3 (was 0.45, #56) | Will's iPhone feedback: 0.45 was better than 0.6 but still not slow enough, because iOS compresses the rate range. Still to be checked by ear on the iPhone |
 | 61 | "Learn N more" is a start-round option (`learnMore`), granted by the engine only once today's `newPerDay` is used up; no new column | The round's card ids are stored when it's built, so the extra allowance only matters at build time: a reload resumes the same cards, and the next round counts today's introductions (now past the cap) as usual. Deciding on the server keeps the cap authoritative (a stale button gives an ordinary round). Opt-in, not a higher `newPerDay`: each new card adds future reviews, so more is a choice for a day with spare time. The round reserves room for the extras, or a long due list would leave the button doing nothing |
 | 62 | Verification loops: a seeded app with phone screenshots, and an on-demand read-only prod copy (§8.6), ported from PandaBase | Tests passed while checks Will did by hand on the iPhone stayed pending for days. A seeded server with data in every state lets a session look at each screen in both themes; the prod copy answers "does it hold on real data?" without touching prod. Read-only token, SELECT-only wrapper and counts-only output, because the data is Will's own conversations |
 | 63 | No addressee on phrases or cards; extract_turn.v2 writes a `note` only when the wording depends on who hears it. The `addressee` column stays, unused, until a later contract PR | On prod data (counts only), the addressee was taken from the conversation title, so it tagged whole conversations: most phrases were single words labeled "yuesao", and no meaning was ever stored with two addressees. The "→ 阿姨" chip on the Say front was on nearly every card and told Will nothing; yuesao and nanny both showed 阿姨. Audience matters only for register (baby talk, 您), which a short English note covers without a fixed list of audiences. The contract still accepts `addressee` so a v1 worker keeps working until `make mac-update` |
-| 64 | The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v3`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
+| 64 | **Queue budget, frame weight and per-turn caps superseded by #77, #79, #76.** The 2026-11 ranking review: a bundled word-frequency signal (wordfreq, spoken Mandarin), the core-tag boost replaced by "household tags aren't penalized for rarity", rebalanced weights, a daily re-score, a queue budget (21 days of new cards), engine caps per turn (errand 1 item, say 2 terms), tags limited to the fixed list, `extract_turn.v3`, and `newPerDay` 5 | Measured on a read-only prod copy (counts only): about 15 phrases a day came in against 3 introduced, leaving ~100 days of queue; the model rated 67% of phrases usefulness 5 and 79% had a core tag, so neither separated anything, and the order came down to turn kind and frames. Frequency is computed, like pinyin, so it fits "never trust LLM-written metadata". wordfreq over jieba's MIT dictionary: jieba is news-weighted (谢谢 4.3 vs 5.2, 洗碗 1.7 vs 3.1); CC BY-SA applies to the data file only. Subtitles under-count baby words, hence the household-tag rule rather than a bonus. A budget, not a bigger `minAgeDays`, because the queue grew several times faster than it drained; expired phrases still come back when asked again. The model's tags were stored unchecked (invented "clothes", one item with 6): filtered on the engine, with a regression test, and constrained in the worker's schema; the API stays lenient so an older worker isn't refused. 5 new a day because reviews were light (about 3 cards a round) |
 | 65 | Re-run old turns with the current prompt (§4.6.1), on Will's tap, as `reextract` jobs that never count as asking again, never touch their import, and wait behind ordinary jobs | Read-only prod counts (2026-11-13): all but 6 of 125 turns were read by `extract_turn.v1`, which took ~4.6 items per "how do I say" turn and gave about half no sentence; the #64 budget then expired 154 phrases at once, so 17 of 54 such questions had nothing left, while single-character fragments of Gemini's example sentences reached rounds. Re-running beats tuning v1's leftovers: v3 already asks for the sentence and fewer terms. Dating new phrases to the turn keeps decay and the budget honest; not bumping keeps `asked_count` meaning "Will asked"; leaving dropped phrases dropped respects his choice. A tap, not automatic on every prompt bump, because each re-run spends Mac model time and visibly reshuffles Up next; ordering keeps a new import's Discord reply from waiting behind the backlog |
 | 66 | A sentence weighs like a frame (`kindWeight.sentence` 2, was 1), and length costs points only past `phrase.longChars` (20, was 12) | Read-only prod counts (2026-11-13, in memory): sentences had already lost almost nothing to the frequency signal (−0.05 on average; frames +0.46, terms −0.34), but the length penalty cost them about 2 points on average, while every sentence was from a "how do I say" turn, the very thing Will asked for. Under the old weights only 5 of 14 sentences ranked inside the 105-phrase budget (median rank 162 of 294). With these, 9 of 14 do (median 36), and the 5 left out are the long, formal ones (26–44 characters), which should sink. 20 is the existing `long` flag, so "long" means one thing |
 | 67 | A say turn without a sentence gets the shortest example of its kept terms as its sentence (`from_example`), at extraction and, once, by the daily cron for stored results | After the #65 re-run (prod counts, 2026-11-13), the local model returned a sentence for 5 of 47 say turns and exceeded the 2-term cap on many; prompting harder is unreliable with a small local model. The examples are verbatim from Gemini's reply and contain the term, and their English came with them, so promoting one stores no LLM-written Chinese. 42 of the 42 sentence-less say turns had such an example. Shortest, because Gemini's first suggestion is often the long, formal one. A cron backfill rather than another re-run: the stored results already hold the examples, so no model time is spent; existence in any status makes it idempotent and respects Will's drops |
 | 68 | OpenClaw's reply model is `qwen3.8:27b` (was `qwen3.5:27b`): the tutor eval's default 27B (and, until #69, `agent.model`'s default). The worker stays on `qwen3.5:9b` | The host moved every OpenClaw agent on the Mac to `qwen3.8:27b` (~18GB; tools, vision, thinking; Ollama 0.32.12+), so Bamboo's defaults follow it. On the 32GB Mac with one loaded model, the 27B and the 9B still swap rather than coexist. Measurements and the 2026-11-06 eval above were taken with `qwen3.5:27b` and stay as recorded. qwen3.8 takes thinking levels (`false`/`low`/`medium`/`xhigh`); the serving agent's `thinkingDefault` should stay `off` (§5.1), and `bamboo-eval --think` (boolean) isn't adapted to levels |
 | 69 | The host binds `#bamboo` to an agent (on the Mac, `willchan` at first; a dedicated `bamboo` agent since 2026-11-14, §5.1); `make agent-install` no longer adds a `bamboo` agent, writes its `AGENTS.md` or merges a binding, and drops `agent.model`. It only reads the serving agent and puts the automations on it. `make agent-check` fails on a missing binding, agent or skill access, and warns on thinking, a stale inline copy of `SKILL.md` in the agent's `AGENTS.md`, or automations on another agent | The host's rollout (2026-11-12) replaced the `bamboo` agent with Will's personal `willchan` agent, which also serves `#bamboo`. The old installer would have re-added `bamboo`, put its binding ahead of willchan's and moved the automations back to `main`, undoing that rollout on every `make mac-update`. Routing and agent settings are the host's, like Ollama's; Bamboo keeps the checks that matter for intake (§5.1: thinking off, the instructions inline) as reports. Later that day the host moved `#bamboo` from `willchan` to a dedicated `bamboo` agent of its own (§5.1); nothing in Bamboo changed for it |
-| 70 | The worker extracts with `qwen3.8:27b` (was `qwen3.5:9b`), with `num_ctx` and `keep_alive` per model matching the host's OpenClaw settings (`worker.modelParams`) | With one loaded model, every 9B job evicted the shared reply model, so the next Discord reply cold-loaded. Background jobs can be slower. On the 8 synthetic fixture turns (`test:ollama`, `extract_turn.v3`, 2026-11-14) the 27B was better: 8/8 valid either way, turn kind 8/8 vs 6/8, items verbatim 14/14 vs 11/12, examples verbatim 7/7 vs 8/10, model time 78 s vs 42 s. Matching `num_ctx` matters because the request that loads a model sets its context for everyone (a job that loaded the 27B at 8k left OpenClaw at 8k); matching `keep_alive` keeps a job from unloading it early. With the 32k settings: 8/8 valid, turn kind 8/8, items 15/15, examples 8/8, model time 56 s. Removing the 9B entirely waits on PandaBase's vision jobs |
+| 70 | **Fallback only since #74.** The worker extracts with `qwen3.8:27b` (was `qwen3.5:9b`), with `num_ctx` and `keep_alive` per model matching the host's OpenClaw settings (`worker.modelParams`) | With one loaded model, every 9B job evicted the shared reply model, so the next Discord reply cold-loaded. Background jobs can be slower. On the 8 synthetic fixture turns (`test:ollama`, `extract_turn.v3`, 2026-11-14) the 27B was better: 8/8 valid either way, turn kind 8/8 vs 6/8, items verbatim 14/14 vs 11/12, examples verbatim 7/7 vs 8/10, model time 78 s vs 42 s. Matching `num_ctx` matters because the request that loads a model sets its context for everyone (a job that loaded the 27B at 8k left OpenClaw at 8k); matching `keep_alive` keeps a job from unloading it early. With the 32k settings: 8/8 valid, turn kind 8/8, items 15/15, examples 8/8, model time 56 s. Removing the 9B entirely waits on PandaBase's vision jobs |
 | 71 | `bamboo-eval`'s default models are `qwen3.8:27b` alone (was `qwen3.5:9b`, `qwen3.5:27b`, then `qwen3.5:9b`, `qwen3.8:27b`) | Every caller on the Mac (OpenClaw, Bamboo's worker, PandaBase's worker) is on `qwen3.8:27b` as of 2026-11-14, so the 9B and 4B can be removed; a default that names an unpulled model stops the run. The 9B lost both tutor evaluations, so it isn't a candidate worth a default. Other models are compared with `--models` |
 | 72 | `bamboo-eval` sends the host's `keep_alive` (`worker.modelParams`) for the shared 27B, and its own 10m only for models it compares | The last request's `keep_alive` wins and the eval leaves an already-loaded 27B loaded, so its 10m would have cut OpenClaw's reply model to 10 min of residency after a run (pandaden *Memory budget*: every client sends 30m) |
 | 73 | Bamboo's dedicated agent gets its workspace files from this repo (`agent/workspace/`, written by `make agent-install`): `AGENTS.md` generated from a header plus `SKILL.md`, `SOUL.md` and `IDENTITY.md` replaced, `USER.md` only seeded. A shared agent's workspace stays the host's. Refines #69: the host still adds the agent, binds it and sets its tools and thinking | The hand copy of `SKILL.md` in `AGENTS.md` fell behind until someone re-copied it, and `agents add` left a personal assistant's generic `SOUL.md`, `USER.md` and `IDENTITY.md` ("have opinions", "search for it") on an intake bot (2026-11-14). What the agent says belongs with the app, like the skill; that it exists and what it can reach belong to the host. Same split as PandaBase's `agent/workspace/` |
+| 74 | **Gemini replaces the local models for tutoring and extraction; Ollama stays only as the worker's fallback extractor.** Reverses "local models only at runtime" (PRD §4.2, #6) | The tutor evaluation (§5.4, #58) measured the gap: in Will's blind judging (2026-11-06) Gemini Flash was clearly better than both local models, and the 2026-11-14 re-run with `qwen3.8:27b` did no better. Extraction shows the same gap: a comparison with decks Gemini made showed Bamboo missing real words. The turns are Gemini conversations already, and §5.5.8 (#83) limits what is sent to the turn and the prompt |
+| 75 | The tutor is the `#bamboo` OpenClaw agent on Gemini Flash; every question and answer there becomes a Bamboo turn automatically, with no share link. Share links and PDFs still import (§5.5.1) | Capture was the painful step (PRD §1); asking where Bamboo listens makes it free. Links and PDFs stay for conversations held in the Gemini app |
+| 76 | One extraction path: the worker sends each turn alone to Gemini with `extract_turn.v4`; the tutor never writes cards; every engine check stays (verbatim hanzi with examples, pinyin merge, dedupe, asked again = forgetting); per-turn caps loosened (§5.5.2) | One path means one set of checks and one prompt to tune, whatever the turn's source; a tutor writing cards would skip the verbatim check. #64's caps were set for a local model; a comparison with Gemini-made decks showed Bamboo missing real words |
+| 77 | Frames removed: v4 doesn't extract them, existing frame phrases are retired (`dropped`, rows kept), and frame ranking weight goes; the `kind` enum keeps `frame` until a contract PR | Will's call (2026-11). Retiring rather than deleting keeps `review_log` append-only; the enum change waits for expand → contract |
+| 78 | A richer card back: terms get a character breakdown (character, pinyin, short gloss, then the overall meaning) and their example(s); sentences a word-by-word gloss and one note on how they're built. Gemini writes glosses; a breakdown must match the phrase's hanzi exactly; its pinyin is the phrase's (#80). Expand migration and contract (§5.5.4) | Will's call (2026-11). The exact-match rule and pinyin taken from the phrase keep the existing guarantee: no unchecked LLM-written Chinese or reading on a card |
+| 79 | New cards are learned while fresh: no queue budget and no expiry of unseen phrases (Not useful and Already know stay); freshest first; the daily new-card limit raised or removed, set by Will from an FSRS estimate (§5.5.5, H2) | Will prefers working through a burst of new cards, then a steady state. Supersedes #8's cap and #64's budget |
+| 80 | Pinyin is computed with pinyin-pro's large dictionary (trimmed to the entries that change a reading), then merged per syllable with Gemini's: agree → accept; Gemini's not a valid reading → computed, no call; both valid → a referee call that must choose among valid readings plus the neutral tone; Will's override wins. No context rules. Which source won is stored and disagreements are logged (§5.5.3) | The large dictionary fixes neutral tones (梯子, 肚子, 舒服, 里脊, 芝麻) and keeps referee calls down; polyphones are settled by reading the sentence, not by heuristics. Gemini's own pinyin is inconsistent (#9), so it only ever chooses among dictionary readings: stored pinyin is always a valid one. Supersedes #23 |
+| 81 | Rebuild the queue from the 147 stored turns through an extended Re-run, one turn per request at the free-tier rate; prod isn't wiped (§5.5.6) | Learning cards and review history must survive. The extension refreshes English, note and breakdown on every phrase it picks in any status, never hanzi, cards or FSRS state, and reports active, pinned or asked-again phrases it no longer picks for a bulk Retire that keeps `review_log` |
+| 82 | Keys: a new free-tier Gemini key in its own Google project is the `bamboo` agent's auth profile (`google:bamboo-free`), pinned first; PandaDen's paid key in `~/.openclaw/.env` stays, and falling back to it is acceptable; the worker reads the free key from `agent.env` (§5.5.7) | Keeps Bamboo's usage apart from PandaDen's. `agent.env` is already Bamboo's own Mac-side secret file, out of the shared gateway env (#33, #42) |
+| 83 | Privacy on the Gemini path: prompts forbid names (宝宝, 孩子, 阿姨, 月嫂, 妈妈 instead) and personal health specifics in answers and cards; a Mac-only deny-list (`~/.config/bamboo/names.deny`, filled in by Will) drops anything extracted that contains a listed name; only the turn and the prompt go to Gemini; prod data is counts only (§5.5.8) | Replaces PRD §4.2's "family content never goes to a cloud LLM": the turns already went to Gemini when Will asked them, so the rule is now that names and health details never reach cards, logs, the repo or extra context. The list stays on the Mac because writing it anywhere else would leak the names it protects |
 
 ## Appendix A — Synthetic fixtures
 
