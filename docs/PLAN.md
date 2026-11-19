@@ -1030,6 +1030,10 @@ table.
 - **Acceptance:** standard commands pass (web 263 tests; lib/domain coverage 99.5% statements,
   97.2% branches); e2e 9/9. `pnpm db:seed` with main's pinyin then `repinyin` with H1's: 3 of the
   17 synthetic phrases changed; a second run: 0.
+- **CI flake fixed outside H1:** `agent/tools/src/install.test.ts`'s second `describe` (the
+  agent binding) had the default 5 s timeout; one of its installer tests took 3.9 s on main and
+  timed out once the heavier web suite ran alongside it in CI. It now uses `{ timeout: 20_000 }`,
+  like the file's first `describe` (whitespace-only reindent otherwise).
 - **For H4:** load the dictionary before any `pinyin(…, { multiple: true })` call, which means
   importing `web/lib/domain/pinyin.ts` (it calls `addDict` at module load). If the merge has to
   run in `shared/` or the worker, move the data file and the `addDict` call there.
