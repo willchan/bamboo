@@ -4,6 +4,7 @@ import {
   ImportRequest,
   KnownRequest,
   sharedConfig,
+  TutorTurnRequest,
   turnKey,
   type ImportKind,
   type Notification,
@@ -85,6 +86,32 @@ export class FakeEngine {
       imp.turnsNew += fresh.length;
       if (!req.more) imp.closed = true;
       return reply(200, { import_id: imp.id, turns_new: imp.turnsNew, turns_added: fresh.length });
+    }
+    if (method === "POST" && p === "/api/turns") {
+      const parsed = TutorTurnRequest.safeParse(body);
+      if (!parsed.success) return reply(400, { error: "invalid_body" });
+      const req = parsed.data;
+      const idem = `tutor:${req.discord_message_id}`;
+      let imp = this.imports.find((i) => i.idem === idem);
+      if (!imp) {
+        imp = {
+          id: `imp${this.imports.length + 1}`,
+          kind: "tutor",
+          idem,
+          turnsNew: 0,
+          closed: true,
+          calls: 0,
+        };
+        this.imports.push(imp);
+      }
+      imp.calls++;
+      const k = turnKey(req, "tutor");
+      const fresh = !this.keys.has(k);
+      if (fresh) {
+        this.keys.add(k);
+        imp.turnsNew++;
+      }
+      return reply(200, { import_id: imp.id, turn_new: fresh });
     }
     if (method === "GET" && p === "/api/agent/notifications")
       return reply(200, {

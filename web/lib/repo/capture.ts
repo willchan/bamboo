@@ -26,6 +26,7 @@ import {
   type Heartbeat,
   type ImportRequest,
   type Notification,
+  type TutorTurnRequest,
 } from "@bamboo/shared";
 import { and, asc, count, desc, eq, inArray, lt, max, sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
@@ -139,6 +140,8 @@ export async function receiveImport(
         idempotencyKey,
         turnsTotal: req.turns_total,
         status: "extracting",
+        // A tutor turn's answer is already in #bamboo: no summary reply (PLAN H5 Notes).
+        notifiedAt: kind === "tutor" ? now : null,
         createdAt: now,
       }),
     );
@@ -204,6 +207,37 @@ export function importPastedText(db: Db, text: string, now: number): Promise<Rec
       more: false,
     },
     null,
+    now,
+  );
+}
+
+/**
+ * `POST /api/turns` (H5, DESIGN §5.5.1): one question asked in #bamboo and the tutor's answer, as
+ * a `tutor` import with one turn and its extract job. Idempotent on the question's Discord
+ * message id (`tutor:<id>`). It's marked notified at once: the answer is the only reply.
+ */
+export async function receiveTutorTurn(
+  db: Db,
+  req: Omit<TutorTurnRequest, "user_text" | "reply_text"> & {
+    user_text: string;
+    reply_text: string;
+  },
+  now: number,
+): Promise<ReceiveResult> {
+  return receiveImport(
+    db,
+    {
+      kind: "tutor",
+      origin: "discord",
+      source_ref: req.prompt_version,
+      conversation_title: null,
+      discord_channel_id: req.discord_channel_id ?? null,
+      discord_message_id: req.discord_message_id,
+      turns_total: 1,
+      turns: [{ user_text: req.user_text, reply_text: req.reply_text, position: 0 }],
+      more: false,
+    },
+    `tutor:${req.discord_message_id}`,
     now,
   );
 }

@@ -5,9 +5,10 @@
 #
 #   ✗ #bamboo (discord.channel_id in ~/.config/bamboo/bamboo.config.json) isn't bound to an agent,
 #     the agent has no config entry, or its skills allowlist leaves out bamboo;
-#   ⚠ its thinkingDefault isn't off (slow replies), its workspace AGENTS.md lacks lines of
-#     SKILL.md's instructions (a stale inline copy), or the bamboo-* automations run on another
-#     agent. These are the host's to change.
+#   ⚠ its model isn't Gemini Flash (the tutor, H5), its thinkingDefault isn't off (slow
+#     replies), its workspace AGENTS.md lacks lines of SKILL.md's instructions or of the tutor
+#     prompt (a stale inline copy), or the bamboo-* automations run on another agent. These are
+#     the host's to change.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,9 +55,16 @@ if [ -n "$agent" ]; then
   if [ -z "$entry" ]; then
     bad "no $agent agent (agents.entries.$agent)"
   else
-    model="$(printf '%s' "$entry" | jq -r '.model // empty')"
+    model="$(printf '%s' "$entry" | jq -r 'if (.model | type) == "object" then .model.primary else .model end // empty')"
     [ -n "$model" ] || model="$(cfg_get agents.defaults.model | jq -r 'if type == "object" then .primary else . end // empty' 2>/dev/null || true)"
     ok "the $agent agent exists (${model:-default model})"
+    # H5: the tutor runs on Gemini Flash (DESIGN §5.5.7). The host's runbook sets the model and
+    # the auth profiles; Bamboo only reports. `openclaw models status --agent <id> --probe`
+    # shows which key serves.
+    case "$model" in
+      google/gemini-*flash*) ok "$agent answers with $model (the tutor)" ;;
+      *) heads_up "$agent's model is '${model:-default}', not Gemini Flash: the #bamboo tutor needs google/gemini-…-flash (the host's runbook sets it, DESIGN §5.5.7)" ;;
+    esac
     if printf '%s' "$entry" | jq -e '(.skills | type) != "array" or (.skills | index("bamboo"))' >/dev/null; then
       ok "$agent can use the bamboo skill"
     else
@@ -74,11 +82,11 @@ if [ -n "$agent" ]; then
     if [ ! -f "$agents_md" ]; then
       heads_up "no $agents_md: the agent will need to open SKILL.md itself"
     elif [ -x "$SETUP_TSX" ]; then
-      if missing="$(setup missing "$SKILL_FILE" "$agents_md" 2>&1)"; then
+      if missing="$(setup missing "$SKILL_FILE" "$agents_md" "$TUTOR_FILE" 2>&1)"; then
         if [ -z "$missing" ]; then
-          ok "$agents_md has SKILL.md's instructions"
+          ok "$agents_md has SKILL.md's instructions and the tutor prompt"
         else
-          heads_up "$agents_md lacks $(printf '%s\n' "$missing" | wc -l | tr -d ' ') line(s) of SKILL.md's instructions; run make agent-install (a dedicated agent) or update its #bamboo section (a shared agent). First: $(printf '%s\n' "$missing" | head -n 1)"
+          heads_up "$agents_md lacks $(printf '%s\n' "$missing" | wc -l | tr -d ' ') line(s) of SKILL.md's instructions or the tutor prompt; run make agent-install (a dedicated agent) or update its #bamboo section (a shared agent). First: $(printf '%s\n' "$missing" | head -n 1)"
         fi
       else
         bad "can't compare $agents_md with $SKILL_FILE: $missing"

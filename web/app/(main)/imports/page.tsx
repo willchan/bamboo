@@ -16,7 +16,12 @@ const PASTED: Record<string, { text: string; ok: boolean }> = {
   busy: { text: "Something else was importing the same answer. Try again.", ok: false },
 };
 
-const KIND: Record<Import["kind"], string> = { link: "Link", pdf: "PDF", text: "Pasted" };
+const KIND: Record<Import["kind"], string> = {
+  link: "Link",
+  pdf: "PDF",
+  text: "Pasted",
+  tutor: "Asked in #bamboo",
+};
 
 const plural = (n: number, one: string) => `${n} ${n === 1 ? one : `${one}s`}`;
 
@@ -122,7 +127,8 @@ export default async function ImportsPage({ searchParams }: PageProps<"/imports"
           <h2 className="font-semibold">Recent</h2>
           {recent.length === 0 ? (
             <p className="text-sm text-muted">
-              Nothing yet. Share a Gemini conversation to #bamboo, or paste an answer above.
+              Nothing yet. Ask a question in #bamboo, share a Gemini conversation there, or paste an
+              answer above.
             </p>
           ) : (
             <ul className="flex flex-col divide-y divide-border" data-testid="imports">

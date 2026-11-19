@@ -31,12 +31,30 @@ export function instructionLines(skill: string): string[] {
   return out;
 }
 
+/** A versioned prompt file (worker/prompts/tutor.v1.md) without its leading `<!-- … -->` note. */
+export function promptBody(prompt: string): string {
+  const body = prompt
+    .replace(/\r\n/gu, "\n")
+    .replace(/^\s*<!--[\s\S]*?-->\s*/u, "")
+    .trim();
+  if (body === "") throw new Error("the tutor prompt is empty");
+  return body;
+}
+
+/** The tutor prompt's non-blank lines, trailing whitespace ignored (H5). */
+export function tutorLines(prompt: string): string[] {
+  return promptBody(prompt)
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .filter((l) => l !== "");
+}
+
 /**
  * A dedicated agent's AGENTS.md (DESIGN §8.3, §10 #73): agent/workspace/AGENTS.header.md (its own
- * heading and scope), then the skill's body after its title and `Scope:` paragraph, unchanged, so
- * `missingInstructions` finds nothing missing.
+ * heading and scope), then the tutor prompt (H5; without its note), then the skill's body after
+ * its title and `Scope:` paragraph, unchanged, so `missingInstructions` finds nothing missing.
  */
-export function agentsMd(header: string, skill: string): string {
+export function agentsMd(header: string, skill: string, tutor?: string): string {
   const lines = skillBody(skill).replace(/\r\n/gu, "\n").split("\n");
   const scope = lines.findIndex((l) => l.startsWith("Scope:"));
   if (scope < 0) throw new Error("SKILL.md has no Scope: paragraph");
@@ -44,18 +62,23 @@ export function agentsMd(header: string, skill: string): string {
   while (end < lines.length && lines[end]!.trim() !== "") end++;
   const rest = lines.slice(end).join("\n").trim();
   if (rest === "") throw new Error("SKILL.md has no instructions after its Scope: paragraph");
-  return `${header.replace(/\r\n/gu, "\n").trimEnd()}\n\n${rest}\n`;
+  const tutorPart = tutor === undefined ? "" : `${promptBody(tutor)}\n\n`;
+  return `${header.replace(/\r\n/gu, "\n").trimEnd()}\n\n${tutorPart}${rest}\n`;
 }
 
-/** The skill's instruction lines that the AGENTS.md text doesn't have (empty: it's in step). */
-export function missingInstructions(skill: string, agentsMd: string): string[] {
+/**
+ * The skill's instruction lines (and the tutor prompt's, when given) that the AGENTS.md text
+ * doesn't have (empty: it's in step).
+ */
+export function missingInstructions(skill: string, agentsMd: string, tutor?: string): string[] {
   const have = new Set(
     agentsMd
       .replace(/\r\n/gu, "\n")
       .split("\n")
       .map((l) => l.trimEnd()),
   );
-  return instructionLines(skill).filter((l) => !have.has(l));
+  const want = [...(tutor === undefined ? [] : tutorLines(tutor)), ...instructionLines(skill)];
+  return want.filter((l) => !have.has(l));
 }
 
 export interface Binding {

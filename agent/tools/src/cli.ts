@@ -3,7 +3,7 @@
 // database and never calls a model.
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { sharedConfig, type ImportKind, type Notification } from "@bamboo/shared";
+import { routeText, sharedConfig, type ImportKind, type Notification } from "@bamboo/shared";
 import { Api, ApiCallError, type Fetch } from "./api";
 import { automation, NO_REPLY } from "./automation";
 import { loadSettings, type Settings } from "./env";
@@ -16,6 +16,13 @@ export const USAGE = `usage: bamboo-tools <command> [options]
   import --url <link> | --file <pdf> | --text-file <txt> [--channel-id <id>] [--message-id <id>]
       Upload a conversation's new turns. Prints JSON {import_id, turns_total, turns_new,
       conversation_title, reply}; the skill posts \`reply\` as it is.
+  ask --text-file <txt> [--channel-id <id>] [--message-id <id>]
+      A text message (H5): a pasted Gemini answer is imported (JSON as for import, plus
+      "route": "paste"); a question prints {"route": "question", "question": …} and nothing is
+      sent, so the agent answers it and then runs \`turn\`.
+  turn --question-file <txt> --answer-file <txt> --message-id <id> [--channel-id <id>]
+      Save one tutor question and its answer as a Bamboo turn (idempotent on the message id).
+      Prints JSON {import_id, turn_new}; on failure {error, message, reply}.
   segment --url <link> | --file <pdf>
       Dry run: parse and print the title, turn count and first/last prompts. No API calls.
   replies
@@ -29,6 +36,8 @@ Settings: ~/.config/bamboo/agent.env (BAMBOO_API_URL, BAMBOO_AGENT_API_TOKEN) an
 /** Every command the skill or an automation may name (checked by the skill test). */
 export const COMMANDS = {
   import: ["url", "file", "text-file", "channel-id", "message-id"],
+  ask: ["text-file", "channel-id", "message-id"],
+  turn: ["question-file", "answer-file", "channel-id", "message-id"],
   segment: ["url", "file"],
   replies: [],
   nudge: [],
@@ -46,6 +55,7 @@ export const FAILURE_REPLIES = {
   not_configured: "⚠️ Bamboo isn't set up on the Mac yet; try again later.",
   wrong_channel: "Bamboo only reads conversations shared in #bamboo.",
   api: "⚠️ Couldn't reach Bamboo just now; send it again in a while.",
+  not_saved: "⚠️ Couldn't save this question to Bamboo just now; ask it again later to add it.",
 } as const;
 
 export interface CliResult {
@@ -143,22 +153,45 @@ function api(settings: Settings, deps: Deps): Api | string {
   });
 }
 
+/** A `--channel-id` that isn't #bamboo, as a failure; null when it's fine. */
+function channelFailure(settings: Settings, channelId: string | null): CliResult | null {
+  if (channelId && settings.config && channelId !== settings.config.discord.channel_id)
+    return failure("wrong_channel", `channel ${channelId} is not the configured #bamboo channel`);
+  return null;
+}
+
 async function cmdImport(args: readonly string[], deps: Deps): Promise<CliResult> {
   const v = parse("import", args);
   const { flag, value } = source(v, true);
+  // Check the channel and settings before reading a link or a PDF (importConversation re-checks).
   const settings = loadSettings(deps.env);
-  const channelId = v["channel-id"] ?? null;
-  if (channelId && settings.config && channelId !== settings.config.discord.channel_id)
-    return failure("wrong_channel", `channel ${channelId} is not the configured #bamboo channel`);
+  const early = channelFailure(settings, v["channel-id"] ?? null);
+  if (early) return early;
   const client = api(settings, deps);
   if (typeof client === "string") return failure("not_configured", client);
-
   let conv: Conversation & { unknownComponents?: Record<string, number> };
   try {
     conv = await readConversation(deps, flag, value);
   } catch (e) {
     return failure(readFailure(e), (e as Error).message);
   }
+  return importConversation(deps, conv, flag, value, v);
+}
+
+async function importConversation(
+  deps: Deps,
+  conv: Conversation & { unknownComponents?: Record<string, number> },
+  flag: SourceFlag,
+  value: string,
+  v: Record<string, string | undefined>,
+  extra: Record<string, unknown> = {},
+): Promise<CliResult> {
+  const settings = loadSettings(deps.env);
+  const channelId = v["channel-id"] ?? null;
+  const wrong = channelFailure(settings, channelId);
+  if (wrong) return wrong;
+  const client = api(settings, deps);
+  if (typeof client === "string") return failure("not_configured", client);
   if (conv.turns.length === 0) return failure("empty", "no turns found");
 
   try {
@@ -171,11 +204,62 @@ async function cmdImport(args: readonly string[], deps: Deps): Promise<CliResult
     const unknown = conv.unknownComponents ?? {};
     return {
       code: 0,
-      out: json(outcome),
+      out: json({ ...extra, ...outcome }),
       err: Object.keys(unknown).length ? `unknown_component ${json(unknown)}` : undefined,
     };
   } catch (e) {
     if (e instanceof ApiCallError) return failure("api", e.message);
+    throw e;
+  }
+}
+
+/**
+ * `ask` (H5, DESIGN §5.1): is this text a pasted Gemini answer or a question for the tutor?
+ * `routeText` decides (shared/src/paste.ts). A paste is imported as `import --text-file` would;
+ * a question goes nowhere yet: the agent answers it, then runs `turn`.
+ */
+async function cmdAsk(args: readonly string[], deps: Deps): Promise<CliResult> {
+  const v = parse("ask", args);
+  const file = v["text-file"];
+  if (!file) throw new UsageError("give --text-file");
+  const routed = routeText(deps.readText(file));
+  if (!routed.text) return failure("empty", "no text");
+  if (routed.route === "question") {
+    const wrong = channelFailure(loadSettings(deps.env), v["channel-id"] ?? null);
+    if (wrong) return wrong;
+    return { code: 0, out: json({ route: "question" }) };
+  }
+  const conv = { title: null, turns: [{ user_text: "", reply_text: routed.text }] };
+  return importConversation(deps, conv, "text-file", file, v, { route: "paste" });
+}
+
+/** `turn` (H5): save the tutor's question and answer as one turn (`POST /api/turns`). */
+async function cmdTurn(args: readonly string[], deps: Deps): Promise<CliResult> {
+  const v = parse("turn", args);
+  const [qFile, aFile, messageId] = [v["question-file"], v["answer-file"], v["message-id"]];
+  if (!qFile || !aFile || !messageId)
+    throw new UsageError("give --question-file, --answer-file and --message-id");
+  const settings = loadSettings(deps.env);
+  const channelId = v["channel-id"] ?? null;
+  const wrong = channelFailure(settings, channelId);
+  if (wrong) return wrong;
+  const client = api(settings, deps);
+  if (typeof client === "string") return failure("not_configured", client);
+  // The question file holds Will's message as written: drop an `ask:` marker.
+  const question = routeText(deps.readText(qFile)).text;
+  const answer = deps.readText(aFile).trim();
+  if (!question || !answer) return failure("empty", "the question or the answer is empty");
+  try {
+    const res = await client.tutorTurn({
+      user_text: question,
+      reply_text: answer,
+      discord_channel_id: channelId,
+      discord_message_id: messageId,
+      prompt_version: sharedConfig.tools.tutorPrompt,
+    });
+    return { code: 0, out: json(res) };
+  } catch (e) {
+    if (e instanceof ApiCallError) return failure("not_saved", e.message);
     throw e;
   }
 }
@@ -277,6 +361,10 @@ export async function run(argv: readonly string[], deps: Deps = defaultDeps): Pr
     switch (command) {
       case "import":
         return await cmdImport(args, deps);
+      case "ask":
+        return await cmdAsk(args, deps);
+      case "turn":
+        return await cmdTurn(args, deps);
       case "segment":
         return await cmdSegment(args, deps);
       case "replies":

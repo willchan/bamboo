@@ -229,6 +229,128 @@ describe("bamboo-tools import", () => {
   });
 });
 
+// H5: text in #bamboo is a pasted answer or a tutor question (synthetic text only).
+const PASTED = [
+  "**Here are a few ways to say it:**",
+  "1. 宝宝要睡觉了。 (Bǎobao yào shuìjiào le.) The baby is going to sleep.",
+  "2. 我们去洗澡吧。 (Wǒmen qù xǐzǎo ba.) Let's go take a bath.",
+  "3. 慢慢吃，不着急。 (Mànmàn chī, bù zháojí.) Eat slowly, no rush.",
+  "**Tip:** 了 marks a change of state here; 吧 at the end softens a suggestion, which is very",
+  "common when talking to toddlers, and 慢慢 doubles for a gentle, unhurried feel.",
+].join("\n");
+const files: Record<string, string> = {
+  "paste.txt": PASTED,
+  "q.txt": "How do I tell the yuesao the baby is gassy?",
+  "askq.txt": `ask: ${PASTED}`,
+  "a.txt": "你可以说：阿姨，宝宝好像胀气了。\n胀气 (zhàng qì): bloated.",
+  "blank.txt": "   ",
+};
+const textDeps = (extra: Record<string, string> = {}): Deps => ({
+  ...deps(extra),
+  readText: (f) => files[f] ?? "",
+});
+
+describe("bamboo-tools ask", () => {
+  const ask = (file: string, message = "901") => [
+    "ask",
+    "--text-file",
+    file,
+    "--channel-id",
+    CHANNEL,
+    "--message-id",
+    message,
+  ];
+
+  it("imports a pasted answer as text and posts the acknowledgement", async () => {
+    const r = await run(ask("paste.txt"), textDeps());
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out)).toMatchObject({
+      route: "paste",
+      turns_new: 1,
+      reply: "📥 Got it: 1 question, 1 new. I'll reply when they're processed.",
+    });
+    expect(engine.imports[0]).toMatchObject({ kind: "text", idem: "discord:901" });
+  });
+
+  it("sends nothing for a question: the agent answers it first", async () => {
+    for (const f of ["q.txt", "askq.txt"]) {
+      const r = await run(ask(f), textDeps());
+      expect(r.code).toBe(0);
+      expect(JSON.parse(r.out)).toEqual({ route: "question" });
+    }
+    expect(engine.calls).toEqual([]);
+  });
+
+  it("refuses another channel and empty text", async () => {
+    const other = await run(
+      ["ask", "--text-file", "q.txt", "--channel-id", "999", "--message-id", "1"],
+      textDeps(),
+    );
+    expect(JSON.parse(other.out)).toMatchObject({ error: "wrong_channel" });
+    const empty = await run(ask("blank.txt"), textDeps());
+    expect(empty.code).toBe(1);
+    expect(JSON.parse(empty.out)).toMatchObject({ error: "empty" });
+    expect(engine.calls).toEqual([]);
+  });
+});
+
+describe("bamboo-tools turn", () => {
+  const turn = (q = "q.txt", message = "902") => [
+    "turn",
+    "--question-file",
+    q,
+    "--answer-file",
+    "a.txt",
+    "--channel-id",
+    CHANNEL,
+    "--message-id",
+    message,
+  ];
+
+  it("saves the question and answer as one tutor turn, idempotent on the message id", async () => {
+    const r = await run(turn(), textDeps());
+    expect(r.code, r.err).toBe(0);
+    expect(JSON.parse(r.out)).toEqual({ import_id: "imp1", turn_new: true });
+    const post = engine.calls.find((c) => c.path === "/api/turns")!;
+    expect(post.body).toEqual({
+      user_text: files["q.txt"],
+      reply_text: files["a.txt"],
+      discord_channel_id: CHANNEL,
+      discord_message_id: "902",
+      prompt_version: "tutor.v1",
+    });
+    const again = await run(turn(), textDeps());
+    expect(JSON.parse(again.out)).toEqual({ import_id: "imp1", turn_new: false });
+    expect(engine.imports).toHaveLength(1);
+  });
+
+  it("drops an ask: marker from the question", async () => {
+    await run(turn("askq.txt"), textDeps());
+    const post = engine.calls.find((c) => c.path === "/api/turns")!;
+    expect((post.body as { user_text: string }).user_text).toBe(PASTED);
+  });
+
+  it("needs the message id, and reports a failed save with its own line", async () => {
+    const noId = await run(turn().slice(0, -2), textDeps());
+    expect(noId.code).toBe(2);
+    engine.failNext = { status: 500, error: "internal", count: 10 };
+    const r = await run(turn(), textDeps());
+    expect(r.code).toBe(1);
+    expect(JSON.parse(r.out)).toMatchObject({
+      error: "not_saved",
+      reply: FAILURE_REPLIES.not_saved,
+    });
+    expect(r.out).not.toContain("胀气"); // no turn text in the output or the diagnostic
+    expect(r.err).not.toContain("胀气");
+  });
+
+  it("requires the agent token", async () => {
+    const r = await run(turn(), textDeps({ BAMBOO_AGENT_API_TOKEN: "wrong" }));
+    expect(JSON.parse(r.out)).toMatchObject({ error: "not_saved" });
+    expect(r.err).toMatch(/401/u);
+  });
+});
+
 describe("upload chunking and known", () => {
   const api = () =>
     new Api({
@@ -437,6 +559,13 @@ describe("bamboo-tools segment", () => {
   });
 
   it("lists every command the skill may use", () => {
-    expect(Object.keys(COMMANDS).sort()).toEqual(["import", "nudge", "replies", "segment"]);
+    expect(Object.keys(COMMANDS).sort()).toEqual([
+      "ask",
+      "import",
+      "nudge",
+      "replies",
+      "segment",
+      "turn",
+    ]);
   });
 });

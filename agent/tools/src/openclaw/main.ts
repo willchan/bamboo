@@ -1,7 +1,8 @@
 // Helper CLI for agent/install.sh and agent/check.sh (run with tsx; not on PATH, not for the model):
 //   route <channel id> [account]          stdin: `bindings` array → print the agent #bamboo goes to
-//   missing <SKILL.md> <AGENTS.md>        print the skill's instruction lines AGENTS.md lacks
-//   agents-md <header> <SKILL.md>         print the dedicated agent's AGENTS.md
+//   missing <SKILL.md> <AGENTS.md> [<tutor.md>]   print the skill's (and tutor prompt's) lines
+//                                                 AGENTS.md lacks
+//   agents-md <header> <SKILL.md> [<tutor.md>]    print the dedicated agent's AGENTS.md
 // Exit 1 (message on stderr) on bad input, 2 on bad usage.
 import { readFileSync, realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -20,22 +21,23 @@ const parseBindings = (text: string): unknown[] => {
 };
 
 export function runSetup(argv: string[], stdin: () => string): { code: number; out: string } {
-  const [cmd, a, b] = argv;
+  const [cmd, a, b, c] = argv;
+  const tutor = () => (c ? readFileSync(c, "utf8") : undefined);
   try {
     if (cmd === "route" && a)
       return { code: 0, out: `${routeFor(parseBindings(stdin()), a, b) ?? ""}\n` };
     if (cmd === "missing" && a && b) {
-      const lines = missingInstructions(readFileSync(a, "utf8"), readFileSync(b, "utf8"));
+      const lines = missingInstructions(readFileSync(a, "utf8"), readFileSync(b, "utf8"), tutor());
       return { code: 0, out: lines.map((l) => `${l}\n`).join("") };
     }
     if (cmd === "agents-md" && a && b)
-      return { code: 0, out: agentsMd(readFileSync(a, "utf8"), readFileSync(b, "utf8")) };
+      return { code: 0, out: agentsMd(readFileSync(a, "utf8"), readFileSync(b, "utf8"), tutor()) };
   } catch (e) {
     return { code: 1, out: `${(e as Error).message}\n` };
   }
   return {
     code: 2,
-    out: "usage: route <channel id> [account] | missing <SKILL.md> <AGENTS.md> | agents-md <header> <SKILL.md>\n",
+    out: "usage: route <channel id> [account] | missing <SKILL.md> <AGENTS.md> [<tutor.md>] | agents-md <header> <SKILL.md> [<tutor.md>]\n",
   };
 }
 

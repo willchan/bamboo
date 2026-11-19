@@ -78,6 +78,18 @@ export const sharedConfig = {
     previewPrompts: 5,
     previewChars: 60,
     /**
+     * `bamboo-tools ask` (H5, DESIGN §5.1): text in #bamboo is a pasted Gemini answer, not a
+     * question, when it starts with `paste:` or has Chinese and is at least this long and this
+     * many non-blank lines (Gemini's answers are long and structured; questions are short).
+     * `ask:` forces a question.
+     */
+    paste: { minChars: 300, minLines: 4 },
+    /**
+     * The tutor prompt the #bamboo agent answers with (H5): `worker/prompts/<this>.md`, written
+     * into the agent's AGENTS.md by `make agent-install`; `bamboo-tools turn` records it.
+     */
+    tutorPrompt: "tutor.v1",
+    /**
      * `replies` and `nudge` under OpenClaw's command automations (DESIGN §5.1 *Automation
      * errors*). Transient engine errors (network, timeout, 5xx, 429) post nothing until the
      * engine has been unreachable this long; then one alert, and one line on recovery.
