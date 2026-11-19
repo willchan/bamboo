@@ -16,6 +16,7 @@ import {
   dropPhrase,
   pinPhrase,
   restorePhrase,
+  retireUnpicked,
   updatePhrase,
 } from "@/lib/repo/phrases";
 import {
@@ -182,6 +183,23 @@ export async function reextractAction(): Promise<void> {
     await requireUser();
     await queueReextraction(getDb(), Date.now());
     revalidatePath("/imports");
+  });
+}
+
+/**
+ * Phrases › No longer picked › Retire all (H6, DESIGN §5.5.6): drop the listed phrases a re-run
+ * reported; their cards and `review_log` stay.
+ */
+export async function retireUnpickedAction(fd: FormData): Promise<void> {
+  return timed("action retireUnpicked", async () => {
+    await requireUser();
+    const ids = String(fd.get("ids") ?? "")
+      .split(",")
+      .filter(Boolean);
+    const n = ids.length ? await retireUnpicked(getDb(), Date.now(), ids) : 0;
+    revalidatePath("/phrases");
+    revalidatePath("/imports");
+    redirect(`/phrases?retired=${n}`);
   });
 }
 

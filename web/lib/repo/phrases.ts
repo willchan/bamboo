@@ -15,7 +15,7 @@ import {
   type TurnKind,
 } from "@bamboo/db";
 import { hanziKey } from "@bamboo/shared";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { checkBreakdown } from "../domain/breakdown";
 import { newCardColumns } from "../domain/fsrs";
@@ -253,7 +253,7 @@ export async function getPhrase(db: Db, id: string): Promise<PhraseWithCards | u
   return { ...p, cards };
 }
 
-export type DropVia = "not_useful" | "remove" | "editor";
+export type DropVia = "not_useful" | "remove" | "editor" | "retire";
 
 /**
  * Drop a phrase: it leaves the queue and its cards leave scheduling. Logs `phrase_dropped` with
@@ -286,13 +286,71 @@ export async function dropPhrase(db: Db, id: string, now: number, via: DropVia):
   return true;
 }
 
+/** Current (queued or active) phrases a re-run reported as no longer picked (§5.5.6). */
+const unpickedWhere = () =>
+  and(isNotNull(phrase.unpickedAt), inArray(phrase.status, ["queued", "active"]));
+
+export async function countUnpicked(db: Db): Promise<number> {
+  const [row] = await db.select({ n: count() }).from(phrase).where(unpickedWhere());
+  return row?.n ?? 0;
+}
+
+/**
+ * Phrases › No longer picked › Retire all (H6, §5.5.6): drop every phrase a re-run reported. Like
+ * a drop, its cards leave scheduling; cards, FSRS state and `review_log` are kept, so a restore
+ * (or asking again) brings back its history. `ids` limits it to those (the filtered list).
+ * Returns how many were retired.
+ */
+export async function retireUnpicked(
+  db: Db,
+  now: number,
+  ids?: readonly string[],
+): Promise<number> {
+  const rows = (await db.select().from(phrase).where(unpickedWhere())).filter(
+    (p) => !ids || ids.includes(p.id),
+  );
+  if (rows.length === 0) return 0;
+  const writes: BatchItem<"sqlite">[] = [];
+  for (const p of rows) {
+    writes.push(
+      db
+        .update(phrase)
+        .set({ status: "dropped", droppedAt: now, pinned: false, pinnedAt: null, updatedAt: now })
+        .where(and(eq(phrase.id, p.id), inArray(phrase.status, ["queued", "active"]))),
+      db.insert(event).values(
+        eventRow(
+          "phrase_dropped",
+          {
+            phrase_id: p.id,
+            effective_score: effectiveScore(p, now),
+            usefulness: p.usefulness,
+            kind: p.kind,
+            turn_kind: p.turnKind,
+            status_before: p.status,
+            via: "retire",
+          },
+          now,
+        ),
+      ),
+    );
+  }
+  await runBatch(db, writes);
+  return rows.length;
+}
+
 /** Undo a drop from the editor: back to the queue (or active if it was ever introduced). */
 export async function restorePhrase(db: Db, id: string, now: number): Promise<boolean> {
   const p = await db.query.phrase.findFirst({ where: eq(phrase.id, id) });
   if (!p || (p.status !== "dropped" && p.status !== "expired")) return false;
   await db
     .update(phrase)
-    .set({ status: p.introducedAt ? "active" : "queued", droppedAt: null, updatedAt: now })
+    // Restoring is Will's answer to a re-run's report too (§5.5.6): no longer listed.
+    .set({
+      status: p.introducedAt ? "active" : "queued",
+      droppedAt: null,
+      unpickedAt: null,
+      updatedAt: now,
+    })
     .where(eq(phrase.id, id));
   return true;
 }
@@ -322,6 +380,8 @@ export interface PhraseFilter {
   kind?: PhraseKind;
   tag?: string;
   status?: PhraseStatus;
+  /** H6: only current phrases a re-run no longer picks (§5.5.6). */
+  unpicked?: boolean;
 }
 
 /** Phrases list: newest edits first, filtered by kind/tag/status and a free-text search. */
@@ -330,6 +390,7 @@ export async function listPhrases(db: Db, f: PhraseFilter = {}): Promise<Phrase[
   if (f.kind) where.push(eq(phrase.kind, f.kind));
   if (f.status) where.push(eq(phrase.status, f.status));
   else where.push(inArray(phrase.status, ["queued", "active"]));
+  if (f.unpicked) where.push(isNotNull(phrase.unpickedAt));
   const rows = await db
     .select()
     .from(phrase)

@@ -454,16 +454,23 @@ export function planMerge(
   };
 }
 
-// --- Re-extraction (§4.6.1) -------------------------------------------------------------------
+// --- Re-extraction (§4.6.1, extended in H6: §5.5.6) -------------------------------------------
 
 export interface ReextractPhrase extends ExistingPhrase {
   id: string;
+  hanzi: string;
+  english: string;
+  note: string | null;
   pinned: boolean;
   sourceTurnId: string | null;
+  /** H6: when a re-run last reported it as no longer picked; null when it isn't. */
+  unpickedAt?: number | null;
 }
 
 export interface ReextractPatch {
   status: PhraseStatus;
+  english: string;
+  note: string | null;
   heardAs: string | null;
   examples: PhraseExample[];
   usefulness: number | null;
@@ -471,26 +478,50 @@ export interface ReextractPatch {
   tags: string[];
   baseScore: number;
   flags: string[];
-  breakdown?: PhraseBreakdown;
+  breakdown: PhraseBreakdown | null;
+  /** Picked again: no longer reported. */
+  unpickedAt: null;
   updatedAt: number;
+}
+
+export interface ReextractMerge {
+  id: string;
+  revived: boolean;
+  patch: ReextractPatch;
+  /**
+   * Gemini's reading to merge into the stored pinyin (§5.5.3b), or null to leave the pinyin as
+   * it is (the item has no reading: Ollama, or a promoted sentence). Will's override is a
+   * separate column and is never touched.
+   */
+  gemini: string[] | null;
 }
 
 export interface ReextractPlan {
   /** Items with no phrase yet: created `queued`, dated to when Will asked (the turn's time). */
   create: ValidItem[];
-  /** Existing phrases the new result picks again. */
-  merges: { id: string; revived: boolean; patch: ReextractPatch }[];
-  /** Queued phrases first made from this turn that the new result no longer picks: expire them. */
-  superseded: string[];
+  /** Existing phrases the new result picks again, in any status: refreshed. */
+  merges: ReextractMerge[];
+  /** Plain queued phrases first made from this turn that it no longer picks: drop them. */
+  dropped: string[];
+  /**
+   * Active, pinned or asked-again phrases first made from this turn that it no longer picks:
+   * reported (`unpicked_at`), not changed. A Phrases filter lists them for a bulk Retire.
+   */
+  reported: string[];
 }
 
 /**
- * A re-run of an extracted turn with a newer prompt (§4.6.1). It replaces what the old prompt
- * made of the turn, without counting as Will asking again: no `asked_count` bump, no *asked
- * again*, `last_asked_*` untouched. An expired phrase it picks comes back to `queued`; a dropped
- * one stays dropped (that was Will's call); an active one only gains the example. A queued phrase
- * first made from this turn takes the new usefulness, turn kind and tags. Queued phrases from this
- * turn it no longer picks are superseded, unless pinned or asked about more than once.
+ * A re-run of an extracted turn (§4.6.1, §5.5.6). It replaces what the old reading made of the
+ * turn, without counting as Will asking again: no `asked_count` bump, no *asked again*,
+ * `last_asked_*` untouched.
+ *
+ * Every existing phrase it picks, **in any status**, takes the new English, note and breakdown
+ * (a breakdown only if it matches the phrase's own hanzi; none keeps the old one) and Gemini's
+ * reading for the pinyin merge; its hanzi, cards and FSRS state are never touched. An expired one
+ * comes back (to `queued`, or `active` if it was introduced); a dropped one stays dropped (Will's
+ * call). A queued phrase first made from this turn also takes the new usefulness, turn kind and
+ * tags. Of the phrases first made from this turn that it no longer picks, plain queued ones are
+ * dropped; active, pinned or asked-again ones are reported.
  */
 export function planReextract(
   turnId: string,
@@ -500,7 +531,7 @@ export function planReextract(
   now: number,
   rank: RankConfig = config.rank,
 ): ReextractPlan {
-  const plan: ReextractPlan = { create: [], merges: [], superseded: [] };
+  const plan: ReextractPlan = { create: [], merges: [], dropped: [], reported: [] };
   const picked = new Set(validation.items.map((i) => i.hanziKey));
   for (const item of validation.items) {
     const p = existing.get(item.hanziKey);
@@ -526,13 +557,21 @@ export function planReextract(
             item.examples.map((e) => ({ ...e, turn_id: turnId })),
           )
         : p.examples;
+    // The phrase keeps its own hanzi and kind, so the new breakdown must fit those.
+    const breakdown =
+      checkBreakdown(p.kind, p.hanzi, item.breakdown).breakdown ?? p.breakdown ?? null;
     const flags = [...new Set([...p.flags, ...item.flags])].filter((f) => f !== "long");
     if (isLong(p.hanziKey)) flags.push("long");
+    // Same key, so Gemini's syllables line up with the phrase's characters (the merge re-checks).
+    const gemini = item.pinyin ? [...item.pinyin] : null;
     plan.merges.push({
       id: p.id,
       revived,
+      gemini,
       patch: {
         status,
+        english: item.english,
+        note: item.note,
         heardAs,
         examples,
         usefulness,
@@ -551,21 +590,18 @@ export function planReextract(
           rank,
         ),
         flags,
-        ...filledBreakdown(p, item),
+        breakdown,
+        unpickedAt: null,
         updatedAt: now,
       },
     });
   }
-  plan.superseded = fromTurn
-    .filter(
-      (p) =>
-        p.sourceTurnId === turnId &&
-        p.status === "queued" &&
-        !p.pinned &&
-        p.askedCount <= 1 &&
-        !picked.has(p.hanziKey),
-    )
-    .map((p) => p.id);
+  for (const p of fromTurn) {
+    if (p.sourceTurnId !== turnId || picked.has(p.hanziKey)) continue;
+    const kept = p.pinned || p.askedCount > 1;
+    if (p.status === "queued" && !kept) plan.dropped.push(p.id);
+    else if (p.status === "active" || (p.status === "queued" && kept)) plan.reported.push(p.id);
+  }
   return plan;
 }
 

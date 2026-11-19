@@ -208,7 +208,10 @@ describe("planReextract", () => {
     id: "p",
     status: "queued",
     kind: "term",
+    hanzi: "泡打粉",
     hanziKey: "泡打粉",
+    english: "baking soda",
+    note: "old note",
     introducedAt: null,
     askedCount: 1,
     lastAskedImportId: "i1",
@@ -248,7 +251,7 @@ describe("planReextract", () => {
 
   it("creates items with no phrase yet", () => {
     const out = plan([item({})], []);
-    expect(out).toEqual({ create: [item({})], merges: [], superseded: [] });
+    expect(out).toEqual({ create: [item({})], merges: [], dropped: [], reported: [] });
   });
 
   it("revives an expired phrase it picks again, and refreshes the ratings of its own turn", () => {
@@ -291,7 +294,7 @@ describe("planReextract", () => {
     });
   });
 
-  it("supersedes this turn's queued phrases it no longer picks, except pinned or asked again", () => {
+  it("drops this turn's plain queued phrases it no longer picks, and reports the rest", () => {
     const out = plan(
       [item({})],
       [
@@ -300,10 +303,75 @@ describe("planReextract", () => {
         phrase({ id: "pin", hanziKey: "粉", pinned: true }),
         phrase({ id: "twice", hanziKey: "面粉", askedCount: 2 }),
         phrase({ id: "learning", hanziKey: "面", status: "active", introducedAt: 5 }),
+        phrase({ id: "learning2", hanziKey: "面条", status: "active", askedCount: 3 }),
         phrase({ id: "gone", hanziKey: "放", status: "expired" }),
+        phrase({ id: "removed", hanziKey: "放下", status: "dropped", pinned: true }),
         phrase({ id: "other", hanziKey: "糖", sourceTurnId: "t0" }),
+        phrase({ id: "otherActive", hanziKey: "盐", sourceTurnId: "t0", status: "active" }),
       ],
     );
-    expect(out.superseded).toEqual(["frag"]);
+    expect(out.dropped).toEqual(["frag"]);
+    expect(out.reported).toEqual(["pin", "twice", "learning", "learning2"]);
+  });
+
+  it.each(["queued", "active", "dropped", "expired"] as const)(
+    "refreshes English, note and breakdown on a %s phrase it picks",
+    (status) => {
+      const breakdown = {
+        parts: [
+          { hanzi: "泡打", gloss: "puff" },
+          { hanzi: "粉", gloss: "powder" },
+        ],
+        meaning: "baking powder",
+      };
+      const p = phrase({
+        status,
+        introducedAt: status === "queued" ? null : 5,
+        breakdown: null,
+      });
+      const m = plan([item({ note: "for baking", breakdown, pinyin: ["pào", "dǎ", "fěn"] })], [p])
+        .merges[0]!;
+      expect(m.patch).toMatchObject({
+        english: "baking powder",
+        note: "for baking",
+        breakdown,
+        unpickedAt: null,
+      });
+      expect(m.gemini).toEqual(["pào", "dǎ", "fěn"]);
+      // A dropped phrase stays dropped; an expired one comes back (it had been introduced).
+      expect(m.patch.status).toBe(status === "expired" ? "active" : status);
+      // Never the hanzi, the cards or their FSRS state: the patch has no such columns.
+      for (const k of ["hanzi", "hanziKey", "kind", "askedCount", "lastAskedAt", "introducedAt"]) {
+        expect(Object.keys(m.patch)).not.toContain(k);
+      }
+    },
+  );
+
+  it("keeps the old breakdown when the new one is missing or doesn't fit the phrase's hanzi", () => {
+    const old = { parts: [{ hanzi: "泡打粉", gloss: "baking powder" }], meaning: "baking powder" };
+    const p = phrase({ breakdown: old });
+    expect(plan([item({})], [p]).merges[0]!.patch.breakdown).toEqual(old);
+    const wrong = { parts: [{ hanzi: "泡", gloss: "bubble" }], meaning: "x" };
+    expect(plan([item({ breakdown: wrong })], [p]).merges[0]!.patch.breakdown).toEqual(old);
+    expect(plan([item({})], [phrase({})]).merges[0]!.patch.breakdown).toBeNull();
+  });
+
+  it("passes Gemini's reading to the pinyin merge, or leaves the pinyin alone without one", () => {
+    // No reading (Ollama, a promoted sentence): the pinyin is left as it is.
+    expect(plan([item({})], [phrase({})]).merges[0]!.gemini).toBeNull();
+    // Same key, different punctuation: the reading still lines up.
+    const s = phrase({ kind: "sentence", hanzi: "加水吗？", hanziKey: "加水吗" });
+    const m = plan(
+      [
+        item({
+          kind: "sentence",
+          hanzi: "加水吗",
+          hanziKey: "加水吗",
+          pinyin: ["jiā", "shuǐ", "ma"],
+        }),
+      ],
+      [s],
+    ).merges[0]!;
+    expect(m.gemini).toEqual(["jiā", "shuǐ", "ma"]);
   });
 });

@@ -116,6 +116,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `last_asked_at` | int | creation time initially |
 | `flags` | json `string[]` | e.g. `long`, `heard_as_dropped`, `example_dropped`, `breakdown_dropped` |
 | `introduced_at`, `dropped_at` | int null | |
+| `unpicked_at` | int null | H6: when a re-run of its source turn last stopped picking it while it was active, pinned or asked about more than once (§4.6.1). Reported, not changed: Phrases › *unpicked* lists the current ones for a bulk Retire. Cleared when a re-run picks it again or Will restores it |
 | `created_at`, `updated_at` | int | |
 
 **`card`**: `unique(phrase_id, type)`. Cards are created with the phrase (FSRS state New).
@@ -225,6 +226,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `GET /api/agent/notifications` | agent | `{notifications: [{import_id, kind, discord_channel_id, discord_message_id, summary}]}`: finished imports with a Discord message and no `notified_at` |
 | `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
 | `GET /api/agent/nudge` | agent | `NudgeResponse` `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent (a conditional upsert of `nudge_last_sent_day`, so of two overlapping polls only one gets the text) and logs `nudge_sent` |
+| `POST /api/agent/reextract` | agent | H6: `ReextractRequest` `{all?: boolean, limit?: 1–1000}` → `ReextractResponse` `{queued, open}`: queue re-runs (§4.6.1) of stale turns, or with `all` also turns on the newest prompt that no re-run has read with it, at most `limit`, oldest first; `open` counts all queued or leased re-runs. Running it again while they're open queues nothing more. Unknown keys → 400 `invalid_body`. For H7's backfill (§5.5.6) |
 | `GET /api/agent/eval/turns?limit=&seed=` | agent | `EvalTurnsResponse` `{turns: [{turn_id, import_id, user_text, reply_text}], pool: {turns, imports}}`: a seeded sample of past questions with Gemini's answers for the tutor evaluation (§5.4). `limit` 1–50 (default 20), `seed` ≤ 100 chars (default `bamboo`); otherwise 400 `invalid_query`. Image-only turns (empty `user_text`) are skipped; imports are visited round-robin in a seeded order (`web/lib/domain/tutor-eval.ts`). Read-only |
 | `POST /api/jobs/claim` | worker | Optional body `{types: ('extract_turn' \| 'pinyin')[]}` (H4; none = extract_turn only, for an older worker) → `{job_id, type, attempt, lease_expires_at, input}` (`ExtractTurnInput`, or `PinyinJobInput` for `pinyin`) or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary extract jobs, then pinyin jobs, then re-runs (§4.6.1), each oldest first; a re-run looks the same to the worker |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
@@ -474,17 +476,34 @@ again (`planReextract` in `queue.ts`), after the same validation and caps (steps
   `created_at` (when Will asked) and `last_asked_import_id` = the turn's import, so decay and
   the queue order treat it as old, not new;
 - an existing phrase is never bumped (`asked_count`, `last_asked_*` unchanged) and never gets
-  *asked again*. An `expired` one comes back to `queued` (`phrase_revived`, `reextract: true`); a
-  `dropped` one stays dropped, since that was Will's call; any keeps the new example. A `queued`
-  one first made from this turn takes the new `usefulness`, `turn_kind` and tags, and is
-  re-scored;
-- `queued` phrases first made from this turn (`source_turn_id`) that the new result no longer
-  picks are **superseded**: `expired`, with a `phrase_superseded` event. Pinned ones, ones asked
-  about more than once and active ones stay.
+  *asked again*. Since H6 (§5.5.6), every existing phrase it picks, **in any status**, is
+  refreshed: it takes the new `english` and `note`, the new `breakdown` (only if it matches the
+  phrase's own hanzi and kind; without one the old one stays) and Gemini's reading for the
+  pinyin merge (§5.5.3b: a `pinyin` job for real disputes; Will's `pinyin_override` is a
+  separate column and stays; an item with no reading, Ollama or a promoted sentence, leaves the
+  pinyin alone). The hanzi, kind, cards and their FSRS state are never touched. An `expired`
+  phrase comes back to `queued` (`phrase_revived`, `reextract: true`); a `dropped` one stays
+  dropped, since that was Will's call; any keeps the new examples, and `unpicked_at` is
+  cleared. A `queued` one first made from this turn also takes the new `usefulness`,
+  `turn_kind` and tags, and is re-scored;
+- of the phrases first made from this turn (`source_turn_id`) that the new result no longer
+  picks, plain `queued` ones (not pinned, asked once) are **dropped** (H6; before H6 they were
+  expired), with a `phrase_superseded` event; Will can restore them from Phrases, and asking
+  about one again revives it. **Active**, **pinned** or **asked-again** ones are **reported**:
+  `unpicked_at` is set and a `phrase_unpicked` event logged, nothing else changes. Expired and
+  dropped ones are left alone.
 
-**Changing (§5.5.6, §10 #81, H6):** a re-run will refresh English, note and breakdown on every
-phrase it picks, in any status, and report the active, pinned or asked-again ones it no longer
-picks (a Phrases filter and a bulk Retire that keeps `review_log`).
+**Which turns** (`queueReextraction`): by default, turns whose latest finished job's prompt
+differs from the newest one (Imports › Re-run). `POST /api/agent/reextract` (H6, §3.2) can also
+take `all`: turns already on the newest prompt too, unless a re-run has already read them with it
+(so a full run after a dry run doesn't redo the dry run's turns, and running it twice queues
+nothing), and `limit`: at most N turns, oldest first. Each job is one turn, so the worker sends
+one turn per request, through its rate limiter.
+
+**Retire** (Phrases › *unpicked*, `retireUnpicked` in `phrases.ts`): drops the listed reported
+phrases (`phrase_dropped`, `via: "retire"`). Like any drop, their cards leave scheduling; the
+cards, their FSRS state and `review_log` are kept, so restoring one (or asking again) brings its
+history back.
 
 A re-run never touches its import: no `phrases_new`/`phrases_again`, no `jobs_failed`, no
 summary or Discord reply, and Retry failed requeues a failed re-run without reopening its import.
@@ -1252,7 +1271,7 @@ the decision as made.
   through a burst of new cards and then reaching a steady state; H2 estimates the daily reviews
   during the burst and at steady state from FSRS, and Will picks the setting.
 
-#### 5.5.6 Rebuilding the queue from stored turns (H6, H7; §10 #81)
+#### 5.5.6 Rebuilding the queue from stored turns (H6, H7; §10 #81) — *H6 built; see §4.6.1, §3.2, §6*
 
 Prod isn't wiped. All 147 stored turns go through v4 by the Re-run path (§4.6.1), one turn per
 request, on the paid key (§5.5.7, §10 #88). Learning cards and review history must survive. The re-run is
@@ -1265,7 +1284,8 @@ extended first (H6):
   does today);
 - it **reports** active, pinned or asked-again phrases it no longer picks: a Phrases filter lists
   them, and a bulk **Retire** drops them and keeps `review_log`;
-- it can be limited to N turns.
+- it can be limited to N turns, and can include turns already on the newest prompt
+  (`POST /api/agent/reextract`, §3.2; §10 #92).
 
 H7 runs 10 turns as a dry run (counts only), then, after Will approves, the rest.
 
@@ -1378,13 +1398,17 @@ full-screen.
 - **Up next** (`/queue`): the queue, freshest first (§4.6); each row shows hanzi, English, "heard: …",
   "asked ×N"; **Move to top** / **Remove**.
 - **Phrases** (`/phrases`, `/phrases/new`, `/phrases/[id]`): search (hanzi, pinyin, English,
-  heard-as) and filter by kind, tag or status; add, edit (examples for terms, pinyin overrides,
+  heard-as) and filter by kind, tag or status, or *unpicked* (H6: current phrases a re-run no
+  longer picks, `?unpicked=1`, with an explanation and **Retire all N**, which drops the listed
+  ones and keeps their history, §4.6.1); add, edit (examples for terms, pinyin overrides,
   card types); drop, and restore a dropped phrase. The editor offers term and sentence (a retired
   frame still shows its kind, H2b). After adding, the editor opens so Will can
   check the computed pinyin (per-character override inputs appear once the hanzi is saved).
 - **Imports** (`/imports`): recent imports with status and counts, failed jobs (Retry),
   **Older extractions** ("N questions were read with an older prompt", **Re-run**, §4.6.1; while
-  re-runs are open, "Re-reading N questions with the newer prompt on the Mac…"), and a
+  re-runs are open, "Re-reading N questions with the newer prompt on the Mac…"), "A re-run no
+  longer picks N phrases you're learning or kept. Review them" linking to Phrases › *unpicked*
+  (H6), and a
   paste box for a single Gemini answer (it must contain Chinese; the result line says whether
   it was new or already imported).
 - **Stats** (`/stats`, the fifth tab): PRD §6 measures (§7), each with its target and ✓/✗.
@@ -1415,18 +1439,24 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 - `share_parse_failed {host}`
 - `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, breakdowns_dropped, repaired, dropped_name, pinyin_jobs, pinyin_misaligned}`
   (H4 added the last three: the worker's name-filter count, never a name; pinyin jobs queued for
-  the new phrases; Gemini readings that didn't line up with the hanzi)
+  the new phrases; Gemini readings that didn't line up with the hanzi). A re-run's event also has
+  `phrases_created`, `phrases_refreshed`, `phrases_dropped`, `phrases_reported` (H6, for H7's
+  counts)
 - `pinyin_disagreement {phrase_id, syllables: [{i, computed, gemini, chosen, rule, winner}], outcome: computed|gemini|other|mixed}`
   (H4, §5.5.3b): logged once a phrase's disputes are settled (at once for invalid readings, after
   the referee otherwise)
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
-- `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind}`
+- `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind, status_before, via}`
+  (`via`: `not_useful`, `remove`, `editor`, or `retire`, H6)
 - `already_know {phrase_id}`
 - `asked_again {phrase_id, status, import_id}` (status before the merge)
 - `phrase_revived {phrase_id, reextract?}`
-- `phrase_superseded {phrase_id, turn_id}` (a re-run no longer picks it, §4.6.1)
-- `reextract_queued {turns}`
+- `phrase_superseded {phrase_id, turn_id, to?}` (a re-run no longer picks a plain queued phrase,
+  §4.6.1; `to: "dropped"` since H6, expired before)
+- `phrase_unpicked {phrase_id, turn_id}` (H6: a re-run no longer picks an active, pinned or
+  asked-again phrase; reported via `unpicked_at`)
+- `reextract_queued {turns, all?, limit?}`
 - `review {card_type, rating, source}`
 - `round_finished {cards, ms}`
 - `nudge_sent {local_time, nudge_at}` (`HH:MM`, household time)
@@ -1833,6 +1863,7 @@ bamboo/
 | 89 | A tutor turn is stored through its own agent route, `POST /api/turns`, as an import of a new kind `tutor` (one turn, `source_ref` = the tutor prompt version, idempotent on `tutor:<message id>`, marked notified at once); `bamboo-tools turn` sends it after the agent has posted nothing but its answer. The tutor prompt is `worker/prompts/tutor.v1.md`, written into the agent's `AGENTS.md` with the skill (H5, §3.2, §5.1) | The answer is already in the channel, so a second "✅ 1 new question → …" reply would be noise (orchestrator default). A kind of its own keeps tutor turns visible on Imports ("Asked in #bamboo"), keys them on question and answer (§4.5) and needs no migration: `kind` is SQLite text and the enum is TypeScript-only. A route of its own keeps `/api/imports`' chunking out of a one-turn call |
 | 90 | Pasted answer or question is decided by code, not the model: `paste:`/`ask:` markers first, then a pasted answer only if it has Chinese, ≥ 300 characters and ≥ 4 non-blank lines; everything else is a question (`routeText`, `bamboo-tools ask`; H5, §5.1) | Gemini's answers are long and structured; Will's questions are a line or two, even when they quote a Chinese message to decode. A tested rule beats a model's guess with thinking off, and the markers give Will an override. Either mistake still reaches Bamboo (a question is imported as text; a paste is answered and saved as a turn), so the threshold can be tuned from Imports later |
 | 91 | The tutor's Google auth order is the free profile, then a second profile with PandaDen's paid key (`google:bamboo-paid`); no model fallback. The host's runbook sets it (H5, §5.5.7) | Will accepted falling back to the paid key (decision 9). The free quota (20/day) is shared with the worker, so a busy day would otherwise end in quota errors in `#bamboo`; OpenClaw rotates profiles on rate limits before failing. Its docs don't promise that an env key is tried after a pinned order, so the paid key gets an explicit profile. Ollama stays the worker's only fallback |
+| 92 | H6's re-run extension: picked phrases are refreshed in place (English, note, breakdown, pinyin through the merge) in any status; leftovers from the turn are dropped if plain queued, else **reported** in a nullable `phrase.unpicked_at` (expand-only), listed by a Phrases filter with a bulk Retire (a drop: cards and `review_log` kept). H7 triggers runs with `POST /api/agent/reextract {all, limit}`; `all` skips turns a re-run already read with the newest prompt (§4.6.1, §5.5.6) | A column, not a flag in `flags`, so the filter and the Imports count are a plain `is not null` and a re-run or restore can clear it. Reporting only the turn's own phrases keeps a phrase that another question also produced from being flagged by one turn's reading. An agent route (not a script with DB credentials) keeps "the engine owns the data": H7 drives it from the Mac with the agent token. Skipping turns already re-run on the newest prompt makes the full run after the 10-turn dry run, and any retry, idempotent. A breakdown is re-checked against the phrase's own hanzi because the match is by key and punctuation can differ |
 
 ## Appendix A — Synthetic fixtures
 

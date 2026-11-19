@@ -205,6 +205,11 @@ export const sharedConfig = {
    * The tutor evaluation (docs/ROADMAP.md › Tutor): `GET /api/agent/eval/turns` and
    * `bamboo-eval` on the Mac (agent/tools/src/eval/). Flags override `defaultModels` etc.
    */
+  /** H6: `POST /api/agent/reextract` (DESIGN §3.2, §5.5.6). */
+  reextract: {
+    /** The most turns one request may queue (prod has ~150 turns). */
+    maxLimit: 1000,
+  },
   tutorEval: {
     defaultLimit: 20,
     maxLimit: 50,

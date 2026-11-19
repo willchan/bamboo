@@ -46,7 +46,7 @@ import {
 import { askedAgainCards } from "../domain/session";
 import { reviewCard } from "../domain/fsrs";
 import { eventRow, newId, runBatch } from "./db";
-import { listQueue, phraseRows } from "./phrases";
+import { countUnpicked, listQueue, phraseRows } from "./phrases";
 import { fsrsColumns } from "./review";
 import { claimPinyinJob, completePinyinJob, pinyinFollowUps, sweepPinyinLeases } from "./pinyin";
 
@@ -570,6 +570,15 @@ export async function completeJob(
           dropped_name: body.dropped_name ?? 0,
           pinyin_jobs: applied.pinyinJobs,
           pinyin_misaligned: applied.pinyinMisaligned,
+          // H6: what a re-run did to the queue, for H7's counts (§5.5.6).
+          ...(applied.rerun
+            ? {
+                phrases_created: applied.rerun.created,
+                phrases_refreshed: applied.rerun.refreshed,
+                phrases_dropped: applied.rerun.dropped,
+                phrases_reported: applied.rerun.reported,
+              }
+            : {}),
         },
         now,
       ),
@@ -665,7 +674,7 @@ async function applyExtraction(
       }
     }
   }
-  return { writes, validation, phrasesNew, phrasesAgain, ...py };
+  return { writes, validation, phrasesNew, phrasesAgain, ...py, rerun: null };
 }
 
 /**
@@ -748,13 +757,34 @@ async function applyReextraction(
       ...rows.followUps,
     );
   }
+  const byId = new Map(byKey.map((p) => [p.id, p]));
   for (const m of plan.merges) {
+    // Pinyin through the merge (§5.5.3b): Gemini's new reading against the dictionary's, with a
+    // pinyin job for real disputes. Will's override is its own column and stays.
+    const p = byId.get(m.id)!;
+    const merged = m.gemini ? mergedPinyin(p.hanzi, m.gemini) : null;
     writes.push(
       db
         .update(phrase)
-        .set({ ...m.patch, ...(m.revived ? { droppedAt: null } : {}) })
+        .set({
+          ...m.patch,
+          ...(merged ? { pinyin: merged.pinyin, pinyinSources: merged.pinyinSources } : {}),
+          ...(m.revived ? { droppedAt: null } : {}),
+        })
         .where(eq(phrase.id, m.id)),
     );
+    if (merged) {
+      const follow = pinyinFollowUps(
+        db,
+        { id: p.id, hanzi: p.hanzi, examples: m.patch.examples },
+        merged,
+        m.gemini,
+        now,
+      );
+      writes.push(...follow.writes);
+      if (follow.queued) py.pinyinJobs += 1;
+      if (merged.misaligned) py.pinyinMisaligned += 1;
+    }
     if (m.revived) {
       writes.push(
         db
@@ -763,36 +793,80 @@ async function applyReextraction(
       );
     }
   }
-  if (plan.superseded.length) {
+  if (plan.dropped.length) {
+    // Plain queued phrases it no longer picks are dropped, not expired (§5.5.6). Will can
+    // restore them from Phrases, and asking about one again brings it back.
     writes.push(
       db
         .update(phrase)
-        .set({ status: "expired", updatedAt: now })
-        .where(and(inArray(phrase.id, plan.superseded), eq(phrase.status, "queued"))),
-      ...plan.superseded.map((id) =>
+        .set({ status: "dropped", droppedAt: now, updatedAt: now })
+        .where(
+          and(
+            inArray(phrase.id, plan.dropped),
+            eq(phrase.status, "queued"),
+            eq(phrase.pinned, false),
+          ),
+        ),
+      ...plan.dropped.map((id) =>
         db
           .insert(event)
-          .values(eventRow("phrase_superseded", { phrase_id: id, turn_id: t.id }, now)),
+          .values(
+            eventRow("phrase_superseded", { phrase_id: id, turn_id: t.id, to: "dropped" }, now),
+          ),
       ),
     );
   }
-  return { writes, validation, phrasesNew: 0, phrasesAgain: 0, ...py };
+  if (plan.reported.length) {
+    writes.push(
+      db.update(phrase).set({ unpickedAt: now }).where(inArray(phrase.id, plan.reported)),
+      ...plan.reported.map((id) =>
+        db.insert(event).values(eventRow("phrase_unpicked", { phrase_id: id, turn_id: t.id }, now)),
+      ),
+    );
+  }
+  return {
+    writes,
+    validation,
+    phrasesNew: 0,
+    phrasesAgain: 0,
+    ...py,
+    rerun: {
+      created: plan.create.length,
+      refreshed: plan.merges.length,
+      dropped: plan.dropped.length,
+      reported: plan.reported.length,
+    },
+  };
+}
+
+/** Which turns a re-run picks (§4.6.1, §5.5.6). */
+export interface ReextractScope {
+  /**
+   * H6: also turns already read with the newest prompt, unless a re-run already read them with it
+   * (so H7's full run after its dry run doesn't redo the dry run's turns). Default: only turns
+   * read with an older prompt.
+   */
+  all?: boolean;
+  /** H6: at most this many turns, oldest first (H7's dry run). Default: every one. */
+  limit?: number;
 }
 
 /**
- * Turns whose latest extraction used an older prompt than the newest one the worker has reported
- * (the prompt of the most recently finished job), with no job open and their import done
- * (§4.6.1). A turn whose every job failed isn't here: Retry failed covers it.
+ * Turns to re-run, oldest first: those whose latest extraction used an older prompt than the
+ * newest one the worker has reported (the prompt of the most recently finished job), with no job
+ * open and their import done (§4.6.1). With `all`, also those on the newest prompt that no re-run
+ * has read with it yet. A turn whose every job failed isn't here: Retry failed covers it.
  */
-async function staleTurnIds(db: Db): Promise<string[]> {
-  const res = await db.$client.execute(`
+async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<string[]> {
+  const res = await db.$client.execute({
+    sql: `
     with latest as (
       select prompt_version v from job
       where status = 'done' and prompt_version is not null
       order by finished_at desc, id desc limit 1
     ),
     last as (
-      select json_extract(input, '$.turn_id') tid, prompt_version v,
+      select json_extract(input, '$.turn_id') tid, prompt_version v, reextract,
         row_number() over (
           partition by json_extract(input, '$.turn_id') order by finished_at desc, id desc
         ) rn
@@ -803,20 +877,32 @@ async function staleTurnIds(db: Db): Promise<string[]> {
     join import on import.id = turn.import_id and import.status = 'done'
     where last.rn = 1
       and exists (select 1 from latest)
-      and last.v is not (select v from latest)
+      and (
+        last.v is not (select v from latest)
+        or (? = 1 and last.reextract = 0)
+      )
       and last.tid not in (
         select json_extract(input, '$.turn_id') from job where status in ('queued', 'leased')
       )
-    order by turn.created_at, turn.position`);
+    order by turn.created_at, turn.position
+    limit ?`,
+    args: [scope.all ? 1 : 0, scope.limit ?? -1],
+  });
   return res.rows.map((r) => String(r.tid));
 }
 
 /**
- * Imports › Re-run: one re-extraction job (`reextract`) per stale turn (§4.6.1). Returns how many
- * were queued; running it again while they're open queues nothing more.
+ * Imports › Re-run, or `POST /api/agent/reextract` (H6): one re-extraction job (`reextract`) per
+ * turn in scope (§4.6.1). Each job is one turn, so the worker sends one turn per Gemini request
+ * through its rate limiter. Returns how many were queued; running it again while they're open
+ * queues nothing more.
  */
-export async function queueReextraction(db: Db, now: number): Promise<number> {
-  const ids = await staleTurnIds(db);
+export async function queueReextraction(
+  db: Db,
+  now: number,
+  scope: ReextractScope = {},
+): Promise<number> {
+  const ids = await staleTurnIds(db, scope);
   if (ids.length === 0) return 0;
   const writes: BatchItem<"sqlite">[] = [];
   for (const part of chunks(ids, 100)) {
@@ -848,7 +934,17 @@ export async function queueReextraction(db: Db, now: number): Promise<number> {
       ),
     );
   }
-  writes.push(db.insert(event).values(eventRow("reextract_queued", { turns: ids.length }, now)));
+  writes.push(
+    db
+      .insert(event)
+      .values(
+        eventRow(
+          "reextract_queued",
+          { turns: ids.length, all: !!scope.all, limit: scope.limit ?? null },
+          now,
+        ),
+      ),
+  );
   await runBatch(db, writes);
   return ids.length;
 }
@@ -1023,9 +1119,18 @@ export interface FailedJobRow {
   prompt: string;
 }
 
+/** Re-runs queued or leased (§4.6.1). */
+export async function openReextractions(db: Db): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(job)
+    .where(and(eq(job.reextract, true), inArray(job.status, [...OPEN_JOB])));
+  return row?.n ?? 0;
+}
+
 /** The Imports page: recent imports and the failed jobs (with the start of their prompt). */
 export async function getImportsPage(db: Db) {
-  const [recent, failed, stale, [reextracting]] = await Promise.all([
+  const [recent, failed, stale, reextracting, unpicked] = await Promise.all([
     db.select().from(imports).orderBy(desc(imports.createdAt)).limit(config.imports.recentCount),
     db
       .select({ job, userText: turn.userText, replyText: turn.replyText })
@@ -1034,10 +1139,8 @@ export async function getImportsPage(db: Db) {
       .where(eq(job.status, "failed"))
       .orderBy(desc(job.finishedAt)),
     staleTurnIds(db),
-    db
-      .select({ n: count() })
-      .from(job)
-      .where(and(eq(job.reextract, true), inArray(job.status, [...OPEN_JOB]))),
+    openReextractions(db),
+    countUnpicked(db),
   ]);
   const failedJobs: FailedJobRow[] = failed.map((f) => ({
     id: f.job.id,
@@ -1051,6 +1154,8 @@ export async function getImportsPage(db: Db) {
     failedJobs,
     /** Turns read with an older prompt (§4.6.1), and re-runs still open. */
     staleTurns: stale.length,
-    reextracting: reextracting?.n ?? 0,
+    reextracting,
+    /** H6: current phrases a re-run no longer picks (Phrases › No longer picked, §5.5.6). */
+    unpicked,
   };
 }

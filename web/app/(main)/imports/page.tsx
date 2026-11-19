@@ -1,5 +1,6 @@
 import type { Import } from "@bamboo/db";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { pasteAnswerAction, reextractAction, retryFailedAction } from "@/app/actions";
 import { requireUser } from "@/lib/auth/current";
 import { householdTimeZone } from "@/lib/config";
@@ -41,7 +42,8 @@ export default async function ImportsPage({ searchParams }: PageProps<"/imports"
     await requireUser();
     const sp = await searchParams;
     const pasted = typeof sp.pasted === "string" ? PASTED[sp.pasted] : undefined;
-    const { recent, failedJobs, staleTurns, reextracting } = await getImportsPage(getDb());
+    const { recent, failedJobs, staleTurns, reextracting, unpicked } =
+      await getImportsPage(getDb());
 
     return (
       <main className="flex flex-col gap-6">
@@ -116,11 +118,21 @@ export default async function ImportsPage({ searchParams }: PageProps<"/imports"
             </div>
             <p className="text-sm text-muted">
               {plural(staleTurns, "question")} {staleTurns === 1 ? "was" : "were"} read with an
-              older prompt. Running them again picks their phrases afresh: expired ones it still
-              wants come back, and ones it no longer wants leave Up next. Cards you&apos;re learning
-              and phrases you removed stay as they are.
+              older prompt. Running them again picks their phrases afresh and refreshes their
+              English, notes and breakdowns: expired ones it still wants come back, and ones it no
+              longer wants leave Up next. Cards you&apos;re learning keep their history, and phrases
+              you removed stay removed.
             </p>
           </section>
+        ) : null}
+
+        {unpicked > 0 ? (
+          <p data-testid="unpicked" className="text-sm text-muted">
+            A re-run no longer picks {plural(unpicked, "phrase")} you&apos;re learning or kept.{" "}
+            <Link href="/phrases?unpicked=1" className="text-primary underline underline-offset-4">
+              Review them
+            </Link>
+          </p>
         ) : null}
 
         <section className="flex flex-col gap-2">
