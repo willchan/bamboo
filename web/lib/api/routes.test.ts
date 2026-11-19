@@ -22,6 +22,7 @@ import { POST as knownPOST } from "@/app/api/imports/known/route";
 import { POST as importsPOST } from "@/app/api/imports/route";
 import { POST as claimPOST } from "@/app/api/jobs/claim/route";
 import { POST as completePOST } from "@/app/api/jobs/complete/route";
+import { POST as turnsPOST } from "@/app/api/turns/route";
 import { POST as heartbeatPOST } from "@/app/api/worker/heartbeat/route";
 import { config } from "../config";
 import { createManualPhrase, dropPhrase, getPhrase, listQueue } from "../repo/phrases";
@@ -193,6 +194,7 @@ describe("auth", () => {
   const call = (token: string | null) => ({
     known: () => knownPOST(req("/api/imports/known", token, { turn_keys: [] })),
     imports: () => importsPOST(req("/api/imports", token, {})),
+    turns: () => turnsPOST(req("/api/turns", token, {})),
     notifications: () => notificationsGET(req("/api/agent/notifications", token)),
     evalTurns: () => evalTurnsGET(req("/api/agent/eval/turns", token)),
     notified: () =>
@@ -207,6 +209,7 @@ describe("auth", () => {
   const scope = {
     known: "agent",
     imports: "agent",
+    turns: "agent",
     notifications: "agent",
     evalTurns: "agent",
     notified: "agent",
@@ -345,6 +348,89 @@ describe("imports", () => {
         "✅ Nothing new since last time.\n🔗 This share link is public; you can delete it in Gemini → Settings → Public links.",
     });
     expect(row.notifiedAt).not.toBeNull();
+  });
+});
+
+describe("tutor turns (H5)", () => {
+  // Synthetic question and answer (CLAUDE.md › Privacy).
+  const turn = {
+    user_text: "How do I tell the yuesao the baby is gassy?",
+    reply_text: "你可以说：阿姨，宝宝好像胀气了。\n胀气 (zhàng qì) means bloated, gassy.",
+    discord_channel_id: "c1",
+    discord_message_id: "q1",
+    prompt_version: "tutor.v1",
+  };
+  const postTurn = (body: Record<string, unknown> = {}, token = AGENT) =>
+    turnsPOST(req("/api/turns", token, { ...turn, ...body }));
+
+  it("stores one turn and its extract job as a tutor import, already notified", async () => {
+    const r = await postTurn();
+    expect(r.status).toBe(200);
+    const body = (await json(r)) as { import_id: string; turn_new: boolean };
+    expect(body.turn_new).toBe(true);
+    const imp = await importRow(body.import_id);
+    expect(imp).toMatchObject({
+      kind: "tutor",
+      origin: "discord",
+      sourceRef: "tutor.v1",
+      conversationTitle: null,
+      discordMessageId: "q1",
+      idempotencyKey: "tutor:q1",
+      turnsTotal: 1,
+      turnsNew: 1,
+      status: "extracting",
+      notifiedAt: T0,
+    });
+    const c = await claim();
+    expect(c!.input).toMatchObject({ user_text: turn.user_text, conversation_title: null });
+    expect(c!.input.reply_text).toContain("胀气");
+    expect(await claim()).toBeNull();
+  });
+
+  it("is idempotent on the Discord message id", async () => {
+    const first = (await json(await postTurn())) as { import_id: string };
+    const again = await postTurn();
+    expect(await json(again)).toEqual({ import_id: first.import_id, turn_new: false });
+    expect((await db.select().from(imports)).length).toBe(1);
+    expect(await claim()).not.toBeNull();
+    expect(await claim()).toBeNull();
+  });
+
+  it("gets no Discord summary reply when it finishes", async () => {
+    await postTurn();
+    await drain(() => ({
+      turn_kind: "decode",
+      items: [term("胀气", "bloated, gassy")],
+    }));
+    const [imp] = await db.select().from(imports);
+    expect(imp!.status).toBe("done");
+    expect(imp!.phrasesNew).toBeGreaterThan(0);
+    const n = await json(await notificationsGET(req("/api/agent/notifications", AGENT)));
+    expect(n).toEqual({ notifications: [] });
+  });
+
+  it("asking the same question again is a new turn; the same answer again is not", async () => {
+    await postTurn();
+    const sameAnswer = (await json(await postTurn({ discord_message_id: "q2" }))) as {
+      turn_new: boolean;
+    };
+    expect(sameAnswer.turn_new).toBe(false);
+    const newAnswer = (await json(
+      await postTurn({ discord_message_id: "q3", reply_text: "可以说：宝宝胀气了。" }),
+    )) as { turn_new: boolean };
+    expect(newAnswer.turn_new).toBe(true);
+  });
+
+  it("requires the agent token and a valid body", async () => {
+    expect((await postTurn({}, WORKER)).status).toBe(401);
+    for (const bad of [
+      { user_text: "  " },
+      { reply_text: "" },
+      { discord_message_id: undefined },
+      { prompt_version: "extract_turn.v4" },
+    ])
+      expect((await postTurn(bad)).status, JSON.stringify(bad)).toBe(400);
+    expect((await db.select().from(imports)).length).toBe(0);
   });
 });
 

@@ -1,6 +1,6 @@
 # USER.md - bamboo
 
-Will is the only user of `#bamboo`. Replies follow `AGENTS.md`: post the tool's `reply` as it is.
+Will is the only user of `#bamboo`. Replies follow `AGENTS.md`: answer his Mandarin questions as the tutor, and post the tool's `reply` as it is for everything else.
 
 ## Communication
 

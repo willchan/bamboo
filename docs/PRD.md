@@ -151,9 +151,17 @@ In order of preference:
 
 1. **Ask in `#bamboo`** (H5): the `#bamboo` agent is the tutor, on Gemini Flash. Every question
    Will asks there, and its answer, is captured by Bamboo automatically, with no share link. The agent answers; it never writes cards itself.
+   Its answer is the only reply: no "✅ … queued" summary follows a question. It never puts a
+   person's name in an answer (it says 宝宝, 孩子, 阿姨, 月嫂 or 妈妈) or personal health
+   specifics, because every answer becomes cards. When the free Gemini quota is used up for the
+   day, it keeps answering on PandaDen's paid key; the cards from those answers arrive after the
+   quota resets.
 2. **Share link** (3 taps): in the Gemini app, Share → Discord → `#bamboo`.
 3. **PDF** (fallback, always supported): a printed conversation shared to `#bamboo`.
 4. **Pasted answer**: a single Gemini answer pasted into `#bamboo`, or into the PWA's paste box.
+   In `#bamboo`, a long, multi-line message with Chinese counts as a pasted answer and anything
+   shorter as a question for the tutor. Starting a message with `paste:` or `ask:` settles it
+   either way.
 
 The behavior:
 

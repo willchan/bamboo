@@ -5,6 +5,8 @@
 # shellcheck disable=SC2034  # used by the scripts that source this file
 
 SKILL_FILE="$ROOT/agent/skills/bamboo/SKILL.md"
+# The tutor prompt (H5): the version is sharedConfig.tools.tutorPrompt (a test keeps them in step).
+TUTOR_FILE="$ROOT/worker/prompts/tutor.v1.md"
 SETUP_TSX="$ROOT/agent/tools/node_modules/.bin/tsx"
 
 # Optional override in bamboo.config.json: agent.discord_account_id (the OpenClaw Discord account

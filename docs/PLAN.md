@@ -104,7 +104,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H2 Frames retired; new-card policy | merged | [#45](https://github.com/willchan/bamboo/pull/45) |
 | H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
 | H4 Worker on Gemini | merged | [#44](https://github.com/willchan/bamboo/pull/44) |
-| H5 Tutor capture | planned | |
+| H5 Tutor capture | in review | |
 | H6 Re-run extension | planned | |
 | H7 Backfill | planned | |
 
@@ -1307,6 +1307,46 @@ free key becomes its auth profile and is pinned (DESIGN §5.5.7). Check with
 - *Resolved (orchestrator default; Will may override):* if the endpoint needs a migration (a new `import.kind`/`origin` value, say), H5
   joins the serial migration chain.
 - *Still open, for the H5 session to propose:* pasted answer vs question (above).
+- **Proposed rule (for the orchestrator to review): pasted answer vs question** (DESIGN §5.1,
+  §10 #90). Code decides, not the model: every text message goes to `bamboo-tools ask`, which
+  runs `routeText` (`shared/src/paste.ts`). (1) A message starting `paste:`/`pasted:`/`📋` is a
+  pasted answer, `ask:` a question (marker dropped). (2) Otherwise a pasted answer only if it has
+  Chinese, ≥ 300 characters and ≥ 4 non-blank lines (`sharedConfig.tools.paste`). (3) Everything
+  else is a question, including a short message quoting Chinese to decode. Either mistake still
+  reaches Bamboo. A message with no question in it (thanks, ok) gets a few words and no command;
+  the old help line ("Send me a Gemini share link…") is gone, since any text is now a question.
+- **No migration.** `import.kind` gains `tutor`, but the column is SQLite text and the enum is
+  TypeScript-only; `pnpm db:generate` reports no changes. H5 adds nothing to the serial
+  migration chain, so H6 doesn't need to rebase onto a migration of H5's.
+- `POST /api/turns` (agent token, `TutorTurnRequest`) stores a `tutor` import with one turn and
+  its extract job, through `receiveImport`; `source_ref` is the tutor prompt version, no title.
+  Its idempotency key is `tutor:<message id>`, apart from the imports' `discord:<message id>`, so
+  the same message can't be both. Tutor turns key on question and answer, like text imports
+  (DESIGN §4.5). The import is marked notified at creation, so `replies` never posts for it.
+- The tutor prompt is `worker/prompts/tutor.v1.md` (`sharedConfig.tools.tutorPrompt`), in the
+  agent's `AGENTS.md` between the header and the skill's instructions (its leading note
+  stripped); `make agent-check` warns when its lines are missing, and when the serving agent's
+  model isn't `google/gemini-…flash…`. The check doesn't read the auth order (OpenClaw's
+  `models auth order get` output isn't documented); the runbook's `models status --probe` does.
+- **Deviation (host): two Google profiles, not one.** Will's free tier is 5/min and 20/day for
+  `gemini-3.8-flash`, shared with the worker. OpenClaw rotates to the next profile in the auth
+  order on a rate limit, but its docs don't say an env key (`GEMINI_API_KEY` in
+  `~/.openclaw/.env`) is tried once an order is pinned. So the runbook adds the paid key as a
+  second profile, `google:bamboo-paid`, and the order is `google:bamboo-free google:bamboo-paid`:
+  the tutor falls back to the paid key instead of failing, and the worker waits for the reset
+  (DESIGN §5.5.7, §10 #91). Will pastes both keys during `paste-token`. No model fallback
+  (`model` is a plain string): Ollama stays the worker's only.
+- Bamboo's channel `systemPrompt` and the `bamboo` workspace files (`AGENTS.header.md`,
+  `SOUL.md`, `IDENTITY.md`, `USER.md`) now describe a tutor plus intake clerk; `make mac-update`
+  rewrites them on the dedicated agent.
+- Seed data gains one synthetic tutor import, so Imports shows "Asked in #bamboo" (and the
+  seeded Re-run offers 5 older questions, not 4).
+- Acceptance (local): shared 50, db 27, worker 68 (+2 opt-in skipped), web 290 (coverage gate
+  passed), agent/tools 128; lint, typecheck, `pnpm --filter web build`; `pnpm db:generate` no
+  changes; shellcheck on `agent/*.sh`; e2e 9/9 (the seeded Re-run spec now counts 5 older
+  questions, with the new tutor import); `shot /imports` light and dark, no console or request
+  errors. The Mac checks (`make agent-check`, `models status --probe`, a real question in
+  `#bamboo` showing on Imports) are post-merge, after the host change (orchestrator).
 
 ## H6 — Re-run extension *(depends on: H3, H4)*
 

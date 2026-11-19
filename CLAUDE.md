@@ -50,7 +50,8 @@ Read only the sections your task needs.
   and one turn (a `pinyin` job's: the prompt and one phrase with its examples). The tutor never
   writes cards: every turn goes through the worker and the engine's checks. The agent never reads
   a share link, PDF or pasted answer itself (DESIGN §5.5, §10 #74; the worker is on Gemini since
-  H4; until H5 lands, the agent still runs on Ollama).
+  H4; the agent answers with `worker/prompts/tutor.v1.md` since H5, once the host has moved its
+  model to Gemini Flash).
 - **Prompts are versioned files** in `worker/prompts/`. Changing a prompt means a new version file;
   jobs record `prompt_version`.
 - **Tunables live in config**: `web/lib/config.ts` (engine) and `shared/src/config.ts` (Mac side).
@@ -108,6 +109,7 @@ make prod-copy                             # ask Will first: prod → .scratch/p
 pnpm --filter web dev:prod-copy            # next dev on the prod copy (refuses non-file: DBs)
 make prod-copy-clean                       # delete the copy when you're done
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
+bamboo-tools ask --text-file <txt> / turn --question-file … --answer-file … --message-id …   # the skill's pasted-answer/question routing and tutor capture (H5)
 pnpm smoke https://bamboo-panda.vercel.app   # after each deploy (prod): public, read-only checks, no secrets (cloud: README › After each deploy)
 make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
 pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model (the fallback)

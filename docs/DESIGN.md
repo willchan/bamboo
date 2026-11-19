@@ -147,9 +147,9 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | column | notes |
 |---|---|
 | `id` | |
-| `kind` | `'link' \| 'pdf' \| 'text'` |
+| `kind` | `'link' \| 'pdf' \| 'text' \| 'tutor'` (`tutor` since H5: a question asked in `#bamboo` and the agent's answer, §5.1; SQLite text, so no migration) |
 | `origin` | `'discord' \| 'web'` |
-| `source_ref` | share URL or file name; null for text |
+| `source_ref` | share URL or file name; the tutor prompt's version (`tutor.v1`) for a tutor turn; null for text |
 | `conversation_title` | from the page or PDF title; null for text |
 | `discord_channel_id`, `discord_message_id` | null for web; the reply target |
 | `idempotency_key` | **unique** null; the `Idempotency-Key` header of the call that created it |
@@ -160,7 +160,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `phrases_again` | int; existing phrases its turns asked about again |
 | `uploaded_at` | null while chunks are still arriving (`more: true`) |
 | `summary` | null until done; the ready-to-post Discord reply (§5.1) |
-| `notified_at` | null until the Discord reply is posted; set at once for an import with nothing new (the skill already replied "Nothing new") |
+| `notified_at` | null until the Discord reply is posted; set at once for an import with nothing new (the skill already replied "Nothing new") and for a tutor turn (its answer was the reply; H5) |
 | `created_at`, `finished_at` | |
 
 **`turn`**: one user message plus Gemini's reply.
@@ -221,6 +221,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 |---|---|---|
 | `POST /api/imports/known` | agent | `{turn_keys: string[]}` (≤ 5,000) → `{unknown: string[]}` so the CLI uploads only new turns |
 | `POST /api/imports` | agent | `{kind, origin, source_ref?, conversation_title?, discord_channel_id?, discord_message_id?, turns_total, turns: [{user_text, reply_text, position}], more?}` (≤ 2 MB, else 413; the CLI chunks, passing `import_id` on later calls and `more: true` on every call but the last) → `{import_id, turns_new, turns_added}`. `turns_new` is the import's running total, `turns_added` this call's. The engine recomputes each `turn_key`, inserts new turns, and queues one `extract_turn` per new turn, in one transaction. Header `Idempotency-Key: discord:<message id>` on every call: a repeated first call returns the same import. A chunk with new turns for an import whose last chunk already arrived → 409 `import_closed`; an unknown `import_id` → 404 |
+| `POST /api/turns` | agent | H5: `TutorTurnRequest` `{user_text, reply_text, discord_channel_id?, discord_message_id, prompt_version}` (≤ 2 MB; `prompt_version` is `tutor.v<N>`) → `{import_id, turn_new}`. One question asked in `#bamboo` and the tutor's answer, stored as a `tutor` import (`origin: 'discord'`, `source_ref` = the prompt version, no title) with one turn and its `extract_turn` job, through the same service as `/api/imports`, and marked notified at once (the answer is the only reply). Idempotent on the message id (`idempotency_key` `tutor:<message id>`): a retry returns the same import with `turn_new: false`, as does a turn the engine already has (§4.5) |
 | `GET /api/agent/notifications` | agent | `{notifications: [{import_id, kind, discord_channel_id, discord_message_id, summary}]}`: finished imports with a Discord message and no `notified_at` |
 | `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
 | `GET /api/agent/nudge` | agent | `NudgeResponse` `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent (a conditional upsert of `nudge_last_sent_day`, so of two overlapping polls only one gets the text) and logs `nudge_sent` |
@@ -380,7 +381,10 @@ That makes "what's new since last time" work across re-shares, across PDF and li
 the same conversation, and across separate conversations. Two genuinely identical prompts
 collapse into one. That is rare and harmless.
 
-Text imports: `turn_key = sha256(hanziKey(user_text ?? '') + '\n' + hanziKey(reply_text))`.
+Text imports and tutor turns (H5): `turn_key = sha256(hanziKey(user_text ?? '') + '\n' +
+hanziKey(reply_text))`. A question asked the tutor again gets a new answer, so it's a new turn
+(and counts as asking again); the same message is never stored twice (`/api/turns` is
+idempotent on its Discord message id).
 
 **Empty prompts.** When `hanziKey(user_text)` is empty (an image-only prompt in a share link or
 PDF), the turn is keyed like a text import, on the reply. Otherwise every image-only turn would
@@ -388,7 +392,7 @@ share one key and all but the first would be dropped as known. M0 found one such
 Will's real conversation. The rule lives in `turnKey()`, so the CLI and the engine agree.
 
 `turnKey({user_text, reply_text}, kind)` in `shared/src/turns.ts` (`kind` is the import's
-`'link' | 'pdf' | 'text'`) returns the hex sha256. A prompt of only punctuation counts as empty.
+`'link' | 'pdf' | 'text' | 'tutor'`) returns the hex sha256. A prompt of only punctuation counts as empty.
 The engine computes the key from the full normalized text, then caps `reply_text` for storage.
 
 The CLI computes keys to ask `/api/imports/known`; the engine recomputes them and is the
@@ -592,10 +596,33 @@ restart (§10 #33).
 |---|---|
 | a Gemini share link (`share.gemini.google/…`, `gemini.google.com/share/…`, `g.co/gemini/share/…`) | `bamboo-tools import --url <link> --channel-id … --message-id …` |
 | a PDF attachment (use its local `path`) | `bamboo-tools import --file <path> --channel-id … --message-id …` |
-| other text containing Chinese characters | write it to a file; `bamboo-tools import --text-file <file> --channel-id … --message-id …` |
-| anything else | one line: "Send me a Gemini share link, a PDF, or a pasted answer." |
+| no question at all (thanks, ok, 👍) | a few words; no command |
+| any other text (H5: a question, or a pasted answer) | write it to a file; `bamboo-tools ask --text-file <file> --channel-id … --message-id …` |
 
-The command prints one JSON line, `{import_id, turns_total, turns_new, conversation_title,
+**Pasted answer or question** (H5, `routeText` in `shared/src/paste.ts`, §10 #90). `ask` decides,
+so the model never has to:
+
+1. A message that starts with `paste:` (or `pasted:`, `📋`) is a pasted answer, and one that
+   starts with `ask:` a question; the marker is dropped.
+2. Otherwise it's a pasted answer only if it has Chinese characters, is at least
+   `tools.paste.minChars` (300) characters long and has at least `tools.paste.minLines` (4)
+   non-blank lines (Gemini's answers are long and structured).
+3. Everything else is a question, including a one- or two-line message quoting Chinese to decode.
+
+A pasted answer is imported as `import --text-file` would (`kind: 'text'`); `ask` prints the
+same JSON plus `"route":"paste"`, and the skill posts its `reply`. A question prints
+`{"route":"question"}` and sends nothing. The agent then answers it as the **tutor** (the rules
+of `worker/prompts/tutor.v1.md`, which are in its `AGENTS.md`), writes its answer to a file, runs
+`bamboo-tools turn --question-file <file> --answer-file <file> --channel-id … --message-id …`
+(`POST /api/turns`, §3.2), and posts only the answer. `turn` prints `{import_id, turn_new}`; on a
+failure (`not_saved`, after `Api`'s retries) the agent adds its `reply` line under the answer:
+"⚠️ Couldn't save this question to Bamboo just now; ask it again later to add it." A tutor turn
+gets **no** results reply: the engine marks it notified at once (PLAN H5 Notes). A misrouted
+message still reaches Bamboo: a question taken for a paste is imported as text (and gets no
+answer, so Will re-asks with `ask:`), and a paste taken for a question gets an answer and is
+saved as a turn with the paste as its question.
+
+The `import` and `ask` commands print one JSON line, `{import_id, turns_total, turns_new, conversation_title,
 reply}`, and the skill posts `reply` verbatim (so the wording is tested code, not the reply
 model's paraphrase):
 
@@ -609,13 +636,14 @@ model's paraphrase):
   link; `empty`, `not_configured`, `api` (after retries) and `wrong_channel` have their own lines
   (`FAILURE_REPLIES` in `agent/tools/src/cli.ts`). The diagnostic goes to stderr.
 
-**Privacy**: the skill passes the link or path along and never reads, summarizes or quotes the
-conversation. (**Changing, §5.5.1, H5:** the agent becomes the tutor on Gemini Flash; it answers
-questions asked in `#bamboo` and hands each question and answer to Bamboo, but still never reads a
-share link, PDF or pasted answer itself.) All model work happens in the worker on local Ollama. If OpenClaw extracts
-attachment text for its own reply model, that model must be local too. PandaBase's household
-configuration already does this (its DESIGN §10 #43). That is the host's setting for the agent
-that serves `#bamboo` (below).
+**Privacy**: the skill passes a link, a path or a pasted answer's file along and never reads,
+summarizes or quotes the conversation. Since H5 the agent is the tutor on Gemini Flash
+(§5.5.1): it answers the questions Will asks in `#bamboo` and hands each question and answer to
+Bamboo, but still never reads a share link, PDF or pasted answer itself. Extraction happens in
+the worker (Gemini, Ollama as fallback, §5.3). The tutor prompt says never to put a person's name
+in an answer (宝宝, 孩子, 阿姨, 月嫂 or 妈妈 instead) and to keep personal health specifics out
+of it, since each answer becomes a turn (§5.5.8); only the question, the prompt and the agent's
+workspace files (which carry no names or health details) go to Gemini.
 
 **The serving agent** (§10 #69; until then a `bamboo` agent Bamboo set up itself, #50): the host binds `#bamboo`
 to an OpenClaw agent of its choosing, per the Mac's runbook, and
@@ -624,6 +652,9 @@ Bamboo never adds an agent or changes `bindings`. What Bamboo needs from that ag
 
 - **a binding** for the `#bamboo` channel (a ✗ without one: the message would go to OpenClaw's
   default agent), and a config entry whose `skills` allowlist, if it has one, includes `bamboo`;
+- **Gemini Flash** as its model (H5, a ⚠ otherwise: `google/gemini-…flash…`, as a string or
+  `model.primary`). Which key serves is the host's (§5.5.7): `openclaw models status --agent
+  bamboo --probe`;
 - **thinking off** (`thinkingDefault: "off"`, a ⚠ otherwise). Measured with
   `ollama/qwen3.5:27b` through the shared `main` agent: a `#bamboo` message took **75–120 s**,
   almost all of it the model thinking; with thinking off, **~5–25 s**. OpenClaw sets thinking
@@ -631,7 +662,8 @@ Bamboo never adds an agent or changes `bindings`. What Bamboo needs from that ag
 - **the instructions inline** in its workspace `AGENTS.md` (a ⚠ otherwise): with thinking off,
   the model doesn't open `SKILL.md` on its own and guessed wrong flags; with the skill's body in
   `AGENTS.md` it picked the right command for a link, a PDF, pasted text and chit-chat every
-  time. The host's `AGENTS.md` has its own `#bamboo` section heading and scope; the check is that
+  time. Since H5 the tutor prompt (`worker/prompts/tutor.v1.md`, without its leading note) is
+  inline too, between the header and the skill's instructions, and checked the same way. The host's `AGENTS.md` has its own `#bamboo` section heading and scope; the check is that
   every non-blank line of `SKILL.md` after its title and `Scope:` paragraph is in that file
   (`missingInstructions`, `agent/tools/src/openclaw/agent.ts`), so a `SKILL.md` change shows up
   as a ⚠ until it's in step. For a dedicated agent, `make agent-install` writes that file itself
@@ -639,11 +671,12 @@ Bamboo never adds an agent or changes `bindings`. What Bamboo needs from that ag
   channel pin and the `description` the model matches.
 
 On Will's Mac (since 2026-11-14) that is a dedicated `bamboo` agent again, set up by the host:
-`qwen3.8:27b`, `thinkingDefault: "off"`, `skills: ["bamboo"]`, `tools.allow: ["exec", "write"]`
-(`write` only for a pasted answer's text file; bamboo-tools reads a PDF's path itself), and exec
+`qwen3.8:27b` until H5's host change moves it to `google/gemini-3.8-flash` (§5.5.7), `thinkingDefault: "off"`, `skills: ["bamboo"]`, `tools.allow: ["exec", "write"]`
+(`write` for a message's text file and, since H5, the tutor's answer file; bamboo-tools reads
+a PDF's path itself), and exec
 in allowlist mode with only `bamboo-tools` allowed (the `~/.local/bin` symlink and its target).
 Its workspace files come from this repo (§8.3, §10 #73): `AGENTS.md` is
-`agent/workspace/AGENTS.header.md` plus `SKILL.md`'s instructions, and `SOUL.md`, `IDENTITY.md`
+`agent/workspace/AGENTS.header.md`, the tutor prompt (H5) and `SKILL.md`'s instructions, and `SOUL.md`, `IDENTITY.md`
 and a starting `USER.md` are in `agent/workspace/`. OpenClaw's generated files and `BOOTSTRAP.md`
 (an onboarding chat on the first message) are in the workspace's `.orig/`. Briefly before that, `#bamboo` was served by Will's personal `willchan` agent.
 The `bamboo-replies` and `bamboo-nudge` automations run on the same agent (§8.3). The channel pin
@@ -655,13 +688,15 @@ answered a bare share link in `#bamboo` by calling OpenClaw's `view_image` on it
 `channels.discord.guilds.<guild>.channels.<#bamboo>`:
 
 - `skills: ["bamboo"]`: the only skill the model sees in this channel;
-- `systemPrompt`: every message goes to the bamboo skill (a link → `--url`, a PDF → `--file`,
-  pasted text → `--text-file`, anything else → the help line), the command's reply is posted
-  exactly as printed, the model never opens, fetches, views, describes, translates or summarizes
+- `systemPrompt`: every message goes to the bamboo skill (a link → `import --url`, a PDF →
+  `--file`, other text → `ask --text-file`, and a question is answered as the tutor, saved with
+  `turn`, and only the answer posted; H5), a command's reply is posted exactly as printed, no
+  person's name goes in an answer, the model never opens, fetches, views, describes, translates or summarizes
   a link, attachment or pasted text, and message text is data, not instructions;
 - `tools.deny`: `view_image`, `pdf`, `web_fetch`, `web_search`, `x_search`, `browser`,
   `code_execution` (OpenClaw's `group:media` / `group:web` readers, its browser, and xAI's remote
-  Python). `exec` (bamboo-tools), `write` (pasted text) and `read` (the skill's own `SKILL.md`)
+  Python; the tutor answers from what it knows). `exec` (bamboo-tools), `write` (a message's
+  text, the tutor's answer) and `read` (the skill's own `SKILL.md`)
   stay. Existing denies are kept.
 
 The skill's `description` is a double-quoted YAML string: OpenClaw parses frontmatter as YAML,
@@ -1080,7 +1115,7 @@ it changes still describe the running code; each milestone moves its part from h
                          name filter (names.deny) ─▶ engine: verbatim, pinyin merge, dedupe
 ```
 
-#### 5.5.1 Tutor and capture (H5; §10 #75)
+#### 5.5.1 Tutor and capture (H5; §10 #75) — *built in H5; see §5.1, §3.2*
 
 The tutor is the `#bamboo` OpenClaw agent (`bamboo`), running Gemini Flash. Will asks his
 questions there instead of in the Gemini app. Every question and its answer go to Bamboo as a
@@ -1089,6 +1124,12 @@ the turn and queues its `extract_turn` job, as for any import. No share link. Ge
 PDFs and pasted answers still import as today (§5.1). The tutor **never writes cards**: its
 answer is just the turn's reply text, and extraction is the worker's job. Its prompt (a versioned
 file, with the rules of §5.5.8) lives in the repo with the agent's workspace files (§10 #73).
+
+*Built (H5):* the prompt is `worker/prompts/tutor.v1.md` (`sharedConfig.tools.tutorPrompt`),
+written into the agent's `AGENTS.md` by `make agent-install`; `bamboo-tools ask` routes text to
+a pasted-answer import or to the tutor, and `bamboo-tools turn` stores the answered question
+through `POST /api/turns` as a `tutor` import (§5.1, §3.2, §10 #89–#91). The host's model and
+key change is in PandaDen's runbook (§5.5.7).
 
 #### 5.5.2 Extraction: `extract_turn.v4` (H4; §10 #74, #76, #77)
 
@@ -1248,6 +1289,19 @@ H7 runs 10 turns as a dry run (counts only), then, after Will approves, the rest
 - Check which key serves requests with `openclaw models status --agent bamboo --probe` and one
   real request. The host setup is recorded in PandaDen's host runbook (H5), and applied by the
   orchestrator via `ssh agent` after Will approves.
+- **When the free quota is used up** (H5, §10 #91). The free key's 5/min and 20/day for
+  `gemini-3.8-flash` are shared by the tutor and the worker (one tutor answer plus one
+  extraction, sometimes a referee call, per question). So the tutor never fails on quota: the
+  agent's Google auth order is `google:bamboo-free` then `google:bamboo-paid`, a second profile
+  holding PandaDen's paid key. OpenClaw rotates to the next profile in the order on a 429 or
+  "resource exhausted" for that turn, and puts the free profile in cooldown for as long as Google's
+  retry delay says; it uses the free key again once that ends (the daily quota resets at midnight
+  Pacific). So the tutor answers on the paid key for the rest of the day, while the worker waits
+  for the reset (§10 #86) and its extractions catch up the next morning. The tutor has no model
+  fallback (`fallbacks: []`): Ollama stays the worker's only (CLAUDE.md › *Gemini at runtime*).
+  An env key (`GEMINI_API_KEY` in `~/.openclaw/.env`) isn't used for this, because OpenClaw's
+  docs don't say an env key is tried once an auth order is pinned; the explicit second profile
+  is. Unverified until the host change runs.
 
 #### 5.5.8 Privacy on the Gemini path (§10 #83)
 
@@ -1507,8 +1561,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   agent or changes `bindings` or the system agent. With no matching binding it warns.
 - **A dedicated agent's workspace files** (§10 #73): when the serving agent's `skills` allowlist
   is exactly `["bamboo"]`, `make agent-install` writes its `AGENTS.md`
-  (`agent/workspace/AGENTS.header.md` + `SKILL.md` after its title and `Scope:` paragraph,
-  `agentsMd`), `SOUL.md` and `IDENTITY.md`, keeping a replaced file in `<workspace>/.orig/`,
+  (`agent/workspace/AGENTS.header.md` + the tutor prompt `worker/prompts/tutor.v1.md` without
+  its note (H5) + `SKILL.md` after its title and `Scope:` paragraph, `agentsMd`), `SOUL.md` and `IDENTITY.md`, keeping a replaced file in `<workspace>/.orig/`,
   and writes `USER.md` only over OpenClaw's placeholder (the agent records preferences there).
   A shared agent's workspace (e.g. a personal agent that also serves `#bamboo`) is the host's,
   and is left alone.
@@ -1517,8 +1571,10 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   host's jobs: it used to pass `main`, which would have moved them off the serving agent.
 - `make agent-check` (`agent/check.sh`, read-only, exits 1 on a ✗): ✗ `#bamboo` isn't bound to
   an agent, that agent has no config entry, or its `skills` allowlist leaves out `bamboo`; ⚠ its
-  `thinkingDefault` (or the defaults') isn't `off`, its workspace `AGENTS.md` lacks lines of
-  `SKILL.md`'s instructions, or a `bamboo-*` automation runs on another agent. The ⚠s are the
+  model isn't Gemini Flash (H5), its `thinkingDefault` (or the defaults') isn't `off`, its
+  workspace `AGENTS.md` lacks lines of `SKILL.md`'s instructions or of the tutor prompt, or a
+  `bamboo-*` automation runs on another agent. It doesn't read the auth order (the host's
+  runbook checks that with `openclaw models status --agent bamboo --probe`). The ⚠s are the
   host's to fix (the Mac's runbook); Bamboo reports, never changes them.
 - `make mac-update` (as `openclaw-agent`) runs `git pull --ff-only`,
   `pnpm install --frozen-lockfile`, then `worker-install` again: it reloads the LaunchAgent if
@@ -1763,6 +1819,9 @@ bamboo/
 | 86 | Gemini's free-tier limits are config defaults (5/min, 20/day for `gemini-3.8-flash`) overridable in worker.env, with Google's 429 as the backstop; a daily-quota 429 stops claims until midnight Pacific, and the job that hit it uses one attempt; other Gemini failures send that job to Ollama and rest Gemini 10 min (H4, §5.3) | Google's rate-limit page now shows per-project limits only in AI Studio, not as published numbers, so the worker can't hard-code the truth; conservative defaults plus the 429s keep it inside whatever the project has. Quota waits instead of falling back (Will's decision, PLAN H4 Notes); failing the one job that hit it beats holding a lease for hours |
 | 87 | The name filter rewrites a name in an English field to `someone`, drops an item or example whose Chinese contains one, clears a `heard_as` that does, and reports only a count (H4, §5.5.8) | A generic word is safe whoever was named; a role word (阿姨, 宝宝) would need knowing who the name belongs to, which the deny-list deliberately doesn't say |
 | 88 | Refines #82: two Gemini keys in `agent.env`. `BAMBOO_GEMINI_API_KEY_FREE` serves everyday extraction, referee and pinyin jobs at the free tier's limits (5/min, 20/day for `gemini-3.8-flash`, confirmed by Will in AI Studio); `BAMBOO_GEMINI_API_KEY_PAID` is used only by a run that asks for it, with its own limits. H7's backfill runs on the paid key. H4's `BAMBOO_GEMINI_API_KEY` is the free key's alias until renamed (expand → contract). Logs name a key's variable, never its value. No Batch API (H7, §5.5.6, §5.5.7) | At 20/day the 147-turn backfill plus referee calls would take more than a week; on a paid key it is about a dollar or two. Batch is 50% cheaper, but saving cents doesn't pay for a new submit/collect flow, a second pass for referee calls and up to 24 h turnaround. Keeping everyday work on the free key keeps its cost at zero, and the paid key only spends when a run asks for it |
+| 89 | A tutor turn is stored through its own agent route, `POST /api/turns`, as an import of a new kind `tutor` (one turn, `source_ref` = the tutor prompt version, idempotent on `tutor:<message id>`, marked notified at once); `bamboo-tools turn` sends it after the agent has posted nothing but its answer. The tutor prompt is `worker/prompts/tutor.v1.md`, written into the agent's `AGENTS.md` with the skill (H5, §3.2, §5.1) | The answer is already in the channel, so a second "✅ 1 new question → …" reply would be noise (orchestrator default). A kind of its own keeps tutor turns visible on Imports ("Asked in #bamboo"), keys them on question and answer (§4.5) and needs no migration: `kind` is SQLite text and the enum is TypeScript-only. A route of its own keeps `/api/imports`' chunking out of a one-turn call |
+| 90 | Pasted answer or question is decided by code, not the model: `paste:`/`ask:` markers first, then a pasted answer only if it has Chinese, ≥ 300 characters and ≥ 4 non-blank lines; everything else is a question (`routeText`, `bamboo-tools ask`; H5, §5.1) | Gemini's answers are long and structured; Will's questions are a line or two, even when they quote a Chinese message to decode. A tested rule beats a model's guess with thinking off, and the markers give Will an override. Either mistake still reaches Bamboo (a question is imported as text; a paste is answered and saved as a turn), so the threshold can be tuned from Imports later |
+| 91 | The tutor's Google auth order is the free profile, then a second profile with PandaDen's paid key (`google:bamboo-paid`); no model fallback. The host's runbook sets it (H5, §5.5.7) | Will accepted falling back to the paid key (decision 9). The free quota (20/day) is shared with the worker, so a busy day would otherwise end in quota errors in `#bamboo`; OpenClaw rotates profiles on rate limits before failing. Its docs don't promise that an env key is tried after a pinned order, so the paid key gets an explicit profile. Ollama stays the worker's only fallback |
 
 ## Appendix A — Synthetic fixtures
 

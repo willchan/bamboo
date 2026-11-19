@@ -136,7 +136,14 @@ function expectFirmPrompt(prompt: string | undefined) {
   expect(prompt).toBeDefined();
   const p = prompt!;
   expect(p).toMatch(/bamboo skill/u);
-  for (const f of ["bamboo-tools import --url", "--file", "--text-file"]) expect(p).toContain(f);
+  for (const f of [
+    "bamboo-tools import --url",
+    "--file",
+    "bamboo-tools ask --text-file",
+    "bamboo-tools turn",
+  ])
+    expect(p).toContain(f);
+  expect(p).toMatch(/person name/u);
   expect(p).toMatch(/exactly as printed/u);
   expect(p).toMatch(/never open, fetch, view, describe, translate or summarize/iu);
   expect(p).toMatch(/link, attachment or pasted text/u);
@@ -354,11 +361,17 @@ describe(
     };
     const ws = () => join(oc(), "workspace-willchan");
     const skill = () => readFileSync(join(repo, "agent/skills/bamboo/SKILL.md"), "utf8");
-    // The host's AGENTS.md: its own heading and scope, then the skill's instructions.
+    const tutor = () =>
+      readFileSync(join(repo, "worker/prompts/tutor.v1.md"), "utf8").replace(
+        /^<!--[\s\S]*?-->/u,
+        "",
+      );
+    // The host's AGENTS.md: its own heading and scope, the tutor prompt, then the skill's
+    // instructions.
     const hostAgentsMd = () => {
       const body = skill().split(/^---$/mu)[2]!;
       const afterScope = body.slice(body.search(/^Scope:/mu)).replace(/^Scope:[\s\S]*?\n\n/u, "");
-      return `# willchan\n\n## #bamboo channel\n\nOnly in #bamboo.\n\n${afterScope}\n## Other\n`;
+      return `# willchan\n\n## #bamboo channel\n\nOnly in #bamboo.\n${tutor()}\n${afterScope}\n## Other\n`;
     };
     const withToken = () => {
       install();
@@ -376,7 +389,7 @@ describe(
       patchCfg((c) => {
         c.agents = {
           defaults: { model: { primary: "ollama/qwen3.8:27b" }, thinkingDefault: "off" },
-          entries: { main: {}, willchan: { model: "ollama/qwen3.8:27b", ...entry } },
+          entries: { main: {}, willchan: { model: "google/gemini-3.8-flash", ...entry } },
         };
         c.bindings = [HOST, MAIN_ALL];
       });
@@ -396,8 +409,9 @@ describe(
       expect(calls()).not.toMatch(/^(agents add|config set (agents|bindings))/mu);
       const c = check();
       expect(c.code, c.out).toBe(0);
-      expect(c.out).toContain("the willchan agent exists (ollama/qwen3.8:27b)");
-      expect(c.out).toContain("has SKILL.md's instructions");
+      expect(c.out).toContain("the willchan agent exists (google/gemini-3.8-flash)");
+      expect(c.out).toContain("willchan answers with google/gemini-3.8-flash (the tutor)");
+      expect(c.out).toContain("has SKILL.md's instructions and the tutor prompt");
       expect(c.out).toContain("willchan thinkingDefault off");
       expect(c.out).not.toContain("⚠");
     });
@@ -460,6 +474,16 @@ describe(
       expect(check().out).toContain("no willchan agent");
     });
 
+    // H5: the tutor needs Gemini Flash; the host sets it, so the check only warns.
+    it("warns, without failing, when the agent isn't on Gemini Flash", () => {
+      setUp({ model: "ollama/qwen3.8:27b" });
+      const r = check();
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toContain("model is 'ollama/qwen3.8:27b', not Gemini Flash");
+      setUp({ model: { primary: "google/gemini-3.8-flash", fallbacks: [] } });
+      expect(check().out).toContain("willchan answers with google/gemini-3.8-flash");
+    });
+
     it("warns, without failing, on thinking and a stale AGENTS.md", () => {
       setUp({ skills: ["bamboo"], thinkingDefault: "high" });
       writeFileSync(join(ws(), "AGENTS.md"), "# willchan\n\n## #bamboo channel\n\nold copy\n");
@@ -482,7 +506,11 @@ describe(
       const dedicated = () => {
         setUp();
         patchCfg((c) => {
-          c.agents!.entries!.bamboo = { skills: ["bamboo"], thinkingDefault: "off" };
+          c.agents!.entries!.bamboo = {
+            skills: ["bamboo"],
+            thinkingDefault: "off",
+            model: "google/gemini-3.8-flash",
+          };
           c.bindings = [{ ...HOST, agentId: "bamboo" }, MAIN_ALL];
         });
         mkdirSync(dws(), { recursive: true });
@@ -495,13 +523,16 @@ describe(
       };
       const repoFile = (f: string) => readFileSync(join(repo, "agent/workspace", f), "utf8");
 
-      it("writes AGENTS.md from SKILL.md, replaces SOUL and IDENTITY, seeds USER, keeps old copies", () => {
+      it("writes AGENTS.md from the tutor prompt and SKILL.md, replaces SOUL and IDENTITY, seeds USER, keeps old copies", () => {
         dedicated();
         const r = install();
         expect(r.code, r.out).toBe(0);
         const agentsMd = readFileSync(join(dws(), "AGENTS.md"), "utf8");
         expect(agentsMd.startsWith(repoFile("AGENTS.header.md").trimEnd())).toBe(true);
         expect(agentsMd).toContain("bamboo-tools import --url");
+        expect(agentsMd).toContain("## Tutor (tutor.v1)");
+        expect(agentsMd).not.toContain("<!--");
+        expect(agentsMd.indexOf("## Tutor")).toBeLessThan(agentsMd.indexOf("bamboo-tools import"));
         for (const f of ["SOUL.md", "IDENTITY.md", "USER.md"])
           expect(readFileSync(join(dws(), f), "utf8")).toBe(repoFile(f));
         const orig = readdirSync(join(dws(), ".orig")).sort();

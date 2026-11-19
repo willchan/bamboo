@@ -274,6 +274,20 @@ const IMPORTS = [
     failedJob: true,
   },
   {
+    // H5: a question asked in #bamboo and the tutor's answer.
+    kind: "tutor" as const,
+    title: null,
+    hoursAgo: 3,
+    turns: [
+      [
+        "How do I tell the nanny the baby is gassy?",
+        "你可以说：阿姨，宝宝好像胀气了。 (Ā yí, bǎo bao hǎo xiàng zhàng qì le.)",
+      ],
+    ],
+    phrasesNew: 1,
+    phrasesAgain: 0,
+  },
+  {
     kind: "text" as const,
     title: null,
     hoursAgo: 1,
@@ -392,7 +406,9 @@ async function seedCapture(db: Db, now: number): Promise<void> {
           ? "https://g.co/gemini/share/synthetic0"
           : imp.kind === "pdf"
             ? "bedtime.pdf"
-            : null,
+            : imp.kind === "tutor"
+              ? "tutor.v1"
+              : null,
       conversationTitle: imp.title,
       turnsTotal: imp.turns.length,
       turnsNew: imp.turns.length,

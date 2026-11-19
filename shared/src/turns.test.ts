@@ -37,4 +37,12 @@ describe("turnKey", () => {
     // Punctuation alone is still an empty prompt.
     expect(turnKey({ user_text: "？", reply_text: "这是奶瓶。" }, "link")).toBe(two);
   });
+
+  it("keys tutor turns on question and answer, so the same question asked again is a new turn", () => {
+    const q = "How do I say pressure cooker?";
+    const one = turnKey({ user_text: q, reply_text: "高压锅 (gāo yā guō)。" }, "tutor");
+    const two = turnKey({ user_text: q, reply_text: "可以说：高压锅。" }, "tutor");
+    expect(one).not.toBe(two);
+    expect(one).toBe(turnKey({ user_text: q, reply_text: "高压锅 (gāo yā guō)。" }, "text"));
+  });
 });

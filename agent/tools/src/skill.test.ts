@@ -2,6 +2,7 @@
 // test_skills.py idea): the frontmatter parses, and every command the skill names exists.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { sharedConfig } from "@bamboo/shared";
 import { COMMANDS } from "./cli";
 import { ToolsConfig } from "./env";
 
@@ -45,12 +46,40 @@ describe("agent/skills/bamboo/SKILL.md", () => {
       const flags = [...(rest ?? "").matchAll(/--([a-z-]+)/gu)].map((f) => f[1]);
       for (const f of flags) expect(COMMANDS[cmd as keyof typeof COMMANDS]).toContain(f);
     }
-    expect([...named].sort()).toEqual(["import", "nudge", "replies"]);
+    expect([...named].sort()).toEqual(["ask", "import", "nudge", "replies", "turn"]);
   });
 
   it("covers every import source and the Discord ids", () => {
     for (const f of ["--url", "--file", "--text-file", "--channel-id", "--message-id"])
       expect(fm.body).toContain(f);
+  });
+
+  it("saves every tutor answer with turn, and posts only the answer", () => {
+    expect(fm.body).toMatch(/"route":"question"/u);
+    for (const f of ["--question-file", "--answer-file"]) expect(fm.body).toContain(f);
+    expect(fm.body).toMatch(/Post your answer, and nothing else/u);
+  });
+});
+
+// H5: the tutor prompt (DESIGN §5.5.1, §5.5.8) is a versioned file the installer and check use.
+describe("the tutor prompt", () => {
+  const version = sharedConfig.tools.tutorPrompt;
+  const prompt = readFileSync(repo(`worker/prompts/${version}.md`), "utf8");
+  const sh = readFileSync(repo("agent/openclaw-agent.sh"), "utf8");
+
+  it("is the file the installer and agent-check use", () => {
+    expect(sh).toContain(`TUTOR_FILE="$ROOT/worker/prompts/${version}.md"`);
+    expect(prompt).toContain(`## Tutor (${version})`);
+  });
+
+  it("carries the privacy rules (CLAUDE.md › Privacy)", () => {
+    expect(prompt).toMatch(/Never put a person's name in an answer/u);
+    for (const role of ["宝宝", "孩子", "阿姨", "月嫂", "妈妈"]) expect(prompt).toContain(role);
+    expect(prompt).toMatch(/health specifics/u);
+    expect(prompt).toMatch(/diagnoses, doses, measurements/u);
+    expect(prompt).toMatch(/胀气/u);
+    expect(prompt).toMatch(/never write cards/iu);
+    expect(prompt).toMatch(/Don't search, open links/u);
   });
 });
 

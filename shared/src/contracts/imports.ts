@@ -58,3 +58,27 @@ export const ImportResponse = z.object({
   turns_added: z.number().int(),
 });
 export type ImportResponse = z.infer<typeof ImportResponse>;
+
+/**
+ * `POST /api/turns` (H5, DESIGN §3.2, §5.5.1): one question Will asked the #bamboo tutor and its
+ * answer, stored as a `tutor` import with one turn and its extract job. Idempotent on the
+ * question's Discord message id: a retry returns the same import and adds nothing.
+ */
+export const TutorTurnRequest = z.object({
+  /** Will's question, as he typed it. */
+  user_text: z.string().trim().min(1).max(20_000),
+  /** The tutor's answer, as posted. The engine caps it like any reply. */
+  reply_text: z.string().trim().min(1).max(100_000),
+  discord_channel_id: z.string().min(1).max(64).nullish(),
+  discord_message_id: z.string().min(1).max(64),
+  /** The tutor prompt that answered (`tutor.v1`), kept as the import's `source_ref`. */
+  prompt_version: z.string().regex(/^tutor\.v\d+$/u),
+});
+export type TutorTurnRequest = z.input<typeof TutorTurnRequest>;
+
+export const TutorTurnResponse = z.object({
+  import_id: z.string(),
+  /** False when the engine already had this turn (a retry, or the same question and answer). */
+  turn_new: z.boolean(),
+});
+export type TutorTurnResponse = z.infer<typeof TutorTurnResponse>;

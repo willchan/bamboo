@@ -8,7 +8,9 @@ import {
   NotificationsResponse,
   NudgeResponse,
   sharedConfig,
+  TutorTurnResponse,
   type ImportRequest,
+  type TutorTurnRequest,
 } from "@bamboo/shared";
 import type { z } from "zod";
 
@@ -114,6 +116,11 @@ export class Api {
       ? { "idempotency-key": idempotencyKey }
       : {};
     return (await this.call("POST", "/api/imports", ImportResponse, body, headers))!;
+  }
+
+  /** `POST /api/turns` (H5): one tutor question and answer; idempotent on the message id. */
+  async tutorTurn(body: TutorTurnRequest): Promise<TutorTurnResponse> {
+    return (await this.call("POST", "/api/turns", TutorTurnResponse, body))!;
   }
 
   async notifications() {

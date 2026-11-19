@@ -11,4 +11,5 @@ export * from "./segment";
 export * from "./verbatim";
 export * from "./random";
 export * from "./pinyin-merge";
+export * from "./paste";
 export * from "./contracts/index";

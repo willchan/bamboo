@@ -4,7 +4,8 @@ import { TURN_KINDS } from "./phrases";
 // Capture (DESIGN §2.2, §2.3): imports, the turns they carried, and the extract_turn job queue.
 // Times are integer ms since epoch.
 
-export const IMPORT_KINDS = ["link", "pdf", "text"] as const;
+/** `tutor` since H5: a question asked in #bamboo and the agent's answer (no SQL change: text). */
+export const IMPORT_KINDS = ["link", "pdf", "text", "tutor"] as const;
 export type ImportKind = (typeof IMPORT_KINDS)[number];
 
 export const IMPORT_STATUSES = ["extracting", "done"] as const;
@@ -13,7 +14,7 @@ export type ImportStatus = (typeof IMPORT_STATUSES)[number];
 export const JOB_STATUSES = ["queued", "leased", "done", "failed"] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
 
-/** One share link, PDF or pasted answer. The SQL table is `import`; `imports` in TypeScript. */
+/** One share link, PDF, pasted answer or tutor turn. The SQL table is `import`; `imports` in TypeScript. */
 export const imports = sqliteTable(
   "import",
   {
