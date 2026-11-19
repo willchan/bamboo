@@ -99,6 +99,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
 | `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; verbatim from Gemini (§4.6) |
 | `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
+| `breakdown` | json null | the card back's breakdown (§5.5.4, H3): terms `{parts: [{hanzi, gloss}] (per character), meaning}`, sentences `{parts: [{hanzi, gloss}] (per word), note}`; contract `PhraseBreakdown` (`shared/src/contracts/breakdown.ts`). No pinyin stored: each part's is sliced from the displayed pinyin. Null when there's none or it failed the checks |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
 | `pinyin` | json `[char, syllable \| null][]` | computed (§4.2); from H4, merged with Gemini's among valid readings only (§5.5.3) |
 | `pinyin_override` | json null | same shape; Will's per-syllable edits |
@@ -112,7 +113,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `asked_count` | int default 1 | +1 each time an import shows he asked again (at most once per import) |
 | `last_asked_import_id` | text null | the import that created it or last bumped `asked_count`; enforces "once per import" (§4.6) |
 | `last_asked_at` | int | creation time initially |
-| `flags` | json `string[]` | e.g. `long`, `heard_as_dropped`, `example_dropped` |
+| `flags` | json `string[]` | e.g. `long`, `heard_as_dropped`, `example_dropped`, `breakdown_dropped` |
 | `introduced_at`, `dropped_at` | int null | |
 | `created_at`, `updated_at` | int | |
 
@@ -414,12 +415,18 @@ On `extract_turn` completion, for each raw item:
    - **Tags**: lower-cased and deduped, then only tags in `PHRASE_TAGS`
      (`shared/src/contracts/extract.ts`, the prompt's list) are kept, at most
      `sharedConfig.extraction.maxTags` (3). Others are counted as `tags_dropped`.
+   - **Breakdown** (optional on `ExtractItem`; v4 asks for it, §5.5.4): kept only if
+     `checkBreakdown` (`web/lib/domain/breakdown.ts`) passes: the parts' hanzi, concatenated,
+     equal the item's hanzi by `hanziKey` (punctuation and spacing ignored), every part has
+     Chinese of its own, glosses and the meaning/note are English only (no CJK), and the shape
+     fits the kind (terms `meaning`, sentences `note`, frames none). Otherwise it's dropped,
+     flagged `breakdown_dropped` and counted as `breakdowns_dropped`.
 4. If a phrase with the same `hanzi_key` exists:
    - the first time **this import** asks about it (`last_asked_import_id` differs):
      `asked_count += 1`, `last_asked_at = now`, `last_asked_import_id = import`, and log
      `asked_again`. Later turns of the same import only merge their example (§10 #28);
-   - append the new example (dedupe by key; keep the oldest 3), and fill `heard_as` if it was
-     empty; re-score;
+   - append the new example (dedupe by key; keep the oldest 3), and fill `heard_as` and
+     `breakdown` if they were empty (the first good breakdown stays); re-score;
    - `active` → apply *asked again* (§4.4);
    - `queued` → re-scored as above;
    - `dropped` or `expired` → back to `queued` and re-score. Asking again means it matters.
@@ -1107,6 +1114,11 @@ pinyin isn't stored: each part's pinyin comes from the phrase's merged pinyin (�
 applied. This is an expand migration (`phrase.breakdown`, nullable json) and a contract in
 `shared/src/contracts/`.
 
+**Built (H3):** the column (§2.1), the `PhraseBreakdown` contract and the optional `breakdown`
+on `ExtractItem` (the Ollama schema `ModelExtractTurnResult` leaves it out until v4), the checks
+(§4.6), and the card back (§6). Editing a phrase keeps its breakdown only while it still passes
+the checks against the new hanzi and kind. Gemini writing the glosses is H4.
+
 #### 5.5.5 New cards: learned while fresh (H2; §10 #79)
 
 - The **queue budget and the expiry of unseen phrases** (§4.7) are removed. Not useful and Already
@@ -1201,6 +1213,12 @@ full-screen.
   - *Listen*: the front autoplays audio and shows only 🔊. Tap to reveal the hanzi with pinyin,
     then, small and muted, "you first heard: *podafen*" when the phrase has `heard_as`, then the
     meaning and example. `heard_as` is never on the front (§10 #59).
+  - **Breakdown** (§5.5.4, both card types): when the phrase has one, the back shows it under the
+    hanzi in a card: each character (terms) or word (sentences) with its pinyin, sliced from the
+    card's own displayed pinyin (`breakdownView`), and its gloss below; then the term's meaning or
+    the sentence's note. A term with a breakdown shows all its examples (up to 3), each with pinyin
+    and English; without a breakdown the back is as before (the first example only). If the
+    pinyin no longer lines up with the parts, no breakdown is shown.
   - The back has 4 grade buttons (with their next interval shown) and slow-replay. A new card's
     first back also shows **Not useful** and **Already know**.
 - **Up next** (`/queue`): the ranked queue; each row shows hanzi, English, "heard: …",
@@ -1240,7 +1258,7 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 
 - `import_finished {import_id, kind, turns_total, turns_new, jobs_failed, phrases_new, phrases_again}`
 - `share_parse_failed {host}`
-- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, repaired}`
+- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, breakdowns_dropped, repaired}`
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind}`
@@ -1471,8 +1489,12 @@ remote-database writes. Ported from PandaBase (its PRs #41, #47, #50, #52).
   `pnpm db:seed` adds the same data to `db/dev.db`.
 - `pnpm --filter web shot [paths…]`: Playwright phone screenshots (390×844 @2x) of each path in
   light and dark, into the gitignored `web/.shots/`. It starts its own seeded server on port 3211
-  unless `--base-url` / `SHOT_BASE_URL` points at a running one. Two pseudo-paths drive a round:
-  `/review/start` (Start, then the first card) and `/review/back` (the same, then Show). It prints
+  unless `--base-url` / `SHOT_BASE_URL` points at a running one. Pseudo-paths drive a round:
+  `/review/start` (Start, then the first card), `/review/back` (the same, then Show), and
+  `/review/back/<hanzi>` (grades cards Good until one whose answer shows that hanzi; the dark pass
+  reopens the same round, so both themes show that card; one `/review/…` path per run; it writes
+  to the server's database, so only on the throwaway seeded one). The seed has breakdowns on
+  `辅食` (term) and `宝宝喝完奶了` (sentence). It prints
   every console error, page error, failed request and HTTP status ≥ 400, and exits 1 if there were
   any.
 - `pnpm --filter web test:e2e` runs a second Playwright project, `seeded` (`web/e2e/seeded/`), on

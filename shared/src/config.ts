@@ -16,6 +16,12 @@ export const sharedConfig = {
     maxTags: 3,
     /** `note` (who the wording is for, when that changes it) is at most this long. */
     maxNoteChars: 120,
+    /** A breakdown has at most this many parts (one per character or word, DESIGN §5.5.4). */
+    maxBreakdownParts: 40,
+    /** A breakdown part's gloss is at most this long. */
+    maxGlossChars: 60,
+    /** A breakdown's `meaning` (terms) or `note` (sentences) is at most this long. */
+    maxBreakdownSummaryChars: 160,
   },
   /** PDF-text segmentation (DESIGN §5.2 *PDF*), on `pdftotext -layout` output. */
   segment: {

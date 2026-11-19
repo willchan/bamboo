@@ -1,6 +1,7 @@
 // The `extract_turn` job (DESIGN §5.3): what the worker gets, and what the model must return.
 import { z } from "zod";
 import { sharedConfig } from "../config";
+import { PhraseBreakdown } from "./breakdown";
 
 export const TURN_KINDS = ["decode", "say", "errand", "other"] as const;
 export const ITEM_KINDS = ["term", "frame", "sentence"] as const;
@@ -48,6 +49,11 @@ export const ExtractItem = z.object({
     .nullable(),
   usefulness: z.number().int().min(1).max(5),
   tags: z.array(z.string().max(40)).max(10),
+  /**
+   * extract_turn.v4 (H4): the card back's breakdown (DESIGN §5.5.4). Optional: older prompts don't
+   * ask for it. The engine keeps it only if it matches the item's hanzi exactly.
+   */
+  breakdown: PhraseBreakdown.nullish(),
 });
 export type ExtractItem = z.infer<typeof ExtractItem>;
 
@@ -67,7 +73,8 @@ export type ExtractTurnResult = z.infer<typeof ExtractTurnResult>;
 export const ModelExtractTurnResult = ExtractTurnResult.extend({
   items: z
     .array(
-      ExtractItem.omit({ addressee: true }).extend({
+      // No breakdown until extract_turn.v4 (H4) asks for one.
+      ExtractItem.omit({ addressee: true, breakdown: true }).extend({
         note: z.string().max(sharedConfig.extraction.maxNoteChars).nullable(),
         tags: z.array(z.enum(PHRASE_TAGS)).max(sharedConfig.extraction.maxTags),
       }),

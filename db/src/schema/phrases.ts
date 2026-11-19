@@ -25,6 +25,19 @@ export interface PhraseExample {
   turn_id: string | null;
 }
 
+/**
+ * The card back's breakdown (DESIGN §5.5.4): one part per character (terms) or per word
+ * (sentences), each with a short English gloss, then the term's meaning or the sentence's note.
+ * No pinyin: each part's pinyin is sliced from the phrase's displayed pinyin. The contract is
+ * `PhraseBreakdown` in @bamboo/shared; this mirrors its shape.
+ */
+export interface BreakdownPart {
+  hanzi: string;
+  gloss: string;
+}
+export type PhraseBreakdownJson =
+  { parts: BreakdownPart[]; meaning: string } | { parts: BreakdownPart[]; note: string };
+
 /** Per-character pinyin: `[char, syllable]`, with `null` for non-hanzi (punctuation, Latin). */
 export type PinyinPairs = [string, string | null][];
 
@@ -45,6 +58,8 @@ export const phrase = sqliteTable(
       .notNull()
       .default(sql`'[]'`),
     note: text("note"),
+    /** Card-back breakdown (H3); null when there is none or it failed the exact-match rule. */
+    breakdown: text("breakdown", { mode: "json" }).$type<PhraseBreakdownJson>(),
     tags: text("tags", { mode: "json" })
       .$type<string[]>()
       .notNull()

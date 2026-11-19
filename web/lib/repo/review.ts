@@ -1,5 +1,6 @@
 // Rounds and grading: loads the scheduling state, calls the pure round logic (domain/session.ts)
 // and FSRS (domain/fsrs.ts), and writes cards, review logs, rounds and events.
+import { breakdownView, type BreakdownView } from "../domain/breakdown";
 import {
   card,
   event,
@@ -189,6 +190,8 @@ export interface ReviewCardView {
   pinyin: PinyinPairs;
   examples: ExampleView[];
   note: string | null;
+  /** The card back's breakdown with each part's pinyin (DESIGN §5.5.4); null when there's none. */
+  breakdown: BreakdownView | null;
   /** Grade → label of the next interval ("10m", "4d"). */
   intervals: Record<Grade, string>;
   /**
@@ -212,6 +215,7 @@ async function intervalPreview(c: Card, now: number): Promise<IntervalPreview> {
 }
 
 async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView> {
+  const pinyin = displayPinyin(p.pinyin, p.pinyinOverride);
   return {
     cardId: c.id,
     phraseId: p.id,
@@ -221,13 +225,14 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
     english: p.english,
     heardAs: p.heardAs,
     hanzi: p.hanzi,
-    pinyin: displayPinyin(p.pinyin, p.pinyinOverride),
+    pinyin,
     examples: p.examples.map((e) => ({
       hanzi: e.hanzi,
       english: e.english,
       pinyin: computePinyin(e.hanzi),
     })),
     note: p.note,
+    breakdown: breakdownView(p.breakdown, pinyin),
     ...(await intervalPreview(c, now)),
   };
 }

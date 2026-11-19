@@ -29,6 +29,13 @@
       "when": 1794551240238,
       "tag": "0003_job_reextract",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795101525739,
+      "tag": "0004_phrase_breakdown",
+      "breakpoints": true
     }
   ]
 }

@@ -17,6 +17,7 @@ import {
 import { hanziKey } from "@bamboo/shared";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
+import { checkBreakdown } from "../domain/breakdown";
 import { newCardColumns } from "../domain/fsrs";
 import { derivedFields, examplesFor, type PhraseInput } from "../domain/phrase";
 import { computePinyin, overrideFromEdits, repinyin } from "../domain/pinyin";
@@ -41,6 +42,7 @@ export interface NewPhraseFields {
   sourceTurnId?: string | null;
   flags?: string[];
   pinyinOverride?: Phrase["pinyinOverride"];
+  breakdown?: Phrase["breakdown"];
 }
 
 /** Build the phrase row and its card rows (FSRS New, due now). Doesn't write. */
@@ -68,6 +70,7 @@ export function phraseRows(f: NewPhraseFields, cardTypes: readonly CardType[], n
     heardAs: f.heardAs ?? null,
     examples,
     note: f.note ?? null,
+    breakdown: f.breakdown ?? null,
     tags,
     pinyin: computePinyin(f.hanzi),
     pinyinOverride: f.pinyinOverride ?? null,
@@ -183,6 +186,8 @@ export async function updatePhrase(
         heardAs: input.heardAs,
         examples: examplesFor(input.kind, input.examples),
         note: input.note,
+        // A breakdown stays only while it still matches the (possibly edited) hanzi and kind.
+        breakdown: checkBreakdown(input.kind, input.hanzi, prev.breakdown).breakdown,
         tags: input.tags,
         pinyin: py.pinyin,
         pinyinOverride,

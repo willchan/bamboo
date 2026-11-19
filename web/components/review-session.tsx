@@ -237,8 +237,10 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
             {current.type === "listen" ? (
               <p className="text-xl font-semibold">{current.english}</p>
             ) : null}
+            {current.breakdown ? <Breakdown view={current.breakdown} /> : null}
             {current.note ? <p className="text-sm text-muted">{current.note}</p> : null}
-            {current.examples.slice(0, 1).map((ex) => (
+            {/* With a breakdown, the back shows all of a term's examples; without, as before. */}
+            {current.examples.slice(0, current.breakdown ? undefined : 1).map((ex) => (
               <div key={ex.hanzi} className="w-full rounded-xl bg-card p-3 text-left">
                 <Ruby pairs={ex.pinyin} className="text-xl" />
                 {ex.english ? <p className="mt-1 text-sm text-muted">{ex.english}</p> : null}
@@ -336,6 +338,28 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The card back's breakdown (DESIGN §5.5.4): each character (term) or word (sentence) with its
+ * pinyin, sliced from the card's own, and a short gloss; then the term's meaning or the sentence's
+ * note on how it's built.
+ */
+function Breakdown({ view }: { view: NonNullable<ReviewCardView["breakdown"]> }) {
+  const summary = view.meaning ?? view.note;
+  return (
+    <div className="w-full rounded-xl bg-card p-3" data-testid="breakdown">
+      <div className="flex flex-wrap justify-center gap-x-4 gap-y-3">
+        {view.parts.map((p, i) => (
+          <div key={i} className="flex max-w-[7rem] flex-col items-center">
+            <Ruby pairs={p.pinyin} className="text-2xl" />
+            <span className="text-center text-xs text-muted">{p.gloss}</span>
+          </div>
+        ))}
+      </div>
+      {summary ? <p className="mt-3 text-center text-sm">{summary}</p> : null}
     </div>
   );
 }

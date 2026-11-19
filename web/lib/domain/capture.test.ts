@@ -80,6 +80,7 @@ describe("validateExtraction: a say turn's sentence from a term's example (§4.6
       example: null,
       usefulness: 4,
       tags: ["baby"],
+      breakdown: null,
       flags: ["from_example"],
     });
   });
@@ -145,6 +146,7 @@ describe("validateExtraction", () => {
         example: null,
         usefulness: 4,
         tags: ["baby"],
+        breakdown: null,
         flags: [],
       },
     ]);
