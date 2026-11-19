@@ -527,18 +527,27 @@ describe("extract results", () => {
     });
   });
 
-  it("accepts a frame whose slot stands for words in the turn", async () => {
+  // H2b (DESIGN §10 #77): frames are retired. An older worker's frame items are dropped and
+  // counted (`dropped_frame`), even one whose slot matches the turn.
+  it("drops frame items from an older worker and counts them", async () => {
     const { finish } = await oneTurn(TURNS[1]!);
     await finish({
       turn_kind: "say",
       items: [
         { ...term("阿姨，您是说…吗？", "Do you mean …?"), kind: "frame" },
         { ...term("您是说…不行吗？", "invented"), kind: "frame" },
+        term("加水", "add water"),
       ],
     });
     const rows = await db.select().from(phrase);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: "frame", hanzi: "阿姨，您是说…吗？" });
+    expect(rows.map((r) => r.hanzi)).toEqual(["加水"]);
+    const [ev] = await db.select().from(event).where(eq(event.type, "extraction"));
+    expect(ev?.data).toMatchObject({
+      items: 3,
+      kept: 1,
+      dropped_frame: 2,
+      dropped_not_verbatim: 0,
+    });
   });
 
   it("merges into an active phrase: asked_count up and Again logged (once per import)", async () => {
@@ -748,14 +757,14 @@ describe("re-extraction", () => {
       items: [
         term("水", "water", { usefulness: 5 }),
         term("加水", "add water"),
-        { ...term("您是说…吗？", "do you mean …?"), kind: "frame" },
+        term("您是说", "do you mean"),
       ],
     });
     await notifiedPOST(req(`/api/imports/${import_id}/notified`, AGENT, {}), {
       params: Promise.resolve({ id: import_id }),
     });
     await db.update(phrase).set({ status: "expired" }).where(eq(phrase.hanzi, "加水"));
-    await dropPhrase(db, (await byKey("您是说…吗？"))!.id, T0 + 1, "remove");
+    await dropPhrase(db, (await byKey("您是说"))!.id, T0 + 1, "remove");
 
     at(T0 + DAY);
     await postImport({ discord_message_id: "m2", turns: [TURNS[2]!], turns_total: 1 });
@@ -794,7 +803,7 @@ describe("re-extraction", () => {
         items: [
           sentence("阿姨，您是说要加水吗？", "Auntie, do you mean add water?"),
           term("加水", "add water", { usefulness: 4 }),
-          { ...term("您是说…吗？", "do you mean …?"), kind: "frame" },
+          term("您是说", "do you mean"),
         ],
       },
       "extract_turn.v3",
@@ -811,7 +820,7 @@ describe("re-extraction", () => {
     });
     // Expired and picked again: back, with the new rating. Dropped: stays dropped.
     expect(await byKey("加水")).toMatchObject({ status: "queued", askedCount: 1, usefulness: 4 });
-    expect(await byKey("您是说…吗？")).toMatchObject({ status: "dropped" });
+    expect(await byKey("您是说")).toMatchObject({ status: "dropped" });
     // The fragment v3 no longer picks leaves the queue.
     expect(await byKey("水")).toMatchObject({ status: "expired" });
     expect(await db.select().from(event).where(eq(event.type, "phrase_superseded"))).toHaveLength(
@@ -972,15 +981,16 @@ describe("a say turn's sentence from a term's example", () => {
 });
 
 describe("cron", () => {
-  it("expires stale queue items and prunes old events", async () => {
+  // H2b (DESIGN §10 #79): no expiry and no budget. Unseen phrases stay queued however low they
+  // score or long they wait, until they're learned (or Will says Not useful).
+  it("expires nothing and prunes old events", async () => {
     const { finish } = await oneTurn();
     async function oneTurn() {
       await postImport({ turns: [TURNS[2]!], turns_total: 1 });
       const c = (await claim())!;
       return { finish: (r: ExtractTurnResult) => done(c.job_id, c.attempt, r) };
     }
-    // term 1, other −1, usefulness 1 → −3, rare word → −3: below −2 already, but young.
-    // Flour: 1 − 1 + 3 (usefulness 5), common enough → about 3.5: stays.
+    // term 1, other −1, usefulness 1 → −3, rare word: about −3. Flour scores about 3.5.
     await finish({
       turn_kind: "other",
       items: [
@@ -999,18 +1009,17 @@ describe("cron", () => {
       T0,
     );
 
-    at(T0 + 20 * DAY); // low score but too young
-    expect(await json(await cronGET(req("/api/cron/daily", CRON)))).toMatchObject({
-      phrases_expired: 0,
-    });
-    at(T0 + 31 * DAY);
-    const r = await json(await cronGET(req("/api/cron/daily", CRON)));
-    expect(r).toMatchObject({ phrases_expired: 1, events_pruned: 0 });
-    const rows = await db.select().from(phrase);
-    expect(rows.find((p) => p.hanzi === "泡打粉")!.status).toBe("expired");
-    // Higher score (flour) and pinned (manual) stay.
-    expect(rows.find((p) => p.hanzi === "面粉")!.status).toBe("queued");
-    expect(rows.find((p) => manual.ok && p.id === manual.id)!.status).toBe("queued");
+    // Old expiry would have taken 泡打粉 (sunk, older than 30 days) and, with a budget of a few
+    // phrases, anything ranked past it.
+    for (const days of [31, 120]) {
+      at(T0 + days * DAY);
+      const r = await json(await cronGET(req("/api/cron/daily", CRON)));
+      expect(r).toMatchObject({ events_pruned: 0 });
+      expect(r).not.toHaveProperty("phrases_expired");
+      const rows = await db.select().from(phrase);
+      expect(rows.map((p) => p.status)).toEqual(["queued", "queued", "queued"]);
+      expect(rows.some((p) => manual.ok && p.id === manual.id)).toBe(true);
+    }
 
     at(T0 + config.events.retainDays * DAY + DAY);
     const later = await json(await cronGET(req("/api/cron/daily", CRON)));

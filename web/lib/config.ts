@@ -11,7 +11,8 @@ export interface SessionConfig {
 }
 
 export interface RankConfig {
-  kindWeight: Record<"term" | "frame" | "sentence", number>;
+  /** Frames have no weight: they're retired (DESIGN §10 #77). */
+  kindWeight: Record<"term" | "sentence", number>;
   turnWeight: Record<"decode" | "say" | "errand" | "other", number>;
   heardAs: number;
   askedAgain: number;
@@ -30,13 +31,6 @@ export interface FrequencyConfig {
   unknownZipf: number;
 }
 
-export interface QueueConfig {
-  expireBelow: number;
-  minAgeDays: number;
-  budgetDays: number;
-  budgetMinAgeDays: number;
-}
-
 export interface ExtractionConfig {
   errandMaxItems: number;
   sayMaxTerms: number;
@@ -50,6 +44,16 @@ export interface NudgeConfig {
   leadMinutes: number;
   earliestLocalTime: number;
   latestLocalTime: number;
+}
+
+/**
+ * `BAMBOO_TEST_NEW_PER_DAY`: a smaller daily new-card limit for the e2e servers, whose tests and
+ * seed are built around a cap they can use up in a few cards. Ignored in production builds.
+ */
+function testNewPerDay(): number | null {
+  if (typeof process === "undefined" || process.env.NODE_ENV === "production") return null;
+  const n = Number(process.env.BAMBOO_TEST_NEW_PER_DAY);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 export const config = {
@@ -75,8 +79,11 @@ export const config = {
 
   session: {
     roundSize: 10,
-    /** New cards a day (5 since the 2026-11 ranking review, DESIGN §10 #63; was 3). */
-    newPerDay: 5,
+    /**
+     * New cards a day: 30 since H2 (DESIGN §10 #79), Will's choice from the H2a FSRS estimate
+     * (about a 3-week burst through the backlog, then intake-driven). Was 5 (§10 #64), 3 before.
+     */
+    newPerDay: testNewPerDay() ?? 30,
     /**
      * "Learn N more" (opt-in, once today's new cards are used up): a round may introduce this many
      * new cards beyond `newPerDay`. Each new card adds future reviews, so it's never automatic.
@@ -95,7 +102,7 @@ export const config = {
    * weigh like frames and aren't penalized for length until they're long (§10 #66).
    */
   rank: {
-    kindWeight: { term: 1, frame: 2, sentence: 2 },
+    kindWeight: { term: 1, sentence: 2 },
     turnWeight: { decode: 2, say: 1, errand: -3, other: -1 },
     heardAs: 1,
     askedAgain: 3,
@@ -124,22 +131,6 @@ export const config = {
     /** A word missing from the bundled list (Zipf < 2) counts as this rare. */
     unknownZipf: 1.5,
   } as FrequencyConfig,
-
-  /** Expiry and the queue budget (DESIGN §4.7), run by the daily cron. */
-  queue: {
-    expireBelow: -2,
-    minAgeDays: 30,
-    /**
-     * The queue keeps about this many days of new cards (`newPerDay` × this); the lowest-ranked
-     * unpinned phrases beyond it expire. They come back if Will asks about them again.
-     */
-    budgetDays: 21,
-    /**
-     * The budget never expires a phrase within this many days of Will asking about it (nor one
-     * asked about more than once).
-     */
-    budgetMinAgeDays: 3,
-  } as QueueConfig,
 
   /**
    * Caps the engine applies to each extract_turn result (DESIGN §4.6 step 1), whatever the

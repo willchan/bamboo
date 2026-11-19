@@ -43,6 +43,13 @@
       "when": 1795104211052,
       "tag": "0005_pinyin_merge",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1795107478027,
+      "tag": "0006_retire_frames",
+      "breakpoints": true
     }
   ]
 }

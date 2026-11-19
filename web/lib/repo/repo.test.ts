@@ -1,6 +1,6 @@
 import { card, createTestDb, event, phrase, reviewLog, round, type Db } from "@bamboo/db";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "../config";
 import { PhraseInput, type PhraseInputRaw } from "../domain/phrase";
 import { frequencyPoints } from "../domain/queue";
@@ -26,6 +26,13 @@ import {
   startRound,
   type Clock,
 } from "./review";
+
+// The round cases assume a cap one round can hold (≤ `roundSize`); the rules don't depend on the
+// value, so the file keeps 5 (`newPerDay` is 30 since H2, DESIGN §10 #79).
+vi.mock("../config", async (importOriginal) => {
+  const m = await importOriginal<typeof import("../config")>();
+  return { ...m, config: { ...m.config, session: { ...m.config.session, newPerDay: 5 } } };
+});
 
 const T0 = new Date("2026-06-02T03:00:00Z").getTime(); // 20:00 PDT
 const clock = (now = T0): Clock => ({ now, timeZone: "America/Los_Angeles" });

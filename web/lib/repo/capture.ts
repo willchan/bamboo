@@ -35,7 +35,6 @@ import { isLeaseExpired, isStaleAttempt, leaseExpiresAt, statusAfterFailure } fr
 import { initialCardTypes } from "../domain/phrase";
 import { mergedPinyin } from "../domain/pinyin";
 import {
-  expiredPhraseIds,
   planMerge,
   planReextract,
   rescored,
@@ -527,6 +526,7 @@ export async function completeJob(
           kept: applied.validation.items.length,
           dropped_not_verbatim: applied.validation.droppedNotVerbatim,
           dropped_duplicate: applied.validation.droppedDuplicate,
+          dropped_frame: applied.validation.droppedFrame,
           examples_dropped: applied.validation.examplesDropped,
           heard_as_dropped: applied.validation.heardAsDropped,
           dropped_over_cap: applied.validation.droppedOverCap,
@@ -956,30 +956,20 @@ export async function promoteMissingSentences(db: Db, now: number): Promise<numb
 
 /**
  * `GET /api/cron/daily`: give old say turns their sentence (`promoteMissingSentences`), re-score
- * the queue with the current weights and word list, expire stale
- * and over-budget queue items (§4.7), requeue expired leases, prune events older than
- * `config.events.retainDays`.
+ * the queue with the current weights and word list (§4.7), requeue expired leases, prune events
+ * older than `config.events.retainDays`. It expires nothing: unseen phrases stay queued until
+ * they're learned (§10 #79).
  */
 export async function runDaily(db: Db, now: number) {
   const leases = await sweepExpiredLeases(db, now);
-  // Before the re-score and budget, so the new sentences compete for a place.
+  // Before the re-score, so the new sentences are scored with the rest.
   const promoted = await promoteMissingSentences(db, now);
   const queued = await db.select().from(phrase).where(eq(phrase.status, "queued"));
   const scores = rescored(queued);
-  const next = new Map(scores.map((r) => [r.id, r.baseScore]));
-  const expire = expiredPhraseIds(
-    queued.map((p) => ({ ...p, baseScore: next.get(p.id) ?? p.baseScore })),
-    now,
+  // The score is stored without touching `updated_at`: nothing about the phrase changed.
+  const writes: BatchItem<"sqlite">[] = scores.map((r) =>
+    db.update(phrase).set({ baseScore: r.baseScore }).where(eq(phrase.id, r.id)),
   );
-  const writes: BatchItem<"sqlite">[] = [
-    // The score is stored without touching `updated_at`: nothing about the phrase changed.
-    ...scores.map((r) =>
-      db.update(phrase).set({ baseScore: r.baseScore }).where(eq(phrase.id, r.id)),
-    ),
-    ...chunks(expire).map((part) =>
-      db.update(phrase).set({ status: "expired", updatedAt: now }).where(inArray(phrase.id, part)),
-    ),
-  ];
   await runBatch(db, writes);
   const pruned = await db.delete(event).where(lt(event.at, now - config.events.retainDays * DAY));
   return {
@@ -987,7 +977,6 @@ export async function runDaily(db: Db, now: number) {
     leases_failed: leases.failed,
     sentences_promoted: promoted,
     phrases_rescored: scores.length,
-    phrases_expired: expire.length,
     events_pruned: pruned.rowsAffected,
   };
 }

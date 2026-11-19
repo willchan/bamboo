@@ -59,8 +59,8 @@ Read only the sections your task needs.
 - **Migrations are expand → contract.** Migrations run in the Vercel build before new code
   serves; add freely, and drop or rename only in a later PR.
 - **Nothing blocks on a human.** The queue picks new material automatically, freshest first.
-  Unseen phrases don't expire (no queue budget); Not useful and Already know stay (DESIGN §5.5.5;
-  until H2 lands, the old budget and expiry still run).
+  Unseen phrases don't expire (no queue budget); Not useful and Already know stay (DESIGN §4.7,
+  since H2b).
 - **Privacy:** Will's real conversations (share links, PDFs) are never committed, never used as
   test fixtures, and never quoted in docs, PRs or commit messages; report counts only. Debug
   copies go in the gitignored `private/`. Children's names and health details must not appear in

@@ -49,6 +49,8 @@ export default defineConfig({
         DEV_AUTH_BYPASS: "1",
         TURSO_DATABASE_URL: `file:${E2E_DB}`,
         HOUSEHOLD_TZ: "America/Los_Angeles",
+        // The tests use up a small daily cap (config.ts › testNewPerDay; H2 set the real one to 30).
+        BAMBOO_TEST_NEW_PER_DAY: "5",
         // Machine tokens for the fake worker in e2e/capture.spec.ts (local values, not secrets).
         AGENT_API_TOKEN: "e2e-agent-token",
         WORKER_API_TOKEN: "e2e-worker-token",
@@ -62,7 +64,7 @@ export default defineConfig({
       url: `http://localhost:${SEEDED_PORT}/sign-in`,
       reuseExistingServer: false,
       timeout: 180_000,
-      env: { HOUSEHOLD_TZ: "America/Los_Angeles" },
+      env: { HOUSEHOLD_TZ: "America/Los_Angeles", BAMBOO_TEST_NEW_PER_DAY: "5" },
     },
   ],
 });

@@ -91,7 +91,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 |---|---|---|
 | `id` | text pk | |
 | `status` | `'queued' \| 'active' \| 'dropped' \| 'expired'` | §4.6 |
-| `kind` | `'term' \| 'frame' \| 'sentence'` | frames contain `…` as the slot; frames are being retired (§10 #77, H2b) |
+| `kind` | `'term' \| 'frame' \| 'sentence'` | frames contain `…` as the slot; retired since H2b (all `dropped`, migration `0006_retire_frames`, §10 #77); the enum keeps `frame` until a contract PR |
 | `hanzi` | text | normalized (§4.1) |
 | `hanzi_key` | text **unique** | dedupe key (§4.1) |
 | `english` | text | meaning (term) or intent (frame/sentence) |
@@ -228,7 +228,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/jobs/claim` | worker | Optional body `{types: ('extract_turn' \| 'pinyin')[]}` (H4; none = extract_turn only, for an older worker) → `{job_id, type, attempt, lease_expires_at, input}` (`ExtractTurnInput`, or `PinyinJobInput` for `pinyin`) or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary extract jobs, then pinyin jobs, then re-runs (§4.6.1), each oldest first; a re-run looks the same to the worker |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
-| `GET /api/cron/daily` | cron | give say turns stored before the sentence rule their sentence (§4.7), re-score the queue, expire sunk and over-budget queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
+| `GET /api/cron/daily` | cron | give say turns stored before the sentence rule their sentence (§4.7), re-score the queue (§4.7; nothing expires since H2b), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
 
 Errors from every machine route are `{error, message?, issues?}` with `error` one of
 `invalid_body` and `invalid_query` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
@@ -325,7 +325,8 @@ cards, in this order:
    kept). By due alone, the card graded first in one round always led the next (§10 #57);
 2. review cards due today, most overdue first;
 3. **new cards**, interleaved one per `config.session.newEvery` (3) cards (d d N d d N …; extras
-   go at the end). New cards are limited by `config.session.newPerDay` (5; 3 until §10 #64) minus those already
+   go at the end). New cards are limited by `config.session.newPerDay` (30 since H2, Will's
+   choice from an FSRS estimate, §10 #79; 5 until then, 3 before §10 #64) minus those already
    introduced today. Due cards take priority: new cards only fill the slots the due cards leave.
    **Learn more**: `buildRound(…, { learnMore: true })` (Start with `learnMore=1`), once
    today's cap is used up, allows `config.session.extraNewBatch` (3) more new cards in that round
@@ -334,10 +335,8 @@ cards, in this order:
    new is stored: the cap is still `newPerDay` minus today's introductions, so after a Learn-more
    round the count is past the cap and only another opt-in adds more (§10 #61).
    They come first from `active` phrases whose second card is still New, then from the queue
-   (§4.6): the top phrase's first card (Listen before Say), one phrase at a time.
-
-**Changing (§5.5.5, §10 #79, H2):** new cards come freshest first and `newPerDay` is raised or
-removed, to a setting Will chooses from an FSRS estimate.
+   (§4.6, freshest first since H2): the top phrase's first card (Listen before Say), one phrase
+   at a time.
 
 A round never holds two cards of one phrase. The round's card ids are stored on `round`, so a
 reload resumes it without the cards already graded.
@@ -404,7 +403,9 @@ On `extract_turn` completion, for each raw item:
    stops the model inventing Chinese. Count drops in telemetry. For a **frame**, the slot `…`
    (or `...`) matches anything: each part between slots must occur, in order, so
    `阿姨，您是说…吗？` passes on a turn that only says `阿姨，您是说要加水吗？` (§10 #26). Items
-   repeating an earlier item's key in the same result are dropped too.
+   repeating an earlier item's key in the same result are dropped too. **Frame items** are
+   dropped first and counted as `dropped_frame` (since H2b, §10 #77: v4 extracts none, but an
+   older worker or the Ollama fallback on an older prompt might send one).
 2. Keep `heard_as` only if it occurs (case-insensitive, spaces ignored) in `user_text`;
    otherwise null it and flag `heard_as_dropped`.
 3. Keep each example (terms only; v4 sends up to 3 as `examples`, older prompts one `example`)
@@ -412,7 +413,7 @@ On `extract_turn` completion, for each raw item:
    it, flag `example_dropped` and count it.
    - **Caps per turn** (`config.extraction`, applied after the checks above, in the model's
      order): an `errand` turn keeps its first `errandMaxItems` (3; 1 before H4) items; a `say` turn
-     keeps its first `sayMaxTerms` (5; 2 before H4) terms (its sentence and frame are kept). Drops are counted as
+     keeps its first `sayMaxTerms` (5; 2 before H4) terms (its sentence is kept). Drops are counted as
      `dropped_over_cap`. The prompt asks for the same; the engine doesn't rely on it (§10 #64).
    - **A say turn's sentence** (`config.extraction.promoteExampleSentence`): a `say` result with
      no `sentence` gets one, the shortest example of its kept terms that has English and is more
@@ -445,8 +446,7 @@ On `extract_turn` completion, for each raw item:
 **Since H4 (§5.5.2, §10 #76):** the caps above are loosened (3 errand items, 5 say terms) and
 v4 sends several examples per term; every check stays. Each new phrase's pinyin is merged with
 Gemini's reading (§5.5.3b), and a phrase whose reading needs the referee, or came without one,
-gets a `pinyin` job. **Changing (H2b, §10 #77):** v4's schema already has no frames; the engine
-dropping and counting frame items from older workers comes with H2b.
+gets a `pinyin` job. Since H2b (§10 #77) the engine drops and counts frame items (step 1).
 
 The verbatim check itself (`occursVerbatim`, `cleanHanzi`, `turnTextKey`) lives in
 `shared/src/verbatim.ts` (since M4), so the worker's eval measures exactly what the engine drops;
@@ -468,7 +468,7 @@ again (`planReextract` in `queue.ts`), after the same validation and caps (steps
 
 - an item with no phrase yet is created `queued`, with `last_asked_at` = the turn's
   `created_at` (when Will asked) and `last_asked_import_id` = the turn's import, so decay and
-  the budget treat it as old, not new;
+  the queue order treat it as old, not new;
 - an existing phrase is never bumped (`asked_count`, `last_asked_*` unchanged) and never gets
   *asked again*. An `expired` one comes back to `queued` (`phrase_revived`, `reextract: true`); a
   `dropped` one stays dropped, since that was Will's call; any keeps the new example. A `queued`
@@ -492,7 +492,7 @@ time. Weights are in `config.rank` (rebalanced in the 2026-11 ranking review, §
 since §10 #66).
 
 ```
-base_score = kindWeight[kind]              // term 1, frame 2, sentence 2
+base_score = kindWeight[kind]              // term 1, sentence 2; frame 0 (retired, H2b)
            + turnWeight[turn_kind]         // decode 2, say 1, errand −3, other −1
            + (heard_as ? 1 : 0)
            + 3 × (asked_count − 1)
@@ -519,39 +519,33 @@ billion words: 谢谢 5.2, 冰箱 4.1, 奶瓶 3.0, 生抽 2.0.
   gain for being common. Tags no longer score otherwise (the old core-tag +1 is gone).
 - Traditional characters aren't folded to simplified; a traditional-only word counts as unknown.
 
-**Queue order**: `pinned` first (newest pin first), then `effective_score` descending, then newest.
+**Queue order** (`orderQueue`), **freshest first** since H2b (§10 #79): `pinned` first (newest
+pin first), then the most recently asked (`last_asked_at` descending), then `effective_score`
+descending as the tie-break (in practice among one turn's items, which share `last_asked_at`),
+then newest. So the score no longer decides what's learned next across turns; it orders a turn's
+items and still feeds `phrase_dropped`/`phrase_introduced` for tuning.
 The **Up next** page lists the queue, with **Move to top** (sets `pinned`) and **Remove** (drop).
 
-### 4.7 Expiry and the queue budget
+### 4.7 The daily cron: sentences and re-score (no expiry)
 
-**Changing (§5.5.5, §10 #79, H2b):** the queue budget and the expiry of unseen phrases go; the
-sentence backfill and the daily re-score stay.
+**Since H2b (§5.5.5, §10 #79)** nothing expires on its own: the queue budget and the expiry of
+unseen phrases (`sunk` and `over budget`, §10 #64) are gone, with `config.queue`. Unseen phrases
+wait in the queue until they're learned; Not useful and Already know are unchanged. Phrases
+expired before H2b stay `expired`: they come back if asked about again (§4.6) and can be restored
+from Phrases. A re-run can still supersede a phrase (§4.6.1); that isn't the cron.
 
 The daily cron first **backfills sentences** (`promoteMissingSentences` in `capture.ts`): a `say`
 turn whose latest stored result has no sentence gets the one §4.6's rule promotes from it, unless a
 phrase with that key exists in any status (so a dropped one is never made again, and later runs
 do nothing). It's created `queued`, dated to the turn like a re-run (§4.6.1), with no model call.
 Then it **re-scores** every `queued` phrase with the current formula (`rescored` in
-`queue.ts`; only changed scores are written, without touching `updated_at`). Then it marks
-`queued`, unpinned phrases as `expired`:
-
-- **sunk**: `effective_score < config.queue.expireBelow` (−2) and older than
-  `config.queue.minAgeDays` (30, by `created_at`);
-- **over budget**: the queue holds about `queue.budgetDays` (21) days of new cards, i.e.
-  `newPerDay × budgetDays` (105) phrases in queue order, pins included. Unpinned phrases ranked
-  past that expire, except one asked about more than once (`asked_count > 1`) or within
-  `queue.budgetMinAgeDays` (3, by `last_asked_at`): asking again means it matters. Without a
-  budget the queue only grows: Will adds phrases several times faster than `newPerDay`
-  (§10 #64). (The first prod-copy run without that exception expired 4 phrases asked about twice,
-  low-scored as errand or rare words.)
-
-Expired phrases come back if asked about again (§4.6), and can be restored from Phrases. Nothing
-depends on Will acting. (`expiredPhraseIds` in `queue.ts`.)
+`queue.ts`; only changed scores are written, without touching `updated_at`). Nothing depends on
+Will acting.
 
 ### 4.8 Card creation
 
 - `term` from a `decode` turn → `listen`.
-- Any other term, frame or sentence → `say`.
+- Any other term, frame (none since H2b) or sentence → `say`.
 - The phrase editor has a toggle for each card type (at least one stays on). Turning a type off
   sets the card's `suspended_at` instead of deleting it, so its review history survives; turning
   it back on resumes it.
@@ -1123,14 +1117,15 @@ errand items and 5 say terms (§4.6) and `ExtractTurnResult.items` up to 12. The
 and Ollama answer in is `ModelExtractTurnResultV4` (`shared/src/contracts/extract.ts`): terms and
 sentences only, `examples` (≤ 3), `pinyin` (one syllable per hanzi), and `breakdown {parts,
 summary}`, which the worker turns into `ExtractItem` (`summary` → a term's `meaning` or a
-sentence's `note`; `example` = the first example). The engine dropping frame items an older
-worker might still send is H2b's.
+sentence's `note`; `example` = the first example). The engine drops frame items an older
+worker might still send (H2b, §4.6 step 1).
 
 Every engine check stays (§4.6): hanzi, examples included, must appear verbatim in the turn;
 pinyin is merged (§5.5.3); dedupe; and asking again counts as forgetting. Frame items, if a model
 returns one, are dropped and counted. Existing frame phrases are **retired**: set to `dropped`
 (rows, cards and `review_log` kept), with no frame ranking weight. The `kind` enum keeps `frame`
-until a later contract PR (H2b).
+until a later contract PR. **Built (H2b):** migration `0006_retire_frames`, §4.6 step 1, §4.6
+*Score*.
 
 #### 5.5.3 Pinyin: computed, then merged (H1, H4; §10 #80)
 
@@ -1203,6 +1198,9 @@ the checks against the new hanzi and kind. **Built (H4):** v4 asks Gemini for th
 the worker maps to a term's `meaning` or a sentence's `note`.
 
 #### 5.5.5 New cards: learned while fresh (H2; §10 #79)
+
+**Built (H2b):** moved into §4.4 (`newPerDay` 30), §4.6 *Queue order* and §4.7. What follows is
+the decision as made.
 
 - The **queue budget and the expiry of unseen phrases** (§4.7) are removed. Not useful and Already
   know stay.
@@ -1304,11 +1302,12 @@ full-screen.
     pinyin no longer lines up with the parts, no breakdown is shown.
   - The back has 4 grade buttons (with their next interval shown) and slow-replay. A new card's
     first back also shows **Not useful** and **Already know**.
-- **Up next** (`/queue`): the ranked queue; each row shows hanzi, English, "heard: …",
+- **Up next** (`/queue`): the queue, freshest first (§4.6); each row shows hanzi, English, "heard: …",
   "asked ×N"; **Move to top** / **Remove**.
 - **Phrases** (`/phrases`, `/phrases/new`, `/phrases/[id]`): search (hanzi, pinyin, English,
   heard-as) and filter by kind, tag or status; add, edit (examples for terms, pinyin overrides,
-  card types); drop, and restore a dropped phrase. After adding, the editor opens so Will can
+  card types); drop, and restore a dropped phrase. The editor offers term and sentence (a retired
+  frame still shows its kind, H2b). After adding, the editor opens so Will can
   check the computed pinyin (per-character override inputs appear once the hanzi is saved).
 - **Imports** (`/imports`): recent imports with status and counts, failed jobs (Retry),
   **Older extractions** ("N questions were read with an older prompt", **Re-run**, §4.6.1; while
@@ -1360,8 +1359,9 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 - `nudge_sent {local_time, nudge_at}` (`HH:MM`, household time)
 - `worker_heartbeat {version, sha, model, ollama_ok, gemini_model, gemini_ok}` (the Gemini fields
   since H4)
-- *from H2b–H6 (§5.5):* `phrase_retired {phrase_id, reason}` (a retired frame, or a bulk Retire),
-  `extraction` gains `dropped_frame` (H2b). `pinyin_disagreement` and `dropped_name` came with H4
+- `phrase_retired {phrase_id, reason: 'frame', status_before}`: logged by migration
+  `0006_retire_frames` for each frame it retired (H2b); H6's bulk Retire will add its own reason.
+  `extraction` has `dropped_frame` since H2b. `pinyin_disagreement` and `dropped_name` came with H4
   (above)
 
 The Stats page shows, for the last 4 weeks (`config.stats`; pure measures in
@@ -1576,8 +1576,7 @@ remote-database writes. Ported from PandaBase (its PRs #41, #47, #50, #52).
   `dev@example.com`. Its own build directory (`.next-seeded`, `NEXT_DIST_DIR`), so it runs beside
   `pnpm dev`. Real-service secrets are set to `""`, which Next keeps over any `.env` file.
 - The seed is relative to *now*: review cards due now, five phrases introduced a few minutes ago
-  (on their learning step, which uses up today's new cards, so Today offers "Learn 3 more"), six
-  new phrases waiting in Up next, finished rounds and reviews on past days (Stats), three imports
+  (on their learning step), six new phrases waiting in Up next, two retired frames (`dropped`), finished rounds and reviews on past days (Stats), three imports
   with turns, extraction events and one failed job (Imports), and a recent worker heartbeat.
   `pnpm db:seed` adds the same data to `db/dev.db`.
 - `pnpm --filter web shot [paths…]`: Playwright phone screenshots (390×844 @2x) of each path in
@@ -1592,6 +1591,10 @@ remote-database writes. Ported from PandaBase (its PRs #41, #47, #50, #52).
   any.
 - `pnpm --filter web test:e2e` runs a second Playwright project, `seeded` (`web/e2e/seeded/`), on
   its own seeded server (port 3101, `db/e2e-seeded.db`), for checks that need data in every state.
+  Both e2e servers set `BAMBOO_TEST_NEW_PER_DAY=5` (`testNewPerDay` in `web/lib/config.ts`,
+  ignored when `NODE_ENV` is `production`): the tests use up a daily cap in a few cards, and with
+  it the seed's five learning-today phrases use up today's, so Today offers "Learn 3 more".
+  `dev:seeded` and `pnpm shot` run with the real cap (30).
 
 **Prod copy** (real data, on demand, read-only).
 
@@ -1742,7 +1745,7 @@ bamboo/
 | 76 | One extraction path: the worker sends each turn alone to Gemini with `extract_turn.v4`; the tutor never writes cards; every engine check stays (verbatim hanzi with examples, pinyin merge, dedupe, asked again = forgetting); per-turn caps loosened (§5.5.2) | One path means one set of checks and one prompt to tune, whatever the turn's source; a tutor writing cards would skip the verbatim check. #64's caps were set for a local model; a comparison with Gemini-made decks showed Bamboo missing real words |
 | 77 | Frames removed: v4 doesn't extract them, existing frame phrases are retired (`dropped`, rows kept), and frame ranking weight goes; the `kind` enum keeps `frame` until a contract PR | Will's call (2026-11). Retiring rather than deleting keeps `review_log` append-only; the enum change waits for expand → contract |
 | 78 | A richer card back: terms get a character breakdown (character, pinyin, short gloss, then the overall meaning) and their example(s); sentences a word-by-word gloss and one note on how they're built. Gemini writes glosses; a breakdown must match the phrase's hanzi exactly; its pinyin is the phrase's (#80). Expand migration and contract (§5.5.4) | Will's call (2026-11). The exact-match rule and pinyin taken from the phrase keep the existing guarantee: no unchecked LLM-written Chinese or reading on a card |
-| 79 | New cards are learned while fresh: no queue budget and no expiry of unseen phrases (Not useful and Already know stay); freshest first; the daily new-card limit raised or removed, set by Will from an FSRS estimate (§5.5.5, H2) | Will prefers working through a burst of new cards, then a steady state. Supersedes #8's cap and #64's budget |
+| 79 | New cards are learned while fresh: no queue budget and no expiry of unseen phrases (Not useful and Already know stay); freshest first (pins, then `last_asked_at`, then `effective_score` as the tie-break); `newPerDay` 30, Will's choice from H2a's FSRS estimate (about a 3-week burst through a ~400-phrase backlog, then about 115 cards, ~29 min, a day at ~11 new phrases a day); Learn more stays (§5.5.5, H2; built in H2b) | Will prefers working through a burst of new cards, then a steady state. Supersedes #8's cap and #64's budget |
 | 80 | Pinyin is computed with pinyin-pro's large dictionary (trimmed to the entries that change a reading), then merged per syllable with Gemini's: agree → accept; Gemini's not a valid reading → computed, no call; both valid → a referee call that must choose among valid readings plus the neutral tone; Will's override wins. No context rules. Which source won is stored and disagreements are logged (§5.5.3) | The large dictionary fixes neutral tones (梯子, 肚子, 舒服, 里脊, 芝麻) and keeps referee calls down; polyphones are settled by reading the sentence, not by heuristics. Gemini's own pinyin is inconsistent (#9), so it only ever chooses among dictionary readings: stored pinyin is always a valid one. Supersedes #23 |
 | 81 | Rebuild the queue from the 147 stored turns through an extended Re-run, one turn per request at the free-tier rate; prod isn't wiped (§5.5.6) | Learning cards and review history must survive. The extension refreshes English, note and breakdown on every phrase it picks in any status, never hanzi, cards or FSRS state, and reports active, pinned or asked-again phrases it no longer picks for a bulk Retire that keeps `review_log` |
 | 82 | Keys: a new free-tier Gemini key in its own Google project is the `bamboo` agent's auth profile (`google:bamboo-free`), pinned first; PandaDen's paid key in `~/.openclaw/.env` stays, and falling back to it is acceptable; the worker reads the free key from `agent.env` (§5.5.7) | Keeps Bamboo's usage apart from PandaDen's. `agent.env` is already Bamboo's own Mac-side secret file, out of the shared gateway env (#33, #42) |
