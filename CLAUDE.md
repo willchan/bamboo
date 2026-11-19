@@ -4,7 +4,7 @@ Bamboo helps Will remember the Mandarin he looks up in Gemini for talking to his
 yuesao, his toddler and the nanny. He asks the `#bamboo` OpenClaw agent (Gemini Flash) in Discord,
 or shares Gemini conversations there. The Mac mini's worker has Gemini extract phrases from each
 turn into a queue, and a PWA runs a short daily spoken review (one round of ~10 cards, FSRS).
-(The move from local models to this Gemini-backed hybrid is being built: docs/PLAN.md › *Hybrid
+(The move from local models to this Gemini-backed hybrid is done: docs/PLAN.md › *Hybrid
 H1–H7*, DESIGN §5.5.)
 
 The pieces:
