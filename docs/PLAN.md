@@ -101,7 +101,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
 | M6 Reminder & stats | merged | [#13](https://github.com/willchan/bamboo/pull/13) |
 | H1 Pinyin: large dictionary | in review | |
-| H2 Frames retired; new-card policy | planned | |
+| H2 Frames retired; new-card policy | in review | |
 | H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
 | H4 Worker on Gemini | in review | |
 | H5 Tutor capture | planned | |
@@ -1083,6 +1083,48 @@ H2 has two steps, possibly two sessions.
 - *Open question:* the H2a estimate needs a backfill allowance before H7's dry run has counted
   it; use v3's items per turn as the guess unless Will gives another.
 - *Resolved (orchestrator default; Will may override):* `effective_score` stays as the tie-break after freshness.
+- *H2a (estimate, no PR):* the real scheduler (`reviewCard`, ts-fsrs 6.0.0, FSRS-7,
+  `config.fsrs`) over a backlog of new phrases. Assumptions: about 400 unseen (147 turns × v3's
+  ~3 items, less those already introduced), 11 new a day (recent turns × 3 items), 15 s a card,
+  every showing recalled at 0.85, one session a day; Not useful and Already know ignored
+  (pessimistic). Counts only.
+
+  | newPerDay | burst (days) | burst peak/day | steady/day |
+  |---|---|---|---|
+  | 5 | never drains | 74 | — |
+  | 10 | never drains | 131 | — |
+  | 15 | 100 | 116 | 114 |
+  | 20 | 45 | 128 | 114 |
+  | 30 | 22 | 124 | 115 |
+  | no limit | 1 | 1,056 | 114 |
+
+  Above intake the limit sets only how long the burst lasts; the steady load comes from intake
+  (about 10 cards a day per daily new phrase).
+- *H2b, Will's input:* `newPerDay` = 30 (about a 22-day burst, then about 115 cards, ~29 min, a
+  day). A limit remains, so **Learn more** stays (still 3, `extraNewBatch`).
+- *H2b, built:* migration `0006_retire_frames` (custom SQL, data only: frames not already
+  `dropped` → `dropped`, unpinned, `dropped_at` set; one `phrase_retired {phrase_id, reason:
+  'frame', status_before}` each; cards and `review_log` untouched; idempotent). The engine drops
+  frame items first (`dropped_frame` on the `extraction` event; a frame doesn't use a cap slot).
+  `kindWeight.frame` is gone (a frame scores 0 for kind); `config.queue` and `expiredPhraseIds`
+  are gone, and the cron's answer no longer has `phrases_expired`. `orderQueue`: pins (newest
+  first), `last_asked_at` desc, `effective_score` desc, newest.
+- *H2b, deviations:*
+  - the phrase editor no longer offers *frame* for a phrase (an old frame still shows its kind);
+    Up next's blurb no longer says phrases expire;
+  - `BAMBOO_TEST_NEW_PER_DAY` (`testNewPerDay` in `web/lib/config.ts`, ignored in production
+    builds): both e2e servers set it to 5, since the e2e tests and seed use up the daily cap in
+    a few cards. `repo.test.ts` mocks the cap to 5 the same way `session.test.ts` mocks 3;
+  - the seed's two queued/active frames are now retired (`dropped`); the learning-today one is a
+    sentence (能不能帮我拿一下？), and a new queued sentence keeps six phrases waiting;
+  - a retired frame can still be restored by hand from Phrases (as any dropped phrase), and a
+    term whose key equals a retired frame's slot-less key would revive it; neither is guarded.
+- *For Will:* the steady state is about 115 cards (~11–12 rounds, ~29 min) a day at the current
+  capture rate, whatever the limit, against PRD §3's one-round daily goal; one round still meets
+  the goal, so the burst only drains if he does several rounds a day.
+- *For H7:* the queue no longer expires anything, so the backfill's phrases all wait in the
+  queue; with freshest first, re-run phrases are dated to their turn (§4.6.1) and sort behind
+  anything asked since.
 
 ## H3 — Card back: breakdowns and glosses *(depends on: docs; ∥ H1)*
 

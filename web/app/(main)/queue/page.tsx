@@ -23,8 +23,8 @@ export default async function QueuePage() {
           <span className="text-sm text-muted">{queue.length} waiting</span>
         </header>
         <p className="text-sm text-muted">
-          New cards come from the top of this list, up to {config.session.newPerDay} a day. Phrases
-          far down the list expire after a while; asking about one again brings it back.
+          New cards come from the top of this list, up to {config.session.newPerDay} a day: what you
+          asked about most recently comes first. Phrases wait here until you learn them.
         </p>
 
         {queue.length === 0 ? (

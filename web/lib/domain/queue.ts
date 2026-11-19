@@ -1,5 +1,5 @@
 // The phrase queue (DESIGN §4.6–4.7): score and order, validation of extracted items, dedupe into
-// existing phrases (asked again, revival), and expiry. Pure: lib/repo applies the results.
+// existing phrases (asked again, revival). Pure: lib/repo applies the results.
 import type { PhraseExample, PhraseKind, PhraseStatus, TurnKind } from "@bamboo/db";
 import {
   cleanHanzi,
@@ -11,7 +11,7 @@ import {
   type ExtractTurnResult,
   type PhraseBreakdown,
 } from "@bamboo/shared";
-import { config, type ExtractionConfig, type QueueConfig, type RankConfig } from "../config";
+import { config, type ExtractionConfig, type RankConfig } from "../config";
 import { checkBreakdown } from "./breakdown";
 import { bundledFrequencies, commonness, type WordFrequencies } from "./frequency";
 
@@ -51,7 +51,8 @@ export function baseScore(
   rank: RankConfig = config.rank,
   freq: WordFrequencies = bundledFrequencies(),
 ): number {
-  let score = rank.kindWeight[p.kind];
+  // Frames are retired (§10 #77): no weight of their own.
+  let score = p.kind === "frame" ? 0 : rank.kindWeight[p.kind];
   if (p.turnKind) score += rank.turnWeight[p.turnKind];
   if (p.heardAs) score += rank.heardAs;
   score += rank.askedAgain * Math.max(0, p.askedCount - 1);
@@ -86,8 +87,9 @@ export interface QueueEntry {
 }
 
 /**
- * Queue order: pinned first (newest pin first), then `effective_score` descending, then newest.
- * Returns new objects carrying their `effectiveScore` and 1-based `rank`.
+ * Queue order, freshest first (§4.6, §10 #79): pinned first (newest pin first), then the most
+ * recently asked (`last_asked_at` desc), then `effective_score` descending as the tie-break, then
+ * newest. Returns new objects carrying their `effectiveScore` and 1-based `rank`.
  */
 export function orderQueue<T extends QueueEntry>(
   items: readonly T[],
@@ -102,6 +104,7 @@ export function orderQueue<T extends QueueEntry>(
         const pin = (b.pinnedAt ?? 0) - (a.pinnedAt ?? 0);
         if (pin !== 0) return pin;
       }
+      if (a.lastAskedAt !== b.lastAskedAt) return b.lastAskedAt - a.lastAskedAt;
       if (a.effectiveScore !== b.effectiveScore) return b.effectiveScore - a.effectiveScore;
       return b.createdAt - a.createdAt;
     })
@@ -146,6 +149,8 @@ export interface Validation {
   droppedNotVerbatim: number;
   /** Items repeating an earlier item's key in the same result. */
   droppedDuplicate: number;
+  /** Frame items (from an older prompt or worker): frames are retired (§10 #77). */
+  droppedFrame: number;
   examplesDropped: number;
   heardAsDropped: number;
   /** Items past the per-turn caps (`config.extraction`: errand items, say terms). */
@@ -182,9 +187,9 @@ export function englishNote(note: string | null | undefined): string | null {
 }
 
 /**
- * §4.6 steps 1–3 on one `extract_turn` result: drop items not copied from the turn, keep
- * `heard_as` only if Will typed it, keep a term's example only if it is verbatim and contains the
- * term. Items for the same key collapse to the first. Then the per-turn caps: an errand turn keeps
+ * §4.6 steps 1–3 on one `extract_turn` result: drop frame items (retired, §10 #77) and items not
+ * copied from the turn, keep `heard_as` only if Will typed it, keep a term's example only if it is
+ * verbatim and contains the term. Items for the same key collapse to the first. Then the per-turn caps: an errand turn keeps
  * its first `errandMaxItems` items, a say turn its first `sayMaxTerms` terms. Tags are limited to
  * the fixed list.
  */
@@ -200,6 +205,7 @@ export function validateExtraction(
     items: [],
     droppedNotVerbatim: 0,
     droppedDuplicate: 0,
+    droppedFrame: 0,
     examplesDropped: 0,
     heardAsDropped: 0,
     droppedOverCap: 0,
@@ -210,6 +216,10 @@ export function validateExtraction(
   const seen = new Set<string>();
   let terms = 0;
   for (const raw of result.items) {
+    if (raw.kind === "frame") {
+      out.droppedFrame += 1;
+      continue;
+    }
     const hanzi = cleanHanzi(raw.hanzi);
     const k = hanziKey(hanzi);
     if (!occursVerbatim(hanzi, raw.kind, key)) {
@@ -557,56 +567,6 @@ export function planReextract(
     )
     .map((p) => p.id);
   return plan;
-}
-
-// --- Expiry and the queue budget (§4.7) -------------------------------------------------------
-
-const DAY = 24 * 60 * 60 * 1000;
-
-export interface ExpiryCandidate extends QueueEntry {
-  id: string;
-  status: PhraseStatus;
-  askedCount: number;
-}
-
-/**
- * Queued, unpinned phrases to expire: those that have sunk below `expireBelow` and are older than
- * `minAgeDays`, then those ranked past the budget (`newPerDay` × `budgetDays` queued phrases,
- * pins included). The budget spares a phrase Will asked about more than once, or within
- * `budgetMinAgeDays`: asking again means it matters. Expired phrases come back if asked about
- * again.
- */
-export function expiredPhraseIds(
-  phrases: readonly ExpiryCandidate[],
-  now: number,
-  q: QueueConfig = config.queue,
-  rank: RankConfig = config.rank,
-  newPerDay: number = config.session.newPerDay,
-): string[] {
-  const queued = phrases.filter((p) => p.status === "queued");
-  const sunk = new Set(
-    queued
-      .filter(
-        (p) =>
-          !p.pinned &&
-          now - p.createdAt > q.minAgeDays * DAY &&
-          effectiveScore(p, now, rank) < q.expireBelow,
-      )
-      .map((p) => p.id),
-  );
-  const budget = newPerDay * q.budgetDays;
-  const overBudget = orderQueue(
-    queued.filter((p) => !sunk.has(p.id)),
-    now,
-    rank,
-  ).filter(
-    (p) =>
-      p.rank > budget &&
-      !p.pinned &&
-      p.askedCount <= 1 &&
-      now - p.lastAskedAt > q.budgetMinAgeDays * DAY,
-  );
-  return [...sunk, ...overBudget.map((p) => p.id)];
 }
 
 /**

@@ -62,8 +62,9 @@ words; characters still help. He already talks to his household's **OpenClaw** a
    Duolingo-style apps use a short lesson as the unit. More rounds are optional.
 5. **Bamboo chooses; Will corrects.** New material is picked automatically, **freshest first**, and
    learned while it's fresh rather than rationed: a burst of new cards, then a steady state (the
-   daily setting is Will's choice, from an estimate of the reviews it brings; until H2, at most 5
-   a day). Will never has to sort an inbox; he flags bad picks while reviewing.
+   daily limit is 30 new cards, Will's choice from an estimate of the reviews it brings: about
+   three weeks of burst, then roughly 115 cards, about half an hour, a day at today's capture
+   rate). Will never has to sort an inbox; he flags bad picks while reviewing.
 6. **Pronunciation is never taken from the LLM alone.** Pinyin is computed from characters with a
    dictionary; Gemini only chooses among the dictionary's readings for a character, where the
    sentence decides (a polyphone), and Will's override wins. Audio comes from a TTS voice, not
@@ -91,7 +92,8 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen"),
     with **1–3 example sentences** taken from Gemini's answers;
   - ~~a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？)~~ **removed** (2026-11):
-    frames are no longer extracted, and existing ones are retired (H2);
+    frames are no longer extracted, and existing ones are retired (H2: dropped, their history
+    kept);
   - a **sentence**: a full thing to say, kept short. Every "how do I say" question yields one:
     if the model leaves it out, the shortest of Gemini's example sentences for its words is used.
 - Each phrase carries: hanzi, English meaning or intent, computed pinyin (tone marks), examples,
@@ -121,14 +123,14 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 ### 5.2 Daily review (the core loop)
 
 - A PWA installed on the iPhone home screen. **Today** shows what's due and a **Start** button.
-- A **round** is ~10 cards: due cards first, with new cards mixed in (up to 5 a day until H2
-  sets the new limit; §3, principle 5). After a round:
+- A **round** is ~10 cards: due cards first, with new cards mixed in (up to 30 a day; §3,
+  principle 5). After a round:
   "✓ Done for today" (one round is the daily goal), plus an optional "Another round (N due)" if
   more is waiting.
-- **Learn 3 more** (stays only if H2 keeps a daily limit): once today's new cards are used up and new phrases are waiting, Today and the
+- **Learn 3 more**: once today's new cards are used up and new phrases are waiting, Today and the
   end of a round offer a button that starts a round with up to 3 more new cards (plus anything
   due), for today only; he can tap it again later. It's opt-in because each new card adds reviews
-  on the days after, and the daily 3 stays the default.
+  on the days after, and the daily limit stays the default.
 - A card's front is just the prompt; tap it or the **Show** button to see the answer.
 - Phrases are added and edited on a **Phrases** page; **Up next** shows the ranked queue with
   Move to top and Remove.
@@ -185,18 +187,17 @@ The behavior:
     rare in that list, since they're daily language at home;
   - anything asked about more than once ranks high;
   - words the yuesao said rank high;
-  - reusable frames rank a little higher (until H2; frames are being removed);
   - the local model's "how often will this come up at home" rating counts;
   - errand items and long sentences sink;
   - old items fade slowly.
-- **From H2, freshest first**: new cards are introduced most recently asked first (the ranking
-  above only breaks ties), so words are learned while the moment they were needed is fresh.
+- **Freshest first**: new cards are introduced most recently asked first (pinned ones before
+  that; the ranking above only breaks ties), so words are learned while the moment they were
+  needed is fresh.
 - Each day the top items become new cards. **Up next** can be browsed (move to top, remove), but
   never has to be.
-- Until H2, the queue holds about three weeks of new cards and lower-ranked extras expire on
-  their own (anything expired comes back if he asks about it again, or he can restore it from
-  Phrases). **From H2, nothing unseen expires**: no queue budget; Not useful and Already know
-  stay.
+- **Nothing unseen expires**: there's no queue budget; everything waits until it's learned.
+  Not useful and Already know stay. Phrases that expired before H2 come back if he asks about
+  them again, or he can restore them from Phrases.
 - If he asks again about something he's already learning, Bamboo doesn't duplicate it. It treats
   this as **forgotten** and shows it again soon. A dropped item he asks about again returns to
   the queue (or straight back into review, if he had already started learning it).

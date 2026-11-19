@@ -32,8 +32,9 @@ const score = (o: Partial<ScoreInput>) => baseScore({ ...base, ...o }, config.ra
 describe("baseScore", () => {
   it("weights the kind", () => {
     expect(score({})).toBe(1);
-    expect(score({ kind: "frame" })).toBe(2);
-    // A say turn's sentence is what Will asked for: it weighs like a frame (§10 #66).
+    // Frames are retired (H2b, §10 #77): no kind weight.
+    expect(score({ kind: "frame" })).toBe(0);
+    // A say turn's sentence is what Will asked for (§10 #66).
     expect(score({ kind: "sentence" })).toBe(2);
   });
 
@@ -75,7 +76,7 @@ describe("baseScore", () => {
 
   it("combines everything (DESIGN §4.6 formula)", () => {
     const p: ScoreInput = {
-      kind: "frame",
+      kind: "sentence",
       turnKind: "decode",
       heardAs: "gaoyaguo",
       askedCount: 2,
@@ -154,19 +155,33 @@ describe("orderQueue", () => {
     expect(order.map((e) => e.rank)).toEqual([1, 2, 3]);
   });
 
-  it("then sorts by effective score, so age decay can reorder", () => {
+  // H2b (DESIGN §10 #79): freshest first, whatever the score.
+  it("then puts the most recently asked first, above a higher score", () => {
     const order = orderQueue(
       [
-        entry("oldHigh", { baseScore: 5, lastAskedAt: NOW - 12 * WEEK }), // 2
-        entry("fresh", { baseScore: 3 }), // 3
-        entry("mid", { baseScore: 4, lastAskedAt: NOW - 4 * WEEK }), // 3, older createdAt
+        entry("oldHigh", { baseScore: 9, lastAskedAt: NOW - 12 * WEEK }),
+        entry("fresh", { baseScore: -3 }),
+        entry("mid", { baseScore: 4, lastAskedAt: NOW - 4 * WEEK }),
+        entry("pin", { pinned: true, pinnedAt: NOW - WEEK, lastAskedAt: NOW - 20 * WEEK }),
+      ],
+      NOW,
+    );
+    expect(order.map((e) => e.id)).toEqual(["pin", "fresh", "mid", "oldHigh"]);
+  });
+
+  it("breaks a tie in freshness by effective score", () => {
+    const order = orderQueue(
+      [
+        entry("low", { baseScore: 1, createdAt: NOW }),
+        entry("high", { baseScore: 4, createdAt: NOW - 10 }),
+        entry("mid", { baseScore: 2.5 }),
       ],
       NOW,
     );
     expect(order.map((e) => [e.id, e.effectiveScore])).toEqual([
-      ["fresh", 3],
-      ["mid", 3],
-      ["oldHigh", 2],
+      ["high", 4],
+      ["mid", 2.5],
+      ["low", 1],
     ]);
   });
 

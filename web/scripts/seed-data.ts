@@ -1,6 +1,6 @@
 // The synthetic seed (CLAUDE.md › Privacy: invented content only), shared by `pnpm db:seed`, the
 // `dev:seeded` server, `pnpm --filter web shot` and the seeded e2e project. Relative to `now`, it
-// leaves phrases in every state — new (queued), learning (five introduced today, which uses up
+// leaves phrases in every state — new (queued), retired frames (dropped), learning (five introduced today, which uses up
 // today's `newPerDay` new cards, so Today offers "Learn 3 more"), and review cards due now — plus finished
 // rounds on past days (Stats), imports with turns, extraction events and one failed job (Imports;
 // the newest import was read with a newer prompt, so it offers a re-run), and a recent worker
@@ -45,6 +45,8 @@ export interface Seed {
   /** Introduced today (one Good, now on its learning step): uses up today's new cards. */
   learningToday?: boolean;
   extraCard?: CardType;
+  /** A frame retired by H2b's migration (DESIGN §10 #77): `dropped`, never scheduled. */
+  retired?: boolean;
 }
 
 export const SEEDS: Seed[] = [
@@ -161,12 +163,12 @@ export const SEEDS: Seed[] = [
     tags: ["household"],
     turnKind: "say",
     usefulness: 5,
-    activeDaysAgo: 5,
+    retired: true,
   },
   {
-    kind: "frame",
-    hanzi: "能不能帮我…？",
-    english: "Could you help me …?",
+    kind: "sentence",
+    hanzi: "能不能帮我拿一下？",
+    english: "Could you hand it to me?",
     tags: ["household"],
     turnKind: "say",
     usefulness: 4,
@@ -176,6 +178,15 @@ export const SEEDS: Seed[] = [
     kind: "frame",
     hanzi: "…多少钱一斤？",
     english: "How much is … per jin?",
+    tags: ["groceries", "units"],
+    turnKind: "errand",
+    usefulness: 3,
+    retired: true,
+  },
+  {
+    kind: "sentence",
+    hanzi: "西红柿多少钱一斤？",
+    english: "How much are tomatoes per jin?",
     tags: ["groceries", "units"],
     turnKind: "errand",
     usefulness: 3,
@@ -284,7 +295,7 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
     if (s.extraCard && !types.includes(s.extraCard)) types.push(s.extraCard);
     const rows = phraseRows(
       {
-        status: active ? "active" : "queued",
+        status: s.retired ? "dropped" : active ? "active" : "queued",
         kind: s.kind,
         hanzi: s.hanzi,
         english: s.english,
@@ -300,7 +311,9 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
       types,
       created,
     );
-    await db.insert(phrase).values(rows.phrase);
+    await db
+      .insert(phrase)
+      .values(s.retired ? { ...rows.phrase, droppedAt: created } : rows.phrase);
     await db.insert(card).values(rows.cards);
     added += 1;
     if (!active) continue;

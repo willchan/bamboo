@@ -6,7 +6,6 @@ import { computePinyin, overrideFromEdits } from "./pinyin";
 import { isLeaseExpired, isStaleAttempt, leaseExpiresAt, statusAfterFailure } from "./jobs";
 import {
   englishNote,
-  expiredPhraseIds,
   frequencyPoints,
   mergeExamples,
   occursVerbatim,
@@ -14,7 +13,6 @@ import {
   turnTextKey,
   validateExtraction,
   type ExistingPhrase,
-  type ExpiryCandidate,
 } from "./queue";
 
 const MIN = 60_000;
@@ -186,7 +184,7 @@ describe("validateExtraction", () => {
   });
 
   it("keeps an errand turn's first item and a say turn's first two terms", () => {
-    const reply = "买酱油、生抽和老抽。阿姨，您是说…吗？该洗澡了！";
+    const reply = "买酱油、生抽和老抽。该洗澡了！";
     const t = (hanzi: string, kind: "term" | "frame" | "sentence" = "term") => ({
       ...item,
       kind,
@@ -213,19 +211,34 @@ describe("validateExtraction", () => {
           t("电饭煲"), // not in the turn: doesn't use up a slot
           t("生抽"),
           t("老抽"),
-          t("阿姨，您是说…吗？", "frame"),
         ],
       },
       caps,
     );
-    expect(say.items.map((i) => i.hanzi)).toEqual([
-      "该洗澡了",
-      "酱油",
-      "生抽",
-      "阿姨，您是说…吗？",
-    ]);
+    expect(say.items.map((i) => i.hanzi)).toEqual(["该洗澡了", "酱油", "生抽"]);
     expect(say.droppedOverCap).toBe(1);
     expect(say.droppedNotVerbatim).toBe(1);
+  });
+
+  // H2b (DESIGN §10 #77): frames are retired; an older prompt's or worker's frame is dropped and
+  // counted, even when it's verbatim, and doesn't use up a cap's slot.
+  it("drops frame items and counts them", () => {
+    const reply = "阿姨，您是说要加水吗？买酱油。";
+    const v = validateExtraction(
+      { userText: "", replyText: reply },
+      {
+        turn_kind: "errand",
+        items: [
+          { ...item, kind: "frame", hanzi: "阿姨，您是说…吗？", example: null },
+          { ...item, kind: "term", hanzi: "酱油", example: null },
+        ],
+      },
+      { ...config.extraction, errandMaxItems: 1 },
+    );
+    expect(v.items.map((i) => i.hanzi)).toEqual(["酱油"]);
+    expect(v.droppedFrame).toBe(1);
+    expect(v.droppedNotVerbatim).toBe(0);
+    expect(v.droppedOverCap).toBe(0);
   });
 
   it("H4's loosened defaults keep 3 errand items and 5 say terms", () => {
@@ -289,7 +302,7 @@ describe("mergeExamples", () => {
 describe("planMerge", () => {
   const p: ExistingPhrase = {
     status: "queued",
-    kind: "frame",
+    kind: "sentence",
     hanziKey: "您是说吗",
     introducedAt: null,
     askedCount: 1,
@@ -312,9 +325,9 @@ describe("planMerge", () => {
     const plan = planMerge(p, item, ctx);
     expect(plan).toMatchObject({ bumped: true, revived: false, askedAgain: false });
     expect(plan.patch).toMatchObject({ askedCount: 2, lastAskedAt: 5, lastAskedImportId: "i1" });
-    // frame 2 + say 1 + asked again 3, plus how common 您是说 is.
+    // sentence 2 + say 1 + asked again 3, plus how common 您是说 is.
     expect(plan.patch.baseScore).toBe(2 + 1 + 3 + frequencyPoints(p));
-    // Frames keep no examples; `long` is recomputed (this key is short).
+    // Sentences keep no examples; `long` is recomputed (this key is short).
     expect(plan.patch.examples).toEqual([]);
     expect(plan.patch.flags).toEqual(["example_dropped"]);
 
@@ -344,83 +357,6 @@ describe("planMerge", () => {
   it("flags long phrases", () => {
     const long = planMerge({ ...p, hanziKey: "一".repeat(25), flags: [] }, item, ctx);
     expect(long.patch.flags).toContain("long");
-  });
-});
-
-describe("expiredPhraseIds", () => {
-  const base: ExpiryCandidate = {
-    id: "a",
-    status: "queued",
-    pinned: false,
-    pinnedAt: null,
-    baseScore: -3,
-    askedCount: 1,
-    lastAskedAt: 0,
-    createdAt: 0,
-  };
-  it("expires old, low, unpinned queued phrases only", () => {
-    const now = 31 * DAY;
-    expect(expiredPhraseIds([base], now)).toEqual(["a"]);
-    expect(expiredPhraseIds([base], 29 * DAY)).toEqual([]);
-    expect(expiredPhraseIds([{ ...base, pinned: true }], now)).toEqual([]);
-    expect(expiredPhraseIds([{ ...base, status: "active" }], now)).toEqual([]);
-    expect(expiredPhraseIds([{ ...base, baseScore: 5 }], now)).toEqual([]);
-  });
-
-  it("expires the lowest-ranked phrases past the budget, unless asked about recently", () => {
-    const q = { ...config.queue, budgetDays: 2 }; // newPerDay 2 × 2 days = 4 phrases
-    const now = 10 * DAY;
-    const p = (id: string, baseScore: number, o: Partial<typeof base> = {}) => ({
-      ...base,
-      id,
-      baseScore,
-      lastAskedAt: now - 5 * DAY,
-      createdAt: now - 5 * DAY,
-      ...o,
-    });
-    const phrases = [
-      p("pin", -1, { pinned: true, pinnedAt: now }), // counts toward the budget, never expires
-      p("a", 5),
-      p("b", 4),
-      p("c", 3),
-      p("d", 2), // 5th: over budget
-      p("young", 1, { createdAt: now - DAY, lastAskedAt: now - DAY }), // over budget, but new
-      p("e", 0),
-      p("active", -9, { status: "active" }),
-    ];
-    expect(expiredPhraseIds(phrases, now, q, config.rank, 2)).toEqual(["d", "e"]);
-    // Within budget, nothing goes.
-    expect(expiredPhraseIds(phrases.slice(0, 4), now, q, config.rank, 2)).toEqual([]);
-  });
-
-  // Found on the prod copy: phrases Will had just asked about again were expired by the budget
-  // because they scored low (an errand noun, a rare word). Asking again means it matters.
-  it("never expires by the budget a phrase asked about again, or asked about recently", () => {
-    const q = { ...config.queue, budgetDays: 1 }; // budget 1
-    const now = 10 * DAY;
-    const p = (id: string, baseScore: number, o: Partial<ExpiryCandidate> = {}) => ({
-      ...base,
-      id,
-      baseScore,
-      lastAskedAt: now - 5 * DAY,
-      createdAt: now - 5 * DAY,
-      ...o,
-    });
-    const phrases = [
-      p("top", 5),
-      p("again", 1, { askedCount: 2 }),
-      p("askedToday", 1, { lastAskedAt: now - DAY }), // created long ago, asked again today
-      p("old", 1),
-    ];
-    expect(expiredPhraseIds(phrases, now, q, config.rank, 1)).toEqual(["old"]);
-  });
-
-  it("doesn't count sunk phrases twice", () => {
-    const q = { ...config.queue, budgetDays: 1 };
-    const now = 31 * DAY;
-    const sunk = { ...base, id: "sunk" };
-    const ok = { ...base, id: "ok", baseScore: 5 };
-    expect(expiredPhraseIds([sunk, ok], now, q, config.rank, 1)).toEqual(["sunk"]);
   });
 });
 

@@ -24,9 +24,12 @@ export interface PhraseFormValues {
 
 const KIND_HELP = {
   term: "A word or short compound",
-  frame: "A pattern with a slot: …",
+  frame: "A pattern with a slot (frames are retired)",
   sentence: "A full thing to say",
 } as const;
+
+const KINDS = ["term", "sentence"] as const;
+const KINDS_WITH_FRAME = ["term", "frame", "sentence"] as const;
 
 const field = "h-11 w-full rounded-xl border border-border bg-card px-3";
 const label = "flex flex-col gap-1 text-sm font-medium";
@@ -34,6 +37,8 @@ const label = "flex flex-col gap-1 text-sm font-medium";
 export function PhraseForm({ values }: { values: PhraseFormValues }) {
   const [state, action, pending] = useActionState<PhraseFormState, FormData>(savePhraseAction, {});
   const [kind, setKind] = useState(values.kind);
+  // Frames are retired (DESIGN §10 #77): a new phrase can't be one; an old frame still shows its kind.
+  const kinds = values.kind === "frame" ? KINDS_WITH_FRAME : KINDS;
   const [hanzi, setHanzi] = useState(values.hanzi);
   const hanziChanged = values.pinyin !== null && hanzi.trim() !== values.hanzi;
 
@@ -56,8 +61,8 @@ export function PhraseForm({ values }: { values: PhraseFormValues }) {
 
       <fieldset className="flex flex-col gap-2">
         <legend className="mb-1 text-sm font-medium">Kind</legend>
-        <div className="grid grid-cols-3 gap-2">
-          {(["term", "frame", "sentence"] as const).map((k) => (
+        <div className={`grid gap-2 ${kinds.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+          {kinds.map((k) => (
             <label
               key={k}
               className={`flex h-11 cursor-pointer items-center justify-center rounded-xl border text-sm capitalize ${
