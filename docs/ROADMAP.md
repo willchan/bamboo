@@ -9,8 +9,8 @@
   Gemini Flash clearly better than every local model tried (2026-11-06 blind by Will; 2026-11-14
   with `qwen3.8:27b`, no better; DESIGN §10 #58). So, reversing the local-only rule (DESIGN §10
   #74), the tutor is now the `#bamboo` OpenClaw agent on Gemini Flash, and every question asked
-  there is captured as a Bamboo turn with no share link. It's planned work: docs/PLAN.md ›
-  *Hybrid H1–H7* (H5). The harness stays (`make tutor-eval`) in case a local model ever becomes
+  there is captured as a Bamboo turn with no share link. Built in H5 (docs/PLAN.md › *Hybrid
+  H1–H7*, done 2026-11-19). The harness stays (`make tutor-eval`) in case a local model ever becomes
   good enough to serve as more than the fallback extractor.
 - **Tutor that reuses what's due.** When answering "how do I say X", prefer phrasing that
   reuses due or recently introduced words and sentences. Easier now that the tutor is Bamboo's
@@ -36,11 +36,10 @@
 
 - **Quiz mode in Discord.** "Quiz me": a few Say cards as messages, graded with reactions; the
   results go to Bamboo as reviews.
-- **Instant `#bamboo` replies without a model.** Until H5 moves the channel's agent to Gemini
-  Flash, it runs `qwen3.8:27b`, which cold-loads after 30 min idle, so a reply
-  can take ~35–70 s (measured with `qwen3.5:27b`). Will accepts that for
-  now; on Gemini it may stop mattering. A deterministic handler would cover links and PDFs only:
-  questions need the tutor model. Option: an OpenClaw plugin (or similar deterministic handler) that recognises a share link
+- **Instant `#bamboo` replies without a model.** Since H5 the channel's agent runs on Gemini
+  Flash, so the local model's cold load (~35–70 s after 30 min idle) no longer delays replies,
+  and this may not be needed. Revisit only if link or PDF replies still feel slow. A
+  deterministic handler would cover links and PDFs only: questions need the tutor model. Option: an OpenClaw plugin (or similar deterministic handler) that recognises a share link
   or PDF in `#bamboo` and calls `bamboo-tools` directly, so no LLM is in the path and replies are
   near-instant. Deferred, not planned.
 - **Reminder to clear old share links.** Gemini share links are public URLs, and Will means to

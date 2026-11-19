@@ -1340,9 +1340,21 @@ Google's limit can only be seen on a real request, so run the probe on the Mac a
 #### 5.5.7 Keys (H4, H5; §10 #82)
 
 - A new **free-tier** Gemini key, in its own Google project, becomes an OpenClaw auth profile for
-  the `bamboo` agent only, and the agent is pinned to it:
-  `openclaw models auth paste-token --provider google --agent bamboo --profile-id google:bamboo-free`,
-  then `openclaw models auth order set --provider google google:bamboo-free --agent bamboo`.
+  the `bamboo` agent only, and the agent is pinned to it, with the paid key as a second profile
+  (below):
+  `openclaw models auth paste-api-key --provider google --agent bamboo --profile-id google:bamboo-free`
+  (and the same with `--profile-id google:bamboo-paid`), then
+  `openclaw models auth order set --provider google google:bamboo-free google:bamboo-paid --agent bamboo`.
+  The command is `paste-api-key`, not `paste-token`.
+- **The gateway must be offline** for every `models auth` command (`paste-api-key --profile-id`,
+  `order set`, `order get`) and for `models status --probe`: run `openclaw gateway stop --force`
+  first and `openclaw gateway start` after. The gateway is shared, so PandaBase's agents are down
+  for those few minutes too.
+- **Rotating a key** means updating it in both places, because the tutor and the worker are
+  separate programs: OpenClaw's auth store (`paste-api-key` for that profile, gateway offline) for
+  the tutor, and `openclaw-agent`'s `~/.config/bamboo/agent.env` (`BAMBOO_GEMINI_API_KEY_FREE` /
+  `BAMBOO_GEMINI_API_KEY_PAID`) for the worker, which reads it at startup (restart it with
+  `make worker-install`).
 - PandaDen's paid key in `~/.openclaw/.env` stays; falling back to it is acceptable.
 - The worker reads two keys from `openclaw-agent`'s `~/.config/bamboo/agent.env`
   (`BAMBOO_`-prefixed per §10 #42; §10 #88; built ahead of H7 in PR #48, `worker/src/config.ts`):
@@ -1365,8 +1377,8 @@ Google's limit can only be seen on a real request, so run the probe on the Mac a
   `agent.env`; the worker logs a deprecation warning if it's still used); a later PR drops the
   alias (expand → contract). Startup logs name the variable each key came from (or "not set") and
   which key the run uses, never a value. No Batch API (§10 #88).
-- Check which key serves requests with `openclaw models status --agent bamboo --probe` and one
-  real request. The host setup is recorded in PandaDen's host runbook (H5), and applied by the
+- Check which key serves requests with `openclaw models status --agent bamboo --probe` (gateway
+  offline, as above) and one real request. The host setup is recorded in PandaDen's host runbook (H5), and applied by the
   orchestrator via `ssh agent` after Will approves.
 - **When the free quota is used up** (H5, §10 #91). The free key's 5/min and 20/day for
   `gemini-3.8-flash` are shared by the tutor and the worker (one tutor answer plus one
@@ -1380,7 +1392,7 @@ Google's limit can only be seen on a real request, so run the probe on the Mac a
   fallback (`fallbacks: []`): Ollama stays the worker's only (CLAUDE.md › *Gemini at runtime*).
   An env key (`GEMINI_API_KEY` in `~/.openclaw/.env`) isn't used for this, because OpenClaw's
   docs don't say an env key is tried once an auth order is pinned; the explicit second profile
-  is. Unverified until the host change runs.
+  is. The host change was made after H5 merged, with this order.
 
 #### 5.5.8 Privacy on the Gemini path (§10 #83)
 
@@ -1911,7 +1923,7 @@ bamboo/
 | 88 | Refines #82: two Gemini keys in `agent.env`. `BAMBOO_GEMINI_API_KEY_FREE` serves everyday extraction, referee and pinyin jobs at the free tier's limits (5/min, 20/day for `gemini-3.8-flash`, confirmed by Will in AI Studio); `BAMBOO_GEMINI_API_KEY_PAID` is used only by a run that asks for it, with its own limits. H7's backfill runs on the paid key. H4's `BAMBOO_GEMINI_API_KEY` is the free key's alias until renamed (expand → contract). Logs name a key's variable, never its value. No Batch API (H7, §5.5.6, §5.5.7) | At 20/day the 147-turn backfill plus referee calls would take more than a week; on a paid key it is about a dollar or two. Batch is 50% cheaper, but saving cents doesn't pay for a new submit/collect flow, a second pass for referee calls and up to 24 h turnaround. Keeping everyday work on the free key keeps its cost at zero, and the paid key only spends when a run asks for it |
 | 89 | A tutor turn is stored through its own agent route, `POST /api/turns`, as an import of a new kind `tutor` (one turn, `source_ref` = the tutor prompt version, idempotent on `tutor:<message id>`, marked notified at once); `bamboo-tools turn` sends it after the agent has posted nothing but its answer. The tutor prompt is `worker/prompts/tutor.v1.md`, written into the agent's `AGENTS.md` with the skill (H5, §3.2, §5.1) | The answer is already in the channel, so a second "✅ 1 new question → …" reply would be noise (orchestrator default). A kind of its own keeps tutor turns visible on Imports ("Asked in #bamboo"), keys them on question and answer (§4.5) and needs no migration: `kind` is SQLite text and the enum is TypeScript-only. A route of its own keeps `/api/imports`' chunking out of a one-turn call |
 | 90 | Pasted answer or question is decided by code, not the model: `paste:`/`ask:` markers first, then a pasted answer only if it has Chinese, ≥ 300 characters and ≥ 4 non-blank lines; everything else is a question (`routeText`, `bamboo-tools ask`; H5, §5.1) | Gemini's answers are long and structured; Will's questions are a line or two, even when they quote a Chinese message to decode. A tested rule beats a model's guess with thinking off, and the markers give Will an override. Either mistake still reaches Bamboo (a question is imported as text; a paste is answered and saved as a turn), so the threshold can be tuned from Imports later |
-| 91 | The tutor's Google auth order is the free profile, then a second profile with PandaDen's paid key (`google:bamboo-paid`); no model fallback. The host's runbook sets it (H5, §5.5.7) | Will accepted falling back to the paid key (decision 9). The free quota (20/day) is shared with the worker, so a busy day would otherwise end in quota errors in `#bamboo`; OpenClaw rotates profiles on rate limits before failing. Its docs don't promise that an env key is tried after a pinned order, so the paid key gets an explicit profile. Ollama stays the worker's only fallback |
+| 91 | The tutor's Google auth order is `google:bamboo-free google:bamboo-paid`: the free profile, then a second profile with PandaDen's paid key; no model fallback. The host's runbook sets it with `openclaw models auth paste-api-key` (not `paste-token`) and `models auth order set`, with the gateway offline (`openclaw gateway stop --force`, then `openclaw gateway start`), as every `models auth` command and `models status --probe` need. A rotated key goes in both OpenClaw's store (tutor) and `agent.env`'s `BAMBOO_GEMINI_API_KEY_FREE` / `_PAID` (worker): they are separate programs (H5, §5.5.7) | Will accepted falling back to the paid key (decision 9). The free quota (20/day) is shared with the worker, so a busy day would otherwise end in quota errors in `#bamboo`; OpenClaw rotates profiles on rate limits before failing. Its docs don't promise that an env key is tried after a pinned order, so the paid key gets an explicit profile. Ollama stays the worker's only fallback |
 | 92 | H6's re-run extension: picked phrases are refreshed in place (English, note, breakdown, pinyin through the merge) in any status; leftovers from the turn are dropped if plain queued, else **reported** in a nullable `phrase.unpicked_at` (expand-only), listed by a Phrases filter with a bulk Retire (a drop: cards and `review_log` kept). H7 triggers runs with `POST /api/agent/reextract {all, limit}`; `all` skips turns a re-run already read with the newest prompt (§4.6.1, §5.5.6) | A column, not a flag in `flags`, so the filter and the Imports count are a plain `is not null` and a re-run or restore can clear it. Reporting only the turn's own phrases keeps a phrase that another question also produced from being flagged by one turn's reading. An agent route (not a script with DB credentials) keeps "the engine owns the data": H7 drives it from the Mac with the agent token. Skipping turns already re-run on the newest prompt makes the full run after the 10-turn dry run, and any retry, idempotent. A breakdown is re-checked against the phrase's own hanzi because the match is by key and punctuation can differ |
 | 93 | H7's backfill is one worker command (`backfill -- --gemini-key=paid --count \| --limit N \| --all`): it queues re-runs through the agent route, reads them in-process with a worker that claims `reextract_only` and stops when idle, and prints counts from a read-only agent route (`GET /api/agent/backfill`) and its own job reports. The paid key is required, never a fallback (§5.5.6, §5.5.7) | A claim option, not a flag in the claimed job, keeps new imports on the everyday worker's free key and leaves the claim order and the old worker untouched. A process that stops when idle makes the dry run a single command with a clear end, and the counts come from the engine's own events, so the engine still owns the data; the agent token the command reads sits beside the paid key in `agent.env` |
 | 94 | The backfill worker never falls back to Ollama: it waits out a Gemini rest, and stops on a refused request (4xx other than 429). `{all: true}` re-runs turns last read by the fallback. Gemini's 4xx errors are logged with Google's sanitized message (H7 fix after the dry run) | The dry run's first paid-key request got 400 INVALID_ARGUMENT and all 10 turns quietly went to Ollama, with pinyin jobs left unclaimed while Gemini rested; the point of the paid run is Gemini's reading, so a fallback result has to be redone anyway. A 4xx repeats on every turn, so stopping saves the run; a logged reason (field names, not the turn) makes it fixable |

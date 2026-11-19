@@ -104,9 +104,9 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H2 Frames retired; new-card policy | merged | [#45](https://github.com/willchan/bamboo/pull/45) |
 | H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
 | H4 Worker on Gemini | merged | [#44](https://github.com/willchan/bamboo/pull/44) |
-| H5 Tutor capture | in review | |
-| H6 Re-run extension | in review | |
-| H7 Backfill | in review | |
+| H5 Tutor capture | merged | [#47](https://github.com/willchan/bamboo/pull/47) |
+| H6 Re-run extension | merged | [#49](https://github.com/willchan/bamboo/pull/49) |
+| H7 Backfill | merged | [#50](https://github.com/willchan/bamboo/pull/50), [#51](https://github.com/willchan/bamboo/pull/51), [#52](https://github.com/willchan/bamboo/pull/52); two keys in [#48](https://github.com/willchan/bamboo/pull/48) |
 
 ---
 
@@ -1334,7 +1334,12 @@ free key becomes its auth profile and is pinned (DESIGN §5.5.7). Check with
   `~/.openclaw/.env`) is tried once an order is pinned. So the runbook adds the paid key as a
   second profile, `google:bamboo-paid`, and the order is `google:bamboo-free google:bamboo-paid`:
   the tutor falls back to the paid key instead of failing, and the worker waits for the reset
-  (DESIGN §5.5.7, §10 #91). Will pastes both keys during `paste-token`. No model fallback
+  (DESIGN §5.5.7, §10 #91). Will pastes both keys with `openclaw models auth paste-api-key`
+  (not `paste-token`), one per `--profile-id`. Every `models auth` command (`paste-api-key`,
+  `order set`, `order get`) and `models status --probe` need the gateway offline: `openclaw
+  gateway stop --force` first, `openclaw gateway start` after. Rotating a key means updating both
+  OpenClaw's store (the tutor) and `openclaw-agent`'s `~/.config/bamboo/agent.env`
+  (`BAMBOO_GEMINI_API_KEY_FREE` / `_PAID`, the worker), because they are separate programs. No model fallback
   (`model` is a plain string): Ollama stays the worker's only.
 - Bamboo's channel `systemPrompt` and the `bamboo` workspace files (`AGENTS.header.md`,
   `SOUL.md`, `IDENTITY.md`, `USER.md`) now describe a tutor plus intake clerk; `make mac-update`
@@ -1424,7 +1429,7 @@ picks, so the queue can be rebuilt from stored turns without losing history.
    whether to bulk-retire the reported leftovers.
 
 **Acceptance:**
-- the standard commands (the two-key tests landed in PR #48);
+- the standard commands (the two-key tests landed in [PR #48](https://github.com/willchan/bamboo/pull/48));
 - the dry and full runs log `gemini: using the paid key (BAMBOO_GEMINI_API_KEY_PAID)`, and the
   launchd worker logs the free key after it restarts;
 - every stored turn has a finished `extract_turn.v4` job;
@@ -1491,5 +1496,9 @@ picks, so the queue can be rebuilt from stored turns without losing history.
   The probe now sends four requests, all expected to pass. A unit test checks that none of the
   sent schemas (referee included) carries an unservable keyword. Run the probe after any
   `make mac-update` that changes a schema or a prompt.
-- *Still open:* the turn cut at 12,000 characters. The dry run reports how many stored turns have
-  `reply_text` at exactly the cap (counts only), and Will decides then.
+- *Resolved (Will, 2026-11-19):* the one turn cut at exactly 12,000 characters is left as is;
+  it isn't re-imported.
+- *Full run (2026-11-19, prod, paid key, counts only):* 137 turns, all on Gemini, in 81 min and
+  154 Gemini requests; 0 turns left on old prompts; review history unchanged (`review_log` rows
+  and reviewed cards the same before and after). Of the 17 reported phrases, Will retired most
+  and restored a few by hand. H1–H7 are done.

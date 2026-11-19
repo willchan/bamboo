@@ -515,7 +515,7 @@ describe("a request Gemini refuses (H7's 400)", () => {
   });
 
   it("a gemini-only worker waits out a rest (5xx) instead of using Ollama, then goes on", async () => {
-    const { engine, fake, worker, ollama, clock } = setup({
+    const { engine, fake, worker, ollama, clock, lines } = setup({
       deps: { reextractOnly: true, untilIdle: true, geminiOnly: true },
       idlePolls: 99,
     });
@@ -530,6 +530,13 @@ describe("a request Gemini refuses (H7's 400)", () => {
       ["rerun-1", 2, "done"],
     ]);
     expect(worker.refused).toBeNull();
+    // Nothing runs on Ollama, so the rest line says it waits for Gemini.
+    const rest = lines.filter((l) => l.includes("gemini resting until"));
+    expect(rest.length).toBeGreaterThan(0);
+    for (const l of rest) {
+      expect(l).toContain("waiting for gemini (gemini only)");
+      expect(l).not.toContain("ollama");
+    }
   });
 });
 

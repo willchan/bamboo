@@ -147,7 +147,9 @@ export class Worker {
       if (reset !== null)
         state = `gemini: daily quota used up; not claiming until ${new Date(reset).toISOString()}`;
       else if (this.now() < this.geminiDownUntil)
-        state = `gemini resting until ${new Date(this.geminiDownUntil).toISOString()}; extracting on ollama`;
+        state = `gemini resting until ${new Date(this.geminiDownUntil).toISOString()}; ${
+          this.d.geminiOnly ? "waiting for gemini (gemini only)" : "extracting on ollama"
+        }`;
       else state = `gemini ok: ${g.model}`;
     }
     if (state !== this.lastGeminiState) this.d.log(state);
