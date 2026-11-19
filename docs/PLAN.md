@@ -105,7 +105,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
 | H4 Worker on Gemini | merged | [#44](https://github.com/willchan/bamboo/pull/44) |
 | H5 Tutor capture | in review | |
-| H6 Re-run extension | planned | |
+| H6 Re-run extension | in review | |
 | H7 Backfill | planned | |
 
 ---
@@ -1378,6 +1378,25 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 - *Resolved (orchestrator default; Will may override):* the re-run refreshes pinyin through H4's merge and keeps Will's overrides.
 - *Resolved (orchestrator default; Will may override):* plain queued phrases it no longer picks are **dropped**, not expired (a change
   from today's superseding, DESIGN §4.6.1).
+- *Built (H6, DESIGN §10 #92):* `planReextract` returns `create`, `merges` (each with Gemini's
+  reading for the merge), `dropped` and `reported`; migration `0007_phrase_unpicked` adds a
+  nullable `phrase.unpicked_at` (expand-only). The report covers only phrases whose
+  `source_turn_id` is the re-run turn (as superseding did). A breakdown is taken only if it fits
+  the phrase's own hanzi and kind; a missing one keeps the old. An item without a reading (Ollama,
+  a promoted sentence) leaves the pinyin as it is. Restore clears `unpicked_at`.
+- *Decided here (no doc settled it):* the N-turn limit and "already on the newest prompt" go
+  through a new agent route, `POST /api/agent/reextract {all?, limit?}` → `{queued, open}`, not
+  the Imports button (which keeps re-running stale turns only). `all` skips turns whose latest
+  finished job is a re-run on the newest prompt, so H7's full run after its dry run doesn't redo
+  those 10, and calling it twice queues nothing. Oldest turns first.
+- *For H7:* the re-run's `extraction` event carries `phrases_created/refreshed/dropped/reported`
+  per turn; `phrase_unpicked` and `phrase_superseded` (`to: "dropped"`) events name the phrases.
+  Re-runs are still claimed after ordinary and pinyin jobs and look like any job to the worker:
+  `POST /api/jobs/claim` doesn't say a job is a re-run, so a paid-key backfill worker that must
+  take only re-runs needs a claim option or an input flag (H7's call). Turns whose every job
+  failed aren't picked by any re-run; use Retry failed first. `limit` is capped at 1000.
+- *Seed:* two learning sentences carry `unpicked_at`, so `/phrases?unpicked=1` and the Imports
+  link show in seeded shots; the seeded e2e retires them.
 
 ## H7 — Backfill *(depends on: H2b, H5, H6)*
 

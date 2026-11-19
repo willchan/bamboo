@@ -104,6 +104,13 @@ export const phrase = sqliteTable(
       .notNull()
       .default(sql`'[]'`),
     introducedAt: integer("introduced_at"),
+    /**
+     * H6 (DESIGN §5.5.6): when a re-run of its source turn last stopped picking it while it was
+     * active, pinned or asked about more than once. Reported, not changed: Phrases › "No longer
+     * picked" lists these for a bulk Retire. Cleared when a re-run picks it again or Will
+     * restores it.
+     */
+    unpickedAt: integer("unpicked_at"),
     droppedAt: integer("dropped_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),

@@ -4,7 +4,7 @@
 // today's `newPerDay` new cards, so Today offers "Learn 3 more"), and review cards due now — plus finished
 // rounds on past days (Stats), imports with turns, extraction events and one failed job (Imports;
 // the newest import was read with a newer prompt, so it offers a re-run), and a recent worker
-// heartbeat. Idempotent: phrases already present (by hanzi key) are skipped,
+// heartbeat, and two learning phrases a re-run no longer picks (H6). Idempotent: phrases already present (by hanzi key) are skipped,
 // and the imports, rounds and events are only added to a database without imports.
 import {
   card,
@@ -47,6 +47,8 @@ export interface Seed {
   extraCard?: CardType;
   /** A frame retired by H2b's migration (DESIGN §10 #77): `dropped`, never scheduled. */
   retired?: boolean;
+  /** H6: a re-run no longer picks it (`unpicked_at`), for Phrases › No longer picked. */
+  unpicked?: boolean;
 }
 
 export const SEEDS: Seed[] = [
@@ -199,6 +201,7 @@ export const SEEDS: Seed[] = [
     turnKind: "say",
     usefulness: 4,
     activeDaysAgo: 8,
+    unpicked: true,
   },
   {
     kind: "sentence",
@@ -216,6 +219,7 @@ export const SEEDS: Seed[] = [
     turnKind: "say",
     usefulness: 5,
     activeDaysAgo: 4,
+    unpicked: true,
   },
   {
     kind: "sentence",
@@ -325,9 +329,11 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
       types,
       created,
     );
-    await db
-      .insert(phrase)
-      .values(s.retired ? { ...rows.phrase, droppedAt: created } : rows.phrase);
+    await db.insert(phrase).values({
+      ...rows.phrase,
+      ...(s.retired ? { droppedAt: created } : {}),
+      ...(s.unpicked ? { unpickedAt: now - DAY } : {}),
+    });
     await db.insert(card).values(rows.cards);
     added += 1;
     if (!active) continue;

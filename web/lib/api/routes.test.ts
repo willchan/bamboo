@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as evalTurnsGET } from "@/app/api/agent/eval/turns/route";
 import { GET as notificationsGET } from "@/app/api/agent/notifications/route";
+import { POST as reextractPOST } from "@/app/api/agent/reextract/route";
 import { GET as cronGET } from "@/app/api/cron/daily/route";
 import { POST as notifiedPOST } from "@/app/api/imports/[id]/notified/route";
 import { POST as knownPOST } from "@/app/api/imports/known/route";
@@ -25,7 +26,15 @@ import { POST as completePOST } from "@/app/api/jobs/complete/route";
 import { POST as turnsPOST } from "@/app/api/turns/route";
 import { POST as heartbeatPOST } from "@/app/api/worker/heartbeat/route";
 import { config } from "../config";
-import { createManualPhrase, dropPhrase, getPhrase, listQueue } from "../repo/phrases";
+import {
+  createManualPhrase,
+  dropPhrase,
+  getPhrase,
+  listPhrases,
+  listQueue,
+  restorePhrase,
+  retireUnpicked,
+} from "../repo/phrases";
 import { PhraseInput } from "../domain/phrase";
 import { frequencyPoints } from "../domain/queue";
 import { gradeCard, startRound, getRound } from "../repo/review";
@@ -907,8 +916,8 @@ describe("re-extraction", () => {
     // Expired and picked again: back, with the new rating. Dropped: stays dropped.
     expect(await byKey("加水")).toMatchObject({ status: "queued", askedCount: 1, usefulness: 4 });
     expect(await byKey("您是说")).toMatchObject({ status: "dropped" });
-    // The fragment v3 no longer picks leaves the queue.
-    expect(await byKey("水")).toMatchObject({ status: "expired" });
+    // The fragment v3 no longer picks leaves the queue: dropped since H6 (§5.5.6), not expired.
+    expect(await byKey("水")).toMatchObject({ status: "dropped" });
     expect(await db.select().from(event).where(eq(event.type, "phrase_superseded"))).toHaveLength(
       1,
     );
@@ -922,6 +931,159 @@ describe("re-extraction", () => {
       (e) => (e.data as { reextract?: boolean }).reextract,
     );
     expect(ev?.data).toMatchObject({ prompt_version: "extract_turn.v3", kept: 3 });
+  });
+
+  it("H6: refreshes picked phrases in any status, keeps cards and history, reports the rest", async () => {
+    await oldThenNew();
+    // 水 is being learned (a reviewed card); 您是说 was dropped by Will; 加水 expired.
+    const water = (await byKey("水"))!;
+    await db
+      .update(phrase)
+      .set({ status: "active", introducedAt: T0 })
+      .where(eq(phrase.id, water.id));
+    const [waterCard] = await db.select().from(card).where(eq(card.phraseId, water.id));
+    await db
+      .update(card)
+      .set({ state: 2, reps: 3, stability: 7.5, due: T0 + 9 * DAY })
+      .where(eq(card.id, waterCard!.id));
+    await db.insert(reviewLog).values({
+      id: "rl1",
+      cardId: waterCard!.id,
+      rating: 3,
+      source: "session",
+      stateBefore: 1,
+      roundId: null,
+      reviewedAt: T0,
+      durationMs: null,
+      fsrsLog: {},
+    });
+    const cardsBefore = await db.select().from(card).orderBy(card.id);
+    const dropped = (await byKey("您是说"))!;
+    await db
+      .update(phrase)
+      .set({
+        pinyinOverride: [
+          ["您", "nin"],
+          ["是", "shi"],
+          ["说", "shuo"],
+        ],
+      })
+      .where(eq(phrase.id, dropped.id));
+
+    at(T0 + 2 * DAY);
+    expect(await queueReextraction(db, T0 + 2 * DAY)).toBe(1);
+    const rerun = (await claim())!;
+    const breakdown = {
+      parts: [
+        { hanzi: "加", gloss: "add" },
+        { hanzi: "水", gloss: "water" },
+      ],
+      meaning: "to add water",
+    };
+    await done(
+      rerun.job_id,
+      rerun.attempt,
+      {
+        turn_kind: "say",
+        items: [
+          term("加水", "to add water", { note: "cooking", breakdown, pinyin: ["jiā", "shuǐ"] }),
+          term("您是说", "you mean…?", { pinyin: ["nín", "shì", "shuō"] }),
+        ],
+      },
+      "extract_turn.v4",
+    );
+
+    // Picked, any status: new English, note, breakdown and merged pinyin; hanzi as it was.
+    expect(await byKey("加水")).toMatchObject({
+      status: "queued",
+      english: "to add water",
+      note: "cooking",
+      breakdown,
+      pinyin: [
+        ["加", "jiā"],
+        ["水", "shuǐ"],
+      ],
+      pinyinSources: [],
+      askedCount: 1,
+    });
+    // Dropped stays dropped, refreshed, and Will's override is kept.
+    expect(await byKey("您是说")).toMatchObject({
+      status: "dropped",
+      english: "you mean…?",
+      pinyinOverride: [
+        ["您", "nin"],
+        ["是", "shi"],
+        ["说", "shuo"],
+      ],
+    });
+    // Not picked but being learned: reported, not changed.
+    const reported = (await byKey("水"))!;
+    expect(reported).toMatchObject({ status: "active", unpickedAt: T0 + 2 * DAY });
+    expect(await db.select().from(card).orderBy(card.id)).toEqual(cardsBefore);
+    const [ev] = (await db.select().from(event).where(eq(event.type, "extraction"))).filter(
+      (e) => (e.data as { reextract?: boolean }).reextract,
+    );
+    expect(ev?.data).toMatchObject({
+      phrases_created: 0,
+      phrases_refreshed: 2,
+      phrases_dropped: 0,
+      phrases_reported: 1,
+    });
+
+    // The filter lists it; Imports counts it; Retire drops it and keeps the history.
+    expect((await listPhrases(db, { unpicked: true })).map((p) => p.hanzi)).toEqual(["水"]);
+    expect((await getImportsPage(db)).unpicked).toBe(1);
+    expect(await retireUnpicked(db, T0 + 3 * DAY, ["someone-else"])).toBe(0);
+    expect(await retireUnpicked(db, T0 + 3 * DAY)).toBe(1);
+    expect(await byKey("水")).toMatchObject({ status: "dropped", droppedAt: T0 + 3 * DAY });
+    expect(await db.select().from(reviewLog)).toHaveLength(1);
+    expect(await db.select().from(card).orderBy(card.id)).toEqual(cardsBefore);
+    expect(await listPhrases(db, { unpicked: true })).toEqual([]);
+    expect((await getImportsPage(db)).unpicked).toBe(0);
+    // Restoring brings it back with its card's state, and it's no longer reported.
+    expect(await restorePhrase(db, water.id, T0 + 4 * DAY)).toBe(true);
+    expect(await byKey("水")).toMatchObject({ status: "active", unpickedAt: null });
+  });
+
+  it("H6: a re-run can take turns already on the newest prompt, N at a time, oldest first", async () => {
+    await postImport({});
+    await drain(() => ({ turn_kind: "other", items: [] }));
+    // All three turns are on the newest prompt: nothing is stale.
+    expect(await queueReextraction(db, T0)).toBe(0);
+
+    const r = await reextractPOST(req("/api/agent/reextract", AGENT, { all: true, limit: 2 }));
+    expect(r.status).toBe(200);
+    expect(await json(r)).toEqual({ queued: 2, open: 2 });
+    // Open re-runs aren't queued twice.
+    expect(
+      await json(await reextractPOST(req("/api/agent/reextract", AGENT, { all: true, limit: 2 }))),
+    ).toEqual({ queued: 1, open: 3 });
+    const first = (await claim())!;
+    expect(first.input.user_text).toBe(TURNS[0]!.user_text);
+    await done(first.job_id, first.attempt, { turn_kind: "other", items: [] });
+    await drain(() => ({ turn_kind: "other", items: [] }));
+
+    // Every turn has now been re-read with the newest prompt: a second full run queues nothing.
+    expect(
+      await json(await reextractPOST(req("/api/agent/reextract", AGENT, { all: true }))),
+    ).toEqual({ queued: 0, open: 0 });
+    const queuedEvents = await db.select().from(event).where(eq(event.type, "reextract_queued"));
+    expect(queuedEvents.map((e) => e.data)).toEqual([
+      { turns: 2, all: true, limit: 2 },
+      { turns: 1, all: true, limit: 2 },
+    ]);
+  });
+
+  it("H6: the re-run route needs the agent token and a valid body", async () => {
+    expect((await reextractPOST(req("/api/agent/reextract", WORKER, {}))).status).toBe(401);
+    expect((await reextractPOST(req("/api/agent/reextract", AGENT, { limit: 0 }))).status).toBe(
+      400,
+    );
+    expect((await reextractPOST(req("/api/agent/reextract", AGENT, { nope: 1 }))).status).toBe(400);
+    expect(await json(await reextractPOST(req("/api/agent/reextract", AGENT, {})))).toEqual({
+      queued: 0,
+      open: 0,
+    });
   });
 
   it("a failed re-run doesn't count on its import, and Retry failed doesn't reopen it", async () => {

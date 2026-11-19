@@ -214,9 +214,11 @@ The behavior:
   it offers to **Re-run** the questions read with an older one: the queue then reflects the
   newer reading (expired phrases it still wants come back, fragments it no longer wants leave),
   without counting as asking again. Cards being learned and phrases Will removed are untouched.
-  From H6 a re-run also refreshes the English, note and breakdown of every phrase it picks
-  (never the characters or the review history), and lists active, pinned or asked-again phrases
-  it no longer picks under a Phrases filter, with a bulk **Retire** (history kept). H7 rebuilds
+  A re-run also refreshes the English, note, breakdown and pinyin of every phrase it picks,
+  whatever its status (never the characters, his pinyin corrections or the review history).
+  Queued phrases it no longer picks are removed (he can restore them from Phrases); ones he's
+  learning, moved to the top or asked about again stay, and Imports links to them under Phrases'
+  **unpicked** filter, with a bulk **Retire** that drops them and keeps their history. H7 rebuilds
   the queue this way from all stored questions, without wiping anything. **Today** shows a line when questions are
   waiting and the Mac's worker hasn't been heard from for a while.
 

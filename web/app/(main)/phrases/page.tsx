@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth/current";
 import { getDb } from "@/lib/repo/db";
+import { retireUnpickedAction } from "@/app/actions";
 import { allTags, listPhrases } from "@/lib/repo/phrases";
 import { timed } from "@/lib/timing";
 
@@ -27,13 +28,16 @@ export default async function PhrasesPage({ searchParams }: PageProps<"/phrases"
     const kind = pick<PhraseKind>(sp.kind, PHRASE_KINDS);
     const status = pick<PhraseStatus>(sp.status, PHRASE_STATUSES);
     const tag = typeof sp.tag === "string" && sp.tag ? sp.tag : undefined;
+    // H6 (DESIGN §5.5.6): current phrases a re-run no longer picks, for a bulk Retire.
+    const unpicked = sp.unpicked === "1" || sp.status === "unpicked";
+    const retired = typeof sp.retired === "string" ? Number(sp.retired) : null;
     const db = getDb();
     const [phrases, tags] = await Promise.all([
-      listPhrases(db, { q, kind, tag, status }),
+      listPhrases(db, unpicked ? { q, kind, tag, unpicked } : { q, kind, tag, status }),
       allTags(db),
     ]);
 
-    const select = "h-10 rounded-lg border border-border bg-card px-2 text-sm";
+    const select = "h-10 min-w-0 flex-1 rounded-lg border border-border bg-card pl-2 pr-1 text-sm";
     return (
       <main className="flex flex-col gap-4">
         <header className="flex items-center justify-between">
@@ -54,7 +58,7 @@ export default async function PhrasesPage({ searchParams }: PageProps<"/phrases"
             placeholder="Search hanzi, pinyin, English"
             className="h-11 rounded-xl border border-border bg-card px-3"
           />
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             <select name="kind" defaultValue={kind ?? ""} className={select} aria-label="Kind">
               <option value="">All kinds</option>
               {PHRASE_KINDS.map((k) => (
@@ -73,7 +77,7 @@ export default async function PhrasesPage({ searchParams }: PageProps<"/phrases"
             </select>
             <select
               name="status"
-              defaultValue={status ?? ""}
+              defaultValue={unpicked ? "unpicked" : (status ?? "")}
               className={select}
               aria-label="Status"
             >
@@ -83,12 +87,46 @@ export default async function PhrasesPage({ searchParams }: PageProps<"/phrases"
                   {STATUS_LABEL[s]}
                 </option>
               ))}
+              <option value="unpicked">unpicked</option>
             </select>
-            <button type="submit" className="h-10 rounded-lg border border-border px-3 text-sm">
+            <button
+              type="submit"
+              className="h-10 shrink-0 rounded-lg border border-border px-3 text-sm"
+            >
               Go
             </button>
           </div>
         </form>
+
+        {retired !== null && Number.isInteger(retired) ? (
+          <p role="status" data-testid="retired" className="text-sm text-muted">
+            Retired {retired} {retired === 1 ? "phrase" : "phrases"}. Their review history is kept;
+            restore one from its page.
+          </p>
+        ) : null}
+
+        {unpicked && phrases.length > 0 ? (
+          <section
+            data-testid="unpicked"
+            className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3"
+          >
+            <p className="text-sm text-muted">
+              A re-run of the question these came from no longer picks them, but you&apos;re
+              learning them, moved them to the top or asked about them again, so they stay until you
+              decide. Retiring drops them from review and keeps their history.
+            </p>
+            <form action={retireUnpickedAction}>
+              {/* Exactly the listed ones, so a search or filter narrows what's retired. */}
+              <input type="hidden" name="ids" value={phrases.map((p) => p.id).join(",")} />
+              <button
+                type="submit"
+                className="h-10 w-full rounded-lg border border-border text-sm font-medium"
+              >
+                Retire all {phrases.length}
+              </button>
+            </form>
+          </section>
+        ) : null}
 
         {phrases.length === 0 ? (
           <p className="py-10 text-center text-muted">No phrases here yet.</p>

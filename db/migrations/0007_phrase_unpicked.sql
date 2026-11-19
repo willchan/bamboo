@@ -1,0 +1,1 @@
+ALTER TABLE `phrase` ADD `unpicked_at` integer;
