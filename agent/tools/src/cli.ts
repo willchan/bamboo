@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import { routeText, sharedConfig, type ImportKind, type Notification } from "@bamboo/shared";
 import { Api, ApiCallError, type Fetch } from "./api";
 import { automation, NO_REPLY } from "./automation";
+import { inForum, openclawDiscord, type Discord } from "./discord";
 import { loadSettings, type Settings } from "./env";
 import { uploadConversation, type Conversation } from "./importer";
 import { PdfError, readPdf } from "./pdf";
@@ -26,7 +27,8 @@ export const USAGE = `usage: bamboo-tools <command> [options]
   segment --url <link> | --file <pdf>
       Dry run: parse and print the title, turn count and first/last prompts. No API calls.
   replies
-      Replies for finished imports (posted by an OpenClaw command automation), or NO_REPLY.
+      Replies for finished imports, posted inside each one's #bamboo post (an OpenClaw command
+      automation runs it); prints NO_REPLY, or what it couldn't place.
   nudge
       Today's review reminder, or NO_REPLY.
 
@@ -54,6 +56,7 @@ export const FAILURE_REPLIES = {
     "⚠️ I couldn't find any questions in that. Send a Gemini share link, a PDF, or a pasted answer.",
   not_configured: "⚠️ Bamboo isn't set up on the Mac yet; try again later.",
   wrong_channel: "Bamboo only reads conversations shared in #bamboo.",
+  channel_check_failed: "⚠️ Couldn't check this post just now; send it again in a while.",
   api: "⚠️ Couldn't reach Bamboo just now; send it again in a while.",
   not_saved: "⚠️ Couldn't save this question to Bamboo just now; ask it again later to add it.",
 } as const;
@@ -77,7 +80,11 @@ export interface Deps {
   retryDelayMs?: number;
   /** The clock for `replies`/`nudge` outage tracking (tests). */
   now?: () => Date;
+  /** Forum lookups and replies inside posts; defaults to OpenClaw's CLI (./discord.ts). */
+  discord?: Discord;
 }
+
+const discordOf = (deps: Deps) => deps.discord ?? openclawDiscord(deps.env);
 
 export const defaultDeps: Deps = {
   env: process.env,
@@ -153,11 +160,23 @@ function api(settings: Settings, deps: Deps): Api | string {
   });
 }
 
-/** A `--channel-id` that isn't #bamboo, as a failure; null when it's fine. */
-function channelFailure(settings: Settings, channelId: string | null): CliResult | null {
-  if (channelId && settings.config && channelId !== settings.config.discord.channel_id)
-    return failure("wrong_channel", `channel ${channelId} is not the configured #bamboo channel`);
-  return null;
+/**
+ * A `--channel-id` that is neither the #bamboo forum nor one of its posts, as a failure; null
+ * when it's fine. The agent only sees a post's own id, so its forum is looked up (./discord.ts).
+ */
+async function channelFailure(
+  deps: Deps,
+  settings: Settings,
+  channelId: string | null,
+): Promise<CliResult | null> {
+  if (!channelId || !settings.config) return null;
+  try {
+    if (await inForum(deps.env, discordOf(deps), settings.config.discord.channel_id, channelId))
+      return null;
+  } catch (e) {
+    return failure("channel_check_failed", (e as Error).message);
+  }
+  return failure("wrong_channel", `channel ${channelId} is not #bamboo or one of its posts`);
 }
 
 async function cmdImport(args: readonly string[], deps: Deps): Promise<CliResult> {
@@ -165,7 +184,7 @@ async function cmdImport(args: readonly string[], deps: Deps): Promise<CliResult
   const { flag, value } = source(v, true);
   // Check the channel and settings before reading a link or a PDF (importConversation re-checks).
   const settings = loadSettings(deps.env);
-  const early = channelFailure(settings, v["channel-id"] ?? null);
+  const early = await channelFailure(deps, settings, v["channel-id"] ?? null);
   if (early) return early;
   const client = api(settings, deps);
   if (typeof client === "string") return failure("not_configured", client);
@@ -188,7 +207,7 @@ async function importConversation(
 ): Promise<CliResult> {
   const settings = loadSettings(deps.env);
   const channelId = v["channel-id"] ?? null;
-  const wrong = channelFailure(settings, channelId);
+  const wrong = await channelFailure(deps, settings, channelId);
   if (wrong) return wrong;
   const client = api(settings, deps);
   if (typeof client === "string") return failure("not_configured", client);
@@ -225,7 +244,7 @@ async function cmdAsk(args: readonly string[], deps: Deps): Promise<CliResult> {
   const routed = routeText(deps.readText(file));
   if (!routed.text) return failure("empty", "no text");
   if (routed.route === "question") {
-    const wrong = channelFailure(loadSettings(deps.env), v["channel-id"] ?? null);
+    const wrong = await channelFailure(deps, loadSettings(deps.env), v["channel-id"] ?? null);
     if (wrong) return wrong;
     return { code: 0, out: json({ route: "question" }) };
   }
@@ -241,7 +260,7 @@ async function cmdTurn(args: readonly string[], deps: Deps): Promise<CliResult> 
     throw new UsageError("give --question-file, --answer-file and --message-id");
   const settings = loadSettings(deps.env);
   const channelId = v["channel-id"] ?? null;
-  const wrong = channelFailure(settings, channelId);
+  const wrong = await channelFailure(deps, settings, channelId);
   if (wrong) return wrong;
   const client = api(settings, deps);
   if (typeof client === "string") return failure("not_configured", client);
@@ -305,15 +324,17 @@ async function cmdSegment(args: readonly string[], deps: Deps): Promise<CliResul
   return { code: 0, out: lines.join("\n") };
 }
 
-/** One message for an OpenClaw command automation (it posts stdout to `#bamboo`). */
+/**
+ * What `replies` prints for the imports it couldn't answer inside their post (no channel or
+ * message id, e.g. a CLI import): the summaries, which OpenClaw announces to the #bamboo forum
+ * as a new post. Each is followed by a link to its message when there is one.
+ */
 export function repliesText(notes: Notification[], guildId: string | null | undefined): string {
   if (notes.length === 0) return NO_REPLY;
-  if (notes.length === 1)
-    return `[[reply_to:${notes[0]!.discord_message_id}]] ${notes[0]!.summary}`;
   return notes
     .map((n) => {
       const link =
-        guildId && n.discord_channel_id
+        guildId && n.discord_channel_id && n.discord_message_id
           ? `https://discord.com/channels/${guildId}/${n.discord_channel_id}/${n.discord_message_id}`
           : null;
       return link ? `${n.summary}\n↪ ${link}` : n.summary;
@@ -338,10 +359,26 @@ async function cmdReplies(args: readonly string[], deps: Deps): Promise<CliResul
   return automation("replies", automationCtx(deps), async () => {
     const { settings, client } = automationClient(deps);
     const notes = await client.notifications();
-    const text = repliesText(notes, settings.config?.discord.guild_id);
-    // Mark before printing: OpenClaw posts stdout after the command exits (as PandaBase does).
-    for (const n of notes) await client.markNotified(n.import_id);
-    return text;
+    const discord = discordOf(deps);
+    const unplaced: Notification[] = [];
+    const failed: string[] = [];
+    for (const n of notes) {
+      // Mark before posting (as PandaBase does): a failed post loses that reply, not the import.
+      await client.markNotified(n.import_id);
+      if (!n.discord_channel_id || !n.discord_message_id) {
+        unplaced.push(n);
+        continue;
+      }
+      try {
+        // Inside the post the import came from, as a reply to Will's message (§10 #96).
+        await discord.reply(n.discord_channel_id, n.discord_message_id, n.summary);
+      } catch (e) {
+        failed.push((e as Error).message);
+      }
+    }
+    if (failed.length)
+      throw new Error(`couldn't post ${failed.length} of ${notes.length} replies: ${failed[0]}`);
+    return repliesText(unplaced, settings.config?.discord.guild_id);
   });
 }
 

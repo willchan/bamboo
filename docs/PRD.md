@@ -147,6 +147,10 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 
 ### 5.3 Capture: send conversations to OpenClaw in Discord
 
+`#bamboo` is a Discord forum: each question or shared conversation is a **new post**, with a
+fresh conversation for the tutor, and a reply inside a post follows up on that one. Bamboo's
+replies (the "✅ … queued" summary) land inside the post they answer.
+
 In order of preference:
 
 1. **Ask in `#bamboo`** (H5): the `#bamboo` agent is the tutor, on Gemini Flash. Every question
@@ -224,7 +228,7 @@ The behavior:
 
 ### 5.4 Daily reminder
 
-- One message in `#bamboo`, in the evening, if a round is due and not yet done:
+- One new post in `#bamboo`, in the evening, if a round is due and not yet done:
   "📚 1 round · ~3 min · 7 due · 2 new → link". The default time is 21:00; once he has practised on
   5 of the last 14 days it moves to 15 minutes before his usual practice time (between 18:00 and
   23:00). There's nothing on days with nothing to do, and never a follow-up. A switch on Today

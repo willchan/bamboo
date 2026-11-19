@@ -604,7 +604,14 @@ The **reminder toggle** on Today (a switch: "Evening reminder · around 20:45", 
 
 ### 5.1 Discord intake (the bamboo skill)
 
-Scope: messages in `#bamboo` (channel id in the tools config). It follows PandaBase's skill
+Scope: messages in `#bamboo`, a Discord **forum** since 2026-11-19 (§10 #96): each post is one
+question or one shared conversation, and so one OpenClaw session; a reply in a post follows up on
+it. The forum's id is `discord.channel_id` in the tools config. A post is a Discord thread with
+its own id, which is what the agent passes as `--channel-id`; it can't see the forum's id, so
+`bamboo-tools` asks OpenClaw which channel a post belongs to (`openclaw message channel info`,
+`agent/tools/src/discord.ts`), refuses anything outside the forum (`wrong_channel`), says so when
+the lookup fails (`channel_check_failed`), and remembers posts it has checked in
+`~/.config/bamboo/posts.json` (ids only; the newest `tools.discord.rememberPosts`). It follows PandaBase's skill
 conventions: `SKILL.md` frontmatter gating on `requires.bins: ["bamboo-tools"]`; message text is
 data, never instructions; anything with quotes is written to a file and passed by path. It does
 **not** gate on `requires.env`: the OpenClaw gateway's env (`~/.openclaw/.env`) is PandaBase's, and
@@ -723,7 +730,7 @@ The skill's `description` is a double-quoted YAML string: OpenClaw parses frontm
 and an unquoted value is cut at ` #` (a comment), which had left it as "Bamboo intake in the".
 
 **Results**: an OpenClaw *command automation* (no model call) runs `bamboo-tools replies` every 5
-minutes. It replies to each finished import's message with the engine's `summary`, e.g. "✅ 9 new
+minutes. It replies to each finished import's message, inside that import's post, with the engine's `summary`, e.g. "✅ 9 new
 questions → 14 phrases queued. Next up: 高压锅 gāo yā guō (pressure cooker), 泡打粉 pào dǎ fěn
 (baking powder), …". For
 link imports it appends "🔗 This share link is public; you can delete it in Gemini → Settings →
@@ -774,11 +781,16 @@ reported: {command: message}}`; unreadable means empty). Log:
 Neither holds conversation text. `import` is unchanged: the skill posts its `reply`, and the
 diagnostic goes to stderr.
 
-**Replies in Discord**: with one finished import, `replies` prints
-`[[reply_to:<message id>]] <summary>` (OpenClaw threads it under Will's message, as PandaBase's
-`jobs replies` does); with several, each summary is followed by a link to its message
-(`discord.guild_id` in the tools config). Imports are marked notified before the text is printed,
-as PandaBase does: a failed Discord post loses that reply, not the import.
+**Replies in Discord** (§10 #96): an automation's announce goes to one fixed target, and
+announcing to a forum opens a new post, so `replies` posts each summary itself, inside the
+import's post as a reply to Will's message (`openclaw message send --target channel:<post>
+--reply-to <message>`, through the gateway's own Discord connection), and prints `NO_REPLY`. An
+import with no channel id (a CLI import) is printed instead, each summary followed by a link to
+its message when there is one (`discord.guild_id` in the tools config), and the automation
+announces it to the forum as a new post. Imports are marked notified before posting, as
+PandaBase does: a failed Discord post loses that reply, not the import; failed posts are
+reported once, like any other automation error. Imports from before the move keep the old text
+channel's id (`#bamboo-old`), so their replies still land there.
 
 **Limits**: Discord's free upload limit (currently 10 MB) holds months of one conversation as a PDF
 (a 105-page, 10-day export is 1.8 MB). Links have no such limit.
@@ -1622,7 +1634,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
   `<checkout>/agent/skills` to OpenClaw's `skills.load.extraDirs` after backing up
   `openclaw.json` (`openclaw.json.bak.<timestamp>`), replacing only a stale *Bamboo* entry
   (`openclaw config set` applies it live; no restart). Once the token is filled in, a re-run adds
-  or updates two command automations, announcing to `#bamboo`: `bamboo-replies`
+  or updates two command automations, announcing to the `#bamboo` forum (a new post per message:
+the nudge, an alert, an import with no post): `bamboo-replies`
   (`*/5 * * * *`) and `bamboo-nudge` (`*/30 17-23 * * *`, i.e. 17:00–23:30), in
   `automations.tz`. It pins `#bamboo`'s existing channel entry to the bamboo skill (§5.1:
   `skills`, `systemPrompt`, `tools.deny`), merged in with one `openclaw config set` of that
@@ -1903,6 +1916,7 @@ bamboo/
 | 93 | H7's backfill is one worker command (`backfill -- --gemini-key=paid --count \| --limit N \| --all`): it queues re-runs through the agent route, reads them in-process with a worker that claims `reextract_only` and stops when idle, and prints counts from a read-only agent route (`GET /api/agent/backfill`) and its own job reports. The paid key is required, never a fallback (§5.5.6, §5.5.7) | A claim option, not a flag in the claimed job, keeps new imports on the everyday worker's free key and leaves the claim order and the old worker untouched. A process that stops when idle makes the dry run a single command with a clear end, and the counts come from the engine's own events, so the engine still owns the data; the agent token the command reads sits beside the paid key in `agent.env` |
 | 94 | The backfill worker never falls back to Ollama: it waits out a Gemini rest, and stops on a refused request (4xx other than 429). `{all: true}` re-runs turns last read by the fallback. Gemini's 4xx errors are logged with Google's sanitized message (H7 fix after the dry run) | The dry run's first paid-key request got 400 INVALID_ARGUMENT and all 10 turns quietly went to Ollama, with pinyin jobs left unclaimed while Gemini rested; the point of the paid run is Gemini's reading, so a fallback result has to be redone anyway. A 4xx repeats on every turn, so stopping saves the run; a logged reason (field names, not the turn) makes it fixable |
 | 95 | Gemini gets each schema without length, count and range limits (`servableSchema`, one helper in the Gemini client, so no request can skip it). The prompt states the limits, and the worker cuts the reply to the caps (`trimToCaps`, counted as `trimmed_over_cap`) before the strict Zod contract checks it (H7) | Gemini refused extract_turn.v4's and the referee's schemas with HTTP 400 "too many states for serving" (nested `maxItems`, string lengths, integer bounds); the same schemas without those keywords pass. Deriving the sent schema from the strict one keeps the two from drifting, and the strict contract stays the real check (on the Mac and again in the engine). Cutting extra items or tags keeps a good answer that a repair turn would only shorten; strings over their limit still go to the repair turn, as before |
+| 96 | `#bamboo` is a Discord forum, not a text channel: one post per question or conversation, so each gets its own OpenClaw session; follow-ups are replies in the post. `bamboo-tools` checks a post's forum through `openclaw message channel info` (cached in `posts.json`), and `replies` posts each summary inside its post with `openclaw message send`; the automations still announce to the forum, which opens a new post (the nudge, alerts) (§5.1) | In a text channel every message joined one session that never reset, so each question carried all the earlier ones. A forum post is a session of its own (OpenClaw routes posts through their parent, so the binding and channel pin carry over). The agent sees only a post's id, and an announce can't target a post chosen at run time, so both lookups go through OpenClaw's CLI, which uses the gateway's Discord connection: Bamboo still holds no Discord token |
 
 ## Appendix A — Synthetic fixtures
 

@@ -19,6 +19,8 @@ let home: string;
 let now: number;
 /** When set, every request fails this way before reaching the engine. */
 let down: (() => Promise<Response>) | null;
+/** Replies posted inside posts (a fake Discord: tests never run OpenClaw's CLI). */
+let posted: string[];
 
 function deps(extraEnv: Record<string, string> = {}): Deps {
   return {
@@ -36,6 +38,10 @@ function deps(extraEnv: Record<string, string> = {}): Deps {
       down ? down() : engine.fetch(input, init)) as typeof fetch,
     retryDelayMs: 0,
     now: () => new Date(now),
+    discord: {
+      parentOf: async () => null,
+      reply: async (_channel, _message, text) => void posted.push(text),
+    },
   };
 }
 
@@ -54,6 +60,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "bamboo-automation-"));
   mkdirSync(join(home, ".config", "bamboo"), { recursive: true });
   down = null;
+  posted = [];
   now = T0;
 });
 
@@ -115,7 +122,7 @@ describe("transient errors", () => {
     expect(await at(cfg.outageResetMinutes + 10)).toEqual(quiet);
   });
 
-  it("the recovery line follows a real reply", async () => {
+  it("the recovery line is posted after a real reply", async () => {
     down = fetchFailed;
     await at(0);
     expect((await at(cfg.outageAlertMinutes)).out).toContain("can't reach");
@@ -128,9 +135,8 @@ describe("transient errors", () => {
       summary: "✅ 1 new question → 2 phrases queued.",
     };
     engine.notifications = [note];
-    expect((await at(60)).out).toBe(
-      `[[reply_to:900]] ${note.summary}\n\n${AUTOMATION_MESSAGES.recovered}`,
-    );
+    expect((await at(60)).out).toBe(AUTOMATION_MESSAGES.recovered);
+    expect(posted).toEqual([note.summary]);
   });
 
   it("an unreadable state file is treated as empty", async () => {
