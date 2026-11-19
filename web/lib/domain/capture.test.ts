@@ -442,14 +442,14 @@ describe("importSummary", () => {
 
   it("shows Will's pinyin overrides, as the PWA does", () => {
     const computed = computePinyin("我得走");
-    const override = overrideFromEdits(computed, [null, "dé", null]);
+    const override = overrideFromEdits(computed, [null, "děi", null]);
     const text = importSummary({
       ...s,
       nextUp: [
         { hanzi: "我得走", english: "I have to go", pinyin: computed, pinyinOverride: override },
       ],
     });
-    expect(text).toContain("我得走 wǒ dé zǒu (I have to go)");
+    expect(text).toContain("我得走 wǒ děi zǒu (I have to go)");
   });
 
   it("keeps a frame's slot as … in both the hanzi and the pinyin", () => {

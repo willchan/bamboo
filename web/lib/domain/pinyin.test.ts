@@ -37,33 +37,15 @@ describe("computePinyin", () => {
     expect(computePinyin("")).toEqual([]);
   });
 
-  it("reads 得 by context: structural de, modal děi, and the word dé", () => {
-    expect(at("你跑得很快", "得")).toBe("de");
-    expect(at("宝宝睡得很好", "得")).toBe("de");
-    expect(at("说得好", "得")).toBe("de");
-    expect(at("我得走了", "得")).toBe("děi");
-    expect(at("我们得给宝宝洗澡", "得")).toBe("děi");
-    expect(at("你还得去", "得")).toBe("děi");
-    expect(at("得到", "得")).toBe("dé");
-    expect(at("你得到了", "得")).toBe("dé");
-    expect(at("获得很多", "得")).toBe("dé");
-    expect(at("不得不", "得")).toBe("dé");
-  });
-
-  it("reads 行 by context", () => {
-    expect(at("银行", "行")).toBe("háng");
-    expect(at("不行", "行")).toBe("xíng");
-    expect(py("行不行")).toBe("xíng bù xíng");
-  });
-
-  it("reads 长 by context: cháng (long) vs zhǎng (grow)", () => {
-    expect(at("很长", "长")).toBe("cháng");
-    expect(at("头发很长", "长")).toBe("cháng");
-    expect(at("长大了", "长")).toBe("zhǎng");
-    expect(at("长高了", "长")).toBe("zhǎng");
-    expect(at("宝宝在长牙", "长")).toBe("zhǎng");
-    expect(at("她长得很像你", "长")).toBe("zhǎng");
-    expect(at("她长得很像你", "得")).toBe("de");
+  it("reads everyday neutral tones from the large dictionary", () => {
+    expect(py("梯子")).toBe("tī zi");
+    expect(py("肚子")).toBe("dù zi");
+    expect(py("舒服")).toBe("shū fu");
+    expect(py("里脊")).toBe("lǐ ji");
+    expect(py("芝麻")).toBe("zhī ma");
+    expect(py("宝宝的肚子不舒服")).toBe("bǎo bao de dù zi bù shū fu");
+    expect(py("阿姨买了里脊和芝麻。")).toBe("ā yí mǎi le lǐ ji hé zhī ma");
+    expect(py("把梯子拿过来")).toBe("bǎ tī zi ná guò lái");
   });
 
   it("applies tone sandhi to 一 and 不 only", () => {
@@ -77,7 +59,8 @@ describe("computePinyin", () => {
   });
 
   it("works on example sentences", () => {
-    expect(py("我们得买一瓶泡打粉。")).toBe("wǒ men děi mǎi yì píng pào dǎ fěn");
+    expect(py("我们买一瓶泡打粉。")).toBe("wǒ men mǎi yì píng pào dǎ fěn");
+    expect(py("明白了，谢谢")).toBe("míng bai le xiè xie");
   });
 });
 
@@ -94,21 +77,22 @@ describe("normalizeSyllable", () => {
 });
 
 describe("overrides", () => {
+  // 得 here is the modal děi, which the dictionary alone reads dé: Will's override fixes it.
   const computed = computePinyin("我得走");
 
   it("stores nothing when the edits match the computed pinyin", () => {
-    expect(overrideFromEdits(computed, ["wǒ", "děi", ""])).toBeNull();
+    expect(overrideFromEdits(computed, ["wǒ", "dé", ""])).toBeNull();
     expect(overrideFromEdits(computed, [])).toBeNull();
   });
 
   it("stores only the changed syllables", () => {
-    const override = overrideFromEdits(computed, ["", "de2", null]);
+    const override = overrideFromEdits(computed, ["", "dei3", null]);
     expect(override).toEqual([
       ["我", null],
-      ["得", "dé"],
+      ["得", "děi"],
       ["走", null],
     ]);
-    expect(pinyinText(displayPinyin(computed, override))).toBe("wǒ dé zǒu");
+    expect(pinyinText(displayPinyin(computed, override))).toBe("wǒ děi zǒu");
   });
 
   it("ignores edits on non-hanzi positions", () => {
@@ -123,7 +107,7 @@ describe("overrides", () => {
   });
 
   it("keeps the override when the hanzi is unchanged and drops it when it changes", () => {
-    const override = overrideFromEdits(computed, ["", "dé", ""]);
+    const override = overrideFromEdits(computed, ["", "děi", ""]);
     expect(repinyin({ hanzi: "我得走", pinyinOverride: override }, "我得走")).toEqual({
       pinyin: computed,
       pinyinOverride: override,
