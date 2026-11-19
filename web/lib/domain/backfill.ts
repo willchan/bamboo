@@ -8,6 +8,7 @@ export const DROP_FIELDS = [
   "dropped_frame",
   "dropped_over_cap",
   "dropped_name",
+  "trimmed_over_cap",
   "examples_dropped",
   "heard_as_dropped",
   "tags_dropped",

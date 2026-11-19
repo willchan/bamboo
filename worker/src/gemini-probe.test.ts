@@ -2,7 +2,8 @@
 import { sharedConfig } from "@bamboo/shared";
 import { describe, expect, it } from "vitest";
 import { GeminiClient } from "./gemini";
-import { runProbe, syntheticTurn, withoutLimits } from "./gemini-probe";
+import { UNSERVABLE_KEYWORDS } from "@bamboo/shared";
+import { runProbe, syntheticTurn } from "./gemini-probe";
 import { loadPrompt } from "./prompt";
 import { RateLimiter } from "./rate-limit";
 import { FakeGemini } from "./test-fakes";
@@ -27,17 +28,17 @@ function client(fake: FakeGemini, key = fake.key) {
 }
 
 describe("gemini probe", () => {
-  it("sends five synthetic requests and reports pass/fail without replies", async () => {
+  it("sends four synthetic requests and reports pass/fail without replies", async () => {
     const fake = new FakeGemini();
     fake.replies = [
       '{"ok":true}',
       '{"pinyin":["wǒ"]}',
-      '{"choices":[]}',
       {
         status: 400,
         error: {
           status: "INVALID_ARGUMENT",
-          message: "Invalid value at 'generation_config.response_json_schema'",
+          message:
+            "The specified schema produces a constraint that has too many states for serving.",
         },
       },
       '{"turn_kind":"other","items":[]}',
@@ -46,32 +47,29 @@ describe("gemini probe", () => {
     expect(r.map((x) => [x.name, x.ok])).toEqual([
       ["minimal", true],
       ["pinyin_reading", true],
-      ["pinyin_referee", true],
-      ["extract_turn", false],
-      ["extract_turn_no_limits", true],
+      ["pinyin_referee", false],
+      ["extract_turn", true],
     ]);
     expect(r[0]!.outcome).toBe("ok (11 chars of JSON)");
-    expect(r[3]).toMatchObject({ kind: "rejected" });
-    expect(r[3]!.outcome).toContain("response_json_schema");
+    expect(r[2]).toMatchObject({ kind: "rejected" });
+    expect(r[2]!.outcome).toContain("too many states for serving");
     // Only the synthetic fixture turn went out.
     const sent = JSON.stringify(fake.bodies[3]!.body);
+    // No schema reaches Gemini with a limit it can't serve (H7's 400): all four, referee included.
+    expect(fake.bodies).toHaveLength(4);
+    for (const b of fake.bodies) {
+      const schema = JSON.stringify(
+        (b.body.generationConfig as { responseJsonSchema: unknown }).responseJsonSchema,
+      );
+      for (const k of UNSERVABLE_KEYWORDS) expect(schema).not.toContain(`"${k}"`);
+    }
     expect(sent).toContain(JSON.stringify(syntheticTurn().user_text).slice(1, -1));
   });
 
   it("a bad key fails every request", async () => {
     const fake = new FakeGemini();
     const r = await runProbe(client(fake, "wrong-key-123456"), prompts());
-    expect(r).toHaveLength(5);
+    expect(r).toHaveLength(4);
     expect(r.every((x) => !x.ok && x.outcome.includes("HTTP 400"))).toBe(true);
-  });
-
-  it("strips limits only", () => {
-    expect(
-      withoutLimits({
-        type: "array",
-        maxItems: 3,
-        items: { type: "string", minLength: 1, enum: ["a"] },
-      }),
-    ).toEqual({ type: "array", items: { type: "string", enum: ["a"] } });
   });
 });

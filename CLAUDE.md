@@ -115,7 +115,7 @@ make worker-install / worker-logs / agent-install / agent-check / mac-update   #
 pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model (the fallback)
 BAMBOO_EVAL_GEMINI=1 pnpm --filter @bamboo/worker test:gemini   # Mac, as openclaw-agent: synthetic turns through Gemini (free-tier key in agent.env; counts only)
 pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count | --limit 10 | --all   # Mac, as openclaw-agent, launchd worker stopped: H7 re-runs on the paid key; counts only
-pnpm --filter @bamboo/worker gemini-probe -- [--gemini-key=paid]   # Mac, as openclaw-agent: 5 synthetic Gemini requests, pass/fail and Google's error each
+pnpm --filter @bamboo/worker gemini-probe -- [--gemini-key=paid]   # Mac, as openclaw-agent: 4 synthetic Gemini requests (each schema as sent), pass/fail and Google's error each
 make tutor-eval ARGS="run | serve | score …"   # Mac, as openclaw-agent: local tutor evaluation (DESIGN §5.4); output in ~/bamboo-eval/
 ```
 
@@ -127,7 +127,9 @@ Lessons from live runs (November 2026). Ask before anything that changes product
   `openclaw-agent`. Run there with `ssh agent '<cmd>'` from `~/Code/bamboo`. Its token lives in
   that account's `~/.config/bamboo/agent.env` as `BAMBOO_AGENT_API_TOKEN` (Vercel's stays
   `AGENT_API_TOKEN`), never in the admin's home.
-- **After a PR merges,** run `make mac-update` there.
+- **After a PR merges,** run `make mac-update` there. If it changed a schema or a prompt, run the
+  Gemini probe there too (`gemini-probe`, above): Google rejects some schemas only on a real
+  request ("too many states for serving", H7), which CI can't see.
 - **Shared with PandaBase:** the OpenClaw gateway and Ollama. Ollama's settings, models and memory
   budget belong to the host's runbook, not to Bamboo: don't change them from here. New
   automations need `--agent` (the installer passes the agent the host binds `#bamboo` to, on

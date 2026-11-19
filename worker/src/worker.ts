@@ -295,7 +295,13 @@ export class Worker {
     if (extraction.ok) {
       const f = filterNames(extraction.result, this.d.deny);
       droppedName = f.dropped;
-      body = { ...base, status: "done", result: f.result, dropped_name: droppedName };
+      body = {
+        ...base,
+        status: "done",
+        result: f.result,
+        dropped_name: droppedName,
+        trimmed_over_cap: extraction.trimmed,
+      };
     } else {
       body = { ...base, status: "failed", error: extraction.error.slice(0, 2000) };
     }

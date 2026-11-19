@@ -12,4 +12,5 @@ export * from "./verbatim";
 export * from "./random";
 export * from "./pinyin-merge";
 export * from "./paste";
+export * from "./schema-caps";
 export * from "./contracts/index";

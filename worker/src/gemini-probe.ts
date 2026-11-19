@@ -1,5 +1,5 @@
-// A Gemini probe on synthetic input only (H7): a handful of single requests that tell a bad key
-// from a schema Gemini refuses. `gemini-probe-main.ts` runs it on the Mac:
+// A Gemini probe on synthetic input only (H7): four single requests that tell a bad key from a
+// schema Gemini refuses. `gemini-probe-main.ts` runs it on the Mac:
 //   pnpm --filter @bamboo/worker gemini-probe -- --gemini-key=paid
 // Each request carries a prompt and synthetic text from worker/tests/fixtures (never a real turn);
 // the output is each request's outcome (ok, or Google's status and error detail), never a reply.
@@ -27,27 +27,6 @@ export function syntheticTurn(): ExtractTurnInput {
   };
 }
 
-const LIMIT_KEYS = new Set([
-  "minLength",
-  "maxLength",
-  "minItems",
-  "maxItems",
-  "minimum",
-  "maximum",
-]);
-
-/** The schema without length, count and range limits: if this passes, a limit is the cause. */
-export function withoutLimits(schema: unknown): unknown {
-  if (Array.isArray(schema)) return schema.map(withoutLimits);
-  if (schema && typeof schema === "object")
-    return Object.fromEntries(
-      Object.entries(schema)
-        .filter(([k]) => !LIMIT_KEYS.has(k))
-        .map(([k, v]) => [k, withoutLimits(v)]),
-    );
-  return schema;
-}
-
 export interface ProbeOutcome {
   name: string;
   ok: boolean;
@@ -63,8 +42,10 @@ export interface ProbePrompts {
 }
 
 /**
- * Five requests, in order: a tiny schema (key and endpoint), the pinyin reading and referee
- * schemas, the extraction schema, and the extraction schema without limits.
+ * Four requests, in order: a tiny schema (key and endpoint), then the pinyin reading, referee and
+ * extraction schemas exactly as the worker sends them (through `geminiSchema`). Run it after every
+ * `make mac-update` that changes a schema: Google's "too many states for serving" only shows up
+ * on a real request (H7).
  */
 export async function runProbe(model: ChatModel, prompts: ProbePrompts): Promise<ProbeOutcome[]> {
   const turn = syntheticTurn();
@@ -99,11 +80,6 @@ export async function runProbe(model: ChatModel, prompts: ProbePrompts): Promise
       schema: z.toJSONSchema(RefereeReply),
     },
     { name: "extract_turn", messages: extractMessages, schema: RESULT_SCHEMA },
-    {
-      name: "extract_turn_no_limits",
-      messages: extractMessages,
-      schema: withoutLimits(RESULT_SCHEMA),
-    },
   ];
   const out: ProbeOutcome[] = [];
   for (const r of requests) {

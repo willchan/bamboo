@@ -999,7 +999,14 @@ each result for the `extraction` event.
   `{{disputes}}`.
 - **Gemini** (H4, `worker/src/gemini.ts`): `models/{model}:generateContent` with
   `responseMimeType: application/json` and `responseJsonSchema` (`ModelExtractTurnResultV4`,
-  zod's JSON schema without `$schema`), temperature 0, the key in the `x-goog-api-key` header
+  zod's JSON schema without `$schema`), temperature 0. Since H7 every schema sent to Gemini drops
+  the keywords it can't serve (`servableSchema` in `shared/src/schema-caps.ts`: min/max items and
+  length, number bounds, `pattern`, `format` and the like; §10 #95). The prompt states those
+  limits (12 items, 3 examples, 3 tags, usefulness 1–5). The reply is cut to the caps
+  (`trimToCaps`: extra items, examples and tags dropped, a too-long breakdown dropped, usefulness
+  clamped, counted as `trimmed_over_cap` on `complete` and in the `extraction` event) before the
+  strict contract checks it, so a string over its limit still gets the repair turn. Ollama keeps
+  the strict schema as its `format`. the key in the `x-goog-api-key` header
   (never the URL). The key is `BAMBOO_GEMINI_API_KEY_FREE` (or, for a `--gemini-key=paid` run,
   `BAMBOO_GEMINI_API_KEY_PAID`; §5.5.7) from the process env or, only those keys, from `agent.env`
   (§8.1); without a free key the worker runs on Ollama only and claims no pinyin jobs. Model and
@@ -1310,9 +1317,13 @@ whose latest finished job ran on the fallback (a model without the `gemini-` pre
 counts them as `latest_on_fallback`. For any refused request, the Gemini client logs Google's
 message, ErrorInfo reason and field violations, with non-ASCII runs replaced, the key masked,
 and a message that quotes the request withheld. `pnpm --filter @bamboo/worker gemini-probe --
-[--gemini-key=paid]` sends five synthetic requests (a tiny schema, the two pinyin schemas, the
-extraction schema with and without its limits) and prints pass/fail and Google's error per
-request, to tell a bad key from a schema Gemini refuses.
+[--gemini-key=paid]` sends four synthetic requests: a tiny schema, then the pinyin reading,
+referee and extraction schemas exactly as the worker sends them. It prints pass/fail and
+Google's error for each request, to tell a bad key from a schema Gemini refuses. Its first run
+found the cause of the dry run's 400: the referee and extraction schemas produced "too many
+states for serving" (§10 #95). CI checks that no sent schema carries an unservable keyword. But
+Google's limit can only be seen on a real request, so run the probe on the Mac after every
+`make mac-update` that changes a schema or a prompt.
 
 #### 5.5.7 Keys (H4, H5; §10 #82)
 
@@ -1462,7 +1473,7 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 
 - `import_finished {import_id, kind, turns_total, turns_new, jobs_failed, phrases_new, phrases_again}`
 - `share_parse_failed {host}`
-- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, breakdowns_dropped, repaired, dropped_name, pinyin_jobs, pinyin_misaligned}`
+- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, breakdowns_dropped, repaired, dropped_name, trimmed_over_cap, pinyin_jobs, pinyin_misaligned}`
   (H4 added the last three: the worker's name-filter count, never a name; pinyin jobs queued for
   the new phrases; Gemini readings that didn't line up with the hanzi). A re-run's event also has
   `phrases_created`, `phrases_refreshed`, `phrases_dropped`, `phrases_reported` (H6, for H7's
@@ -1891,6 +1902,7 @@ bamboo/
 | 92 | H6's re-run extension: picked phrases are refreshed in place (English, note, breakdown, pinyin through the merge) in any status; leftovers from the turn are dropped if plain queued, else **reported** in a nullable `phrase.unpicked_at` (expand-only), listed by a Phrases filter with a bulk Retire (a drop: cards and `review_log` kept). H7 triggers runs with `POST /api/agent/reextract {all, limit}`; `all` skips turns a re-run already read with the newest prompt (§4.6.1, §5.5.6) | A column, not a flag in `flags`, so the filter and the Imports count are a plain `is not null` and a re-run or restore can clear it. Reporting only the turn's own phrases keeps a phrase that another question also produced from being flagged by one turn's reading. An agent route (not a script with DB credentials) keeps "the engine owns the data": H7 drives it from the Mac with the agent token. Skipping turns already re-run on the newest prompt makes the full run after the 10-turn dry run, and any retry, idempotent. A breakdown is re-checked against the phrase's own hanzi because the match is by key and punctuation can differ |
 | 93 | H7's backfill is one worker command (`backfill -- --gemini-key=paid --count \| --limit N \| --all`): it queues re-runs through the agent route, reads them in-process with a worker that claims `reextract_only` and stops when idle, and prints counts from a read-only agent route (`GET /api/agent/backfill`) and its own job reports. The paid key is required, never a fallback (§5.5.6, §5.5.7) | A claim option, not a flag in the claimed job, keeps new imports on the everyday worker's free key and leaves the claim order and the old worker untouched. A process that stops when idle makes the dry run a single command with a clear end, and the counts come from the engine's own events, so the engine still owns the data; the agent token the command reads sits beside the paid key in `agent.env` |
 | 94 | The backfill worker never falls back to Ollama: it waits out a Gemini rest, and stops on a refused request (4xx other than 429). `{all: true}` re-runs turns last read by the fallback. Gemini's 4xx errors are logged with Google's sanitized message (H7 fix after the dry run) | The dry run's first paid-key request got 400 INVALID_ARGUMENT and all 10 turns quietly went to Ollama, with pinyin jobs left unclaimed while Gemini rested; the point of the paid run is Gemini's reading, so a fallback result has to be redone anyway. A 4xx repeats on every turn, so stopping saves the run; a logged reason (field names, not the turn) makes it fixable |
+| 95 | Gemini gets each schema without length, count and range limits (`servableSchema`, one helper in the Gemini client, so no request can skip it). The prompt states the limits, and the worker cuts the reply to the caps (`trimToCaps`, counted as `trimmed_over_cap`) before the strict Zod contract checks it (H7) | Gemini refused extract_turn.v4's and the referee's schemas with HTTP 400 "too many states for serving" (nested `maxItems`, string lengths, integer bounds); the same schemas without those keywords pass. Deriving the sent schema from the strict one keeps the two from drifting, and the strict contract stays the real check (on the Mac and again in the engine). Cutting extra items or tags keeps a good answer that a repair turn would only shorten; strings over their limit still go to the repair turn, as before |
 
 ## Appendix A — Synthetic fixtures
 

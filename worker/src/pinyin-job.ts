@@ -14,11 +14,15 @@ import { z } from "zod";
 import { askJson, parseReply, type ChatModel } from "./extract";
 import { fill, type Prompt } from "./prompt";
 
-export const ReadingReply = z.object({ pinyin: z.array(z.string().min(1).max(12)).max(200) });
+/** A reply's arrays hold at most this many entries (cut, not refused: Gemini's schema has no max). */
+const MAX_ENTRIES = 200;
+export const ReadingReply = z.object({
+  pinyin: z.array(z.string().min(1).max(12)).max(MAX_ENTRIES),
+});
 export const RefereeReply = z.object({
   choices: z
     .array(z.object({ index: z.number().int().min(0), reading: z.string().min(1).max(12) }))
-    .max(200),
+    .max(MAX_ENTRIES),
 });
 const READING_SCHEMA = z.toJSONSchema(ReadingReply) as Record<string, unknown>;
 const REFEREE_SCHEMA = z.toJSONSchema(RefereeReply) as Record<string, unknown>;
@@ -67,7 +71,7 @@ export async function runPinyinJob(
       ],
       READING_SCHEMA,
       (c) => {
-        const x = parseReply(c, ReadingReply);
+        const x = parseReply(c, ReadingReply, MAX_ENTRIES);
         return x.ok ? { ok: true, value: x.value.pinyin } : x;
       },
       (errors) => fill(p.repair, { errors }),
@@ -101,7 +105,7 @@ export async function runPinyinJob(
       ],
       REFEREE_SCHEMA,
       (c) => {
-        const x = parseReply(c, RefereeReply);
+        const x = parseReply(c, RefereeReply, MAX_ENTRIES);
         return x.ok ? { ok: true, value: x.value.choices } : x;
       },
       (errors) => fill(p.repair, { errors }),
