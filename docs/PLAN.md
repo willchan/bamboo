@@ -1102,9 +1102,8 @@ falling back to Ollama; names never reach a card; pinyin is merged with Gemini's
   pinyin per item, and the breakdown/gloss of H3. The prompt says: never a person's name in a
   card (use 宝宝, 孩子, 阿姨, 月嫂 or 妈妈), and no personal health specifics (diagnoses, doses,
   measurements); ordinary words like 胀气 are fine. Copy hanzi exactly.
-- **Gemini client**: the key from `agent.env` (`GEMINI_API_KEY`, already there; the worker
-  reads it from that file, and the file wins over the process env for it, as `worker.env` does
-  for its keys (DESIGN §10 #45), so no other app's key of the same name is picked up); model and limits in `sharedConfig.worker.gemini`; JSON output
+- **Gemini client**: the key from `agent.env` (`BAMBOO_GEMINI_API_KEY`, `BAMBOO_`-prefixed per
+  DESIGN §10 #42; Will renames the existing entry in `agent.env` to this name); model and limits in `sharedConfig.worker.gemini`; JSON output
   with a schema; one turn per request; the request carries only the prompt and the turn (the
   whole stored turn; the 6,000-character cut stays for Ollama).
 - **Rate limiter** for the free tier (requests per minute and per day, from Google's current

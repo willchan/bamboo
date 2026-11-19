@@ -1139,9 +1139,8 @@ H7 runs 10 turns as a dry run (counts only), then, after Will approves, the rest
   then `openclaw models auth order set --provider google google:bamboo-free --agent bamboo`.
 - PandaDen's paid key in `~/.openclaw/.env` stays; falling back to it is acceptable.
 - The worker reads the free key from `openclaw-agent`'s `~/.config/bamboo/agent.env`
-  as `GEMINI_API_KEY`. That name isn't `BAMBOO_`-prefixed (§10 #42), so for this key the file
-  wins over the process env (as `worker.env` does, §10 #45): another app's `GEMINI_API_KEY`
-  can never be picked up.
+  as `BAMBOO_GEMINI_API_KEY` (`BAMBOO_`-prefixed per §10 #42). Will renames the existing entry in
+  `agent.env` to this name.
 - Check which key serves requests with `openclaw models status --agent bamboo --probe` and one
   real request. The host setup is recorded in PandaDen's host runbook (H5), and applied by the
   orchestrator via `ssh agent` after Will approves.
@@ -1290,7 +1289,7 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1). On a 401, `bamboo-tools` names where its token came from (`BAMBOO_AGENT_API_TOKEN in <agent.env path>`, or `environment variable BAMBOO_AGENT_API_TOKEN`), never the value (§10 #46) |
-| `GEMINI_API_KEY` *(from H4)* | worker | the free-tier Gemini key (§5.5.7, §10 #82), in `openclaw-agent`'s `~/.config/bamboo/agent.env`; not in `worker.env` or the gateway env. The file wins over the process env for this key (§5.5.7). `~/.config/bamboo/names.deny` (§5.5.8) sits beside it |
+| `BAMBOO_GEMINI_API_KEY` *(from H4)* | worker | the free-tier Gemini key (§5.5.7, §10 #82), in `openclaw-agent`'s `~/.config/bamboo/agent.env`; not in `worker.env` or the gateway env. `~/.config/bamboo/names.deny` (§5.5.8) sits beside it |
 | `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.8:27b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env for every key it lists (§10 #45): its keys are generic, so an inherited `WORKER_API_TOKEN` or `OLLAMA_URL` can't override Bamboo's. A key the file leaves out still comes from the env |
 
 ### 8.2 Deploy
