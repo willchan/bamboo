@@ -113,7 +113,8 @@ export const sharedConfig = {
       envFile: "~/.config/bamboo/worker.env",
       /**
        * Bamboo's Mac-side secrets (DESIGN §8.1, §5.5.7): the worker reads only
-       * `BAMBOO_GEMINI_API_KEY` from it. `BAMBOO_AGENT_ENV` overrides the path.
+       * `BAMBOO_GEMINI_API_KEY_FREE` (alias `BAMBOO_GEMINI_API_KEY`) and
+       * `BAMBOO_GEMINI_API_KEY_PAID` from it. `BAMBOO_AGENT_ENV` overrides the path.
        */
       agentEnvFile: "~/.config/bamboo/agent.env",
       /** The name deny-list (DESIGN §5.5.8), filled in by Will. `BAMBOO_NAMES_DENY` overrides it. */
@@ -131,6 +132,13 @@ export const sharedConfig = {
       apiUrl: "https://generativelanguage.googleapis.com/v1beta",
       requestsPerMinute: 5,
       requestsPerDay: 20,
+      /**
+       * The paid key's own limits (DESIGN §5.5.7, §10 #88), used only by a run started with
+       * `--gemini-key=paid` (H7's backfill). Conservative defaults well under the paid tier's;
+       * `GEMINI_PAID_RPM` / `GEMINI_PAID_RPD` in worker.env override them (H7 confirms them in
+       * AI Studio and records them in its Notes).
+       */
+      paid: { requestsPerMinute: 60, requestsPerDay: 2000 },
       /** Daily quotas reset at midnight in this zone. */
       quotaTimeZone: "America/Los_Angeles",
       /** One request gives up after this long. */

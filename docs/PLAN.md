@@ -1385,18 +1385,16 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 
 **Read:** DESIGN §5.5.6, §5.5.7, §8.1, §8.6, §10 #81, #82, #88; H4 and H6 Notes.
 
-*Input from Will: `BAMBOO_GEMINI_API_KEY_PAID` added to `openclaw-agent`'s
-`~/.config/bamboo/agent.env` (the session never reads or prints it).*
+*Input from Will: `BAMBOO_GEMINI_API_KEY_PAID` in `openclaw-agent`'s
+`~/.config/bamboo/agent.env` (done; the session never reads or prints it).*
 
 **Scope:**
-0. **Two keys** (worker, DESIGN §5.5.7, §10 #88): the worker reads `BAMBOO_GEMINI_API_KEY_FREE`
-   and `BAMBOO_GEMINI_API_KEY_PAID` from `agent.env` (the process env wins), and still accepts
-   `BAMBOO_GEMINI_API_KEY` as an alias for the free key (expand → contract: a later PR drops the
-   alias once Will has renamed it). Everyday extraction, referee and pinyin jobs use the free key
-   at its limits (5/min, 20/day). A backfill run asks for the paid key and gets the paid key's own
-   limits (`sharedConfig.worker.gemini.paid`, overridable with `GEMINI_PAID_RPM` and `GEMINI_PAID_RPD` in worker.env; defaults from the paid tier, recorded in Notes); a missing paid key fails
-   that run at startup instead of falling back to the free key. Startup logs name the variable
-   each key came from, never its value.
+0. **Paid key for the backfill run:** the two-key support is already built (see Notes); the
+   backfill run starts the worker with `--gemini-key=paid` (DESIGN §5.5.7), e.g. stop the
+   launchd worker, run `pnpm --filter @bamboo/worker start -- --gemini-key=paid` as
+   `openclaw-agent`, then restart the launchd worker (which keeps the free key). Confirm the paid
+   tier's limits in AI Studio and set `GEMINI_PAID_RPM` / `GEMINI_PAID_RPD` (or the defaults in
+   `sharedConfig.worker.gemini.paid`) to match, recorded in Notes.
 1. **Dry run**: re-run 10 turns on the paid key. Report counts only: items kept and dropped (by reason), phrases
    new, refreshed and reported, pinyin disagreements and referee calls, Gemini requests, minutes,
    and how many stored turns have `reply_text` at exactly the 12,000-character cap.
@@ -1407,10 +1405,9 @@ picks, so the queue can be rebuilt from stored turns without losing history.
    whether to bulk-retire the reported leftovers.
 
 **Acceptance:**
-- the standard commands; `pnpm --filter @bamboo/worker test` with fake keys only: both keys read,
-  the old name accepted as the free key's alias, a backfill run selects the paid key and its
-  limits, the live worker keeps the free key, and startup logs name each key's variable but
-  never contain a key value;
+- the standard commands (the two-key tests landed in PR #48);
+- the dry and full runs log `gemini: using the paid key (BAMBOO_GEMINI_API_KEY_PAID)`, and the
+  launchd worker logs the free key after it restarts;
 - every stored turn has a finished `extract_turn.v4` job;
 - `review_log` rows and reviewed cards are the same before and after (counts);
 - Stats renders; `pnpm smoke https://bamboo-panda.vercel.app` passes.
@@ -1423,5 +1420,14 @@ picks, so the queue can be rebuilt from stored turns without losing history.
   or two), and Batch would need a new submit/collect flow, a second pass for referee calls and
   up to 24 h turnaround (DESIGN §10 #88). The two-key support is built here, not in its own
   milestone.
+- *Two keys done early in PR #48* (2026-11-19), because Will had already renamed the key in
+  `agent.env` and the live worker was on Ollama only. The worker reads `BAMBOO_GEMINI_API_KEY_FREE`
+  and `BAMBOO_GEMINI_API_KEY_PAID` from `agent.env` (the process env wins), still accepts
+  `BAMBOO_GEMINI_API_KEY` as the free key's deprecated alias (a later PR drops it), and logs each
+  key's variable, never its value. **Selection hook:** `--gemini-key=paid` on the worker's command
+  line (`worker/src/config.ts` › `geminiKeyChoice`, `selectGeminiKey`) uses the paid key with
+  `sharedConfig.worker.gemini.paid` (60/min, 2,000/day by default; `GEMINI_PAID_RPM`,
+  `GEMINI_PAID_RPD`); without the paid key that run exits 78 at startup. Tested with fake keys
+  (`worker/src/config.test.ts`). No migration.
 - *Still open:* the turn cut at 12,000 characters. The dry run reports how many stored turns have
   `reply_text` at exactly the cap (counts only), and Will decides then.

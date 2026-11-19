@@ -35,7 +35,7 @@ export interface GeminiModel extends ChatModel {
 export interface WorkerDeps {
   engine: Engine;
   ollama: ChatModel & { hasModel(): Promise<boolean> };
-  /** Null when `BAMBOO_GEMINI_API_KEY` isn't set: Ollama only, no pinyin jobs. */
+  /** Null when `BAMBOO_GEMINI_API_KEY_FREE` isn't set: Ollama only, no pinyin jobs. */
   gemini: GeminiModel | null;
   prompt: Prompt;
   pinyinPrompts: PinyinPrompts;
@@ -126,7 +126,7 @@ export class Worker {
   private logGeminiState(): void {
     const g = this.d.gemini;
     let state: string;
-    if (!g) state = "gemini off: BAMBOO_GEMINI_API_KEY is not set; extracting on ollama only";
+    if (!g) state = "gemini off: BAMBOO_GEMINI_API_KEY_FREE is not set; extracting on ollama only";
     else {
       const reset = g.quotaResetAt();
       if (reset !== null)
