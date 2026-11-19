@@ -6,10 +6,12 @@ import {
   askedAgainOnActive,
   extractionDropRate,
   notUsefulRates,
+  pinyinDisagreements,
   practiceDaysPerWeek,
   recentWeeks,
   trueRetention,
   type NotUsefulRates,
+  type PinyinDisagreements,
   type Rate,
   type Week,
 } from "../domain/stats";
@@ -21,6 +23,7 @@ export interface StatsView {
   askedAgainActive: number;
   notUseful: NotUsefulRates;
   extractionDrop: Rate;
+  pinyin: PinyinDisagreements;
   queueSize: number;
   lastHeartbeatAt: number | null;
 }
@@ -51,7 +54,13 @@ export async function getStats(db: Db, clock: Clock): Promise<StatsView> {
       .from(event)
       .where(
         and(
-          inArray(event.type, ["asked_again", "phrase_introduced", "phrase_dropped", "extraction"]),
+          inArray(event.type, [
+            "asked_again",
+            "phrase_introduced",
+            "phrase_dropped",
+            "extraction",
+            "pinyin_disagreement",
+          ]),
           gte(event.at, from),
         ),
       ),
@@ -94,6 +103,7 @@ export async function getStats(db: Db, clock: Clock): Promise<StatsView> {
         dropped_not_verbatim: num(d.dropped_not_verbatim) ?? 0,
       })),
     ),
+    pinyin: pinyinDisagreements(ofType("pinyin_disagreement")),
     queueSize: queued?.n ?? 0,
     lastHeartbeatAt: beat?.at ?? null,
   };

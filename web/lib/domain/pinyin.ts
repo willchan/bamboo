@@ -6,6 +6,14 @@
 // and Will's overrides win.
 import { addDict, convert, pinyin } from "pinyin-pro";
 import type { PinyinPairs } from "@bamboo/db";
+import {
+  applySources,
+  mergeReading,
+  sharedConfig,
+  type PinyinJobInput,
+  type PinyinSlot,
+  type PinyinSource,
+} from "@bamboo/shared";
 import largeDict from "../data/pinyin-dict.json";
 
 export type { PinyinPairs };
@@ -118,4 +126,99 @@ export function pinyinText(pairs: PinyinPairs): string {
     .map(([, s]) => s)
     .filter((s): s is string => s !== null)
     .join(" ");
+}
+
+// --- The merge with Gemini's reading (DESIGN §5.5.3b, H4) --------------------------------------
+
+/**
+ * Each character's computed reading and its valid readings (pinyin-pro `multiple: true`, the
+ * computed one included): what the merge, the worker and the referee choose among.
+ */
+export function pinyinSlots(hanzi: string): PinyinSlot[] {
+  return computePinyin(hanzi).map(([char, computed]) => ({
+    char,
+    computed,
+    readings:
+      computed === null
+        ? []
+        : [...new Set([computed, ...pinyin(char, { multiple: true, type: "array" })])],
+  }));
+}
+
+const toPairs = (slots: readonly PinyinSlot[], readings: readonly (string | null)[]): PinyinPairs =>
+  slots.map((s, i) => [s.char, s.computed === null ? null : (readings[i] ?? s.computed)]);
+
+export interface PhrasePinyin {
+  /** The stored reading: computed, with the merge's choices. Overrides apply on display. */
+  pinyin: PinyinPairs;
+  /** `phrase.pinyin_sources`: null when there was no usable Gemini reading to merge. */
+  pinyinSources: PinyinSource[] | null;
+  /** The disputes still waiting for the referee. */
+  pending: number;
+  /** Gemini sent a reading that didn't line up with the hanzi (one syllable per character). */
+  misaligned: boolean;
+}
+
+/** Merge Gemini's reading (and the referee's answers, if any) into the phrase's computed one. */
+export function mergedPinyin(
+  hanzi: string,
+  gemini: readonly string[] | null | undefined,
+  referee?: ReadonlyMap<number, string>,
+  opts: { final?: boolean } = {},
+): PhrasePinyin {
+  const slots = pinyinSlots(hanzi);
+  const m = mergeReading(slots, gemini, referee, opts);
+  return {
+    pinyin: toPairs(slots, m.readings),
+    pinyinSources: m.aligned ? m.sources : null,
+    pending: m.pending.length,
+    misaligned: !!gemini?.length && m.aligned === null,
+  };
+}
+
+/** The stored reading recomputed from the hanzi, keeping the referee's still-valid choices. */
+export function storedPinyin(hanzi: string, sources: readonly PinyinSource[] | null): PinyinPairs {
+  const slots = pinyinSlots(hanzi);
+  return toPairs(slots, applySources(slots, sources));
+}
+
+/**
+ * A `pinyin` job for the worker: Gemini's reading of the phrase (when `gemini` is null), then
+ * the referee. Its context is the phrase's own examples.
+ */
+export function pinyinJobInput(
+  p: { id: string; hanzi: string; examples: readonly { hanzi: string }[] },
+  gemini: readonly string[] | null,
+  max: number = sharedConfig.pinyin.maxContextExamples,
+): PinyinJobInput {
+  return {
+    phrase_id: p.id,
+    hanzi: p.hanzi,
+    context: p.examples.map((e) => e.hanzi).slice(0, max),
+    slots: pinyinSlots(p.hanzi),
+    gemini: gemini ? [...gemini] : null,
+  };
+}
+
+/** Settled disputes (not pending) for the `pinyin_disagreement` event, or null if none. */
+export function disagreementEvent(
+  phraseId: string,
+  sources: readonly PinyinSource[] | null,
+): Record<string, unknown> | null {
+  const settled = (sources ?? []).filter((s) => s.rule !== "pending");
+  if (!settled.length) return null;
+  const winners = new Set(settled.map((s) => s.winner));
+  const outcome = winners.size === 1 ? [...winners][0]! : "mixed";
+  return {
+    phrase_id: phraseId,
+    syllables: settled.map(({ i, computed, gemini, chosen, rule, winner }) => ({
+      i,
+      computed,
+      gemini,
+      chosen,
+      rule,
+      winner,
+    })),
+    outcome,
+  };
 }

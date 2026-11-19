@@ -146,6 +146,16 @@ export default async function StatsPage() {
           ok={below(s.extractionDrop, T.extractionDropMax)}
         />
         <Measure
+          testId="stats-pinyin"
+          title="Pinyin disagreements with Gemini"
+          value={`${s.pinyin.syllables} syllable${s.pinyin.syllables === 1 ? "" : "s"}`}
+          detail={
+            s.pinyin.syllables
+              ? `In ${s.pinyin.phrases} phrase${s.pinyin.phrases === 1 ? "" : "s"}. Not a valid reading (dictionary kept): ${s.pinyin.invalid}. Referee: Gemini's ${s.pinyin.refereeGemini}, dictionary's ${s.pinyin.refereeComputed}, another ${s.pinyin.refereeOther}, rejected ${s.pinyin.rejected}.`
+              : "None yet."
+          }
+        />
+        <Measure
           testId="stats-queue"
           title="Up next"
           value={`${s.queueSize} phrase${s.queueSize === 1 ? "" : "s"}`}

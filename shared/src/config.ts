@@ -8,8 +8,14 @@ export const sharedConfig = {
     maxBodyBytes: 2 * 1024 * 1024,
   },
   extraction: {
-    /** `ExtractTurnResult.items` holds at most this many items. */
-    maxItems: 8,
+    /**
+     * `ExtractTurnResult.items` holds at most this many items. 12 since extract_turn.v4 (H4): the
+     * per-turn caps were loosened (DESIGN §5.5.2, §10 #76), so a say turn can carry its sentence
+     * plus several terms.
+     */
+    maxItems: 12,
+    /** extract_turn.v4: examples per term (the engine keeps at most `config.phrase.maxExamples`). */
+    maxExamplesPerItem: 3,
     /** `english` is at most this long. */
     maxEnglishChars: 120,
     /** The engine keeps at most this many tags per item, all from `PHRASE_TAGS`. */
@@ -93,6 +99,42 @@ export const sharedConfig = {
       pollIntervalSeconds: 15,
       /** `~` is the home of the account the worker runs as. `BAMBOO_WORKER_ENV` overrides it. */
       envFile: "~/.config/bamboo/worker.env",
+      /**
+       * Bamboo's Mac-side secrets (DESIGN §8.1, §5.5.7): the worker reads only
+       * `BAMBOO_GEMINI_API_KEY` from it. `BAMBOO_AGENT_ENV` overrides the path.
+       */
+      agentEnvFile: "~/.config/bamboo/agent.env",
+      /** The name deny-list (DESIGN §5.5.8), filled in by Will. `BAMBOO_NAMES_DENY` overrides it. */
+      namesDenyFile: "~/.config/bamboo/names.deny",
+    },
+    /**
+     * Gemini, the worker's extractor since H4 (DESIGN §5.5.2). The free tier's limits are set per
+     * project in AI Studio (aistudio.google.com/rate-limit; Google's rate-limit page lists no
+     * numbers), so these are conservative defaults that `GEMINI_RPM` / `GEMINI_RPD` in
+     * worker.env override. A 429 is the backstop: the worker backs off, and a used-up daily
+     * quota waits for the reset at midnight Pacific (no fallback for quota).
+     */
+    gemini: {
+      model: "gemini-3.8-flash",
+      apiUrl: "https://generativelanguage.googleapis.com/v1beta",
+      requestsPerMinute: 5,
+      requestsPerDay: 20,
+      /** Daily quotas reset at midnight in this zone. */
+      quotaTimeZone: "America/Los_Angeles",
+      /** One request gives up after this long. */
+      timeoutSeconds: 120,
+      temperature: 0,
+      /** A per-minute 429 without a `retryDelay` waits this long, doubling, up to `maxBackoffSeconds`. */
+      backoffSeconds: 30,
+      /** Per-minute 429s retried inside one job (the lease is 10 min). */
+      maxRateLimitRetries: 3,
+      /**
+       * Gemini failing (network, 5xx, timeout, other 4xx) this many times in a row in one job
+       * sends the job to Ollama, and Gemini rests for `downMinutes` before it's tried again.
+       */
+      failuresBeforeFallback: 2,
+      retryPauseSeconds: 5,
+      downMinutes: 10,
     },
     /** Heartbeat at startup and this often (Today calls the worker offline after 25 min). */
     heartbeatMinutes: 10,
@@ -128,6 +170,16 @@ export const sharedConfig = {
      * stay inside the smallest `numCtx` (8192 tokens). The engine checks verbatim against the whole turn either way.
      */
     maxReplyCharsForModel: 6000,
+  },
+  /** Pinyin merge (DESIGN §5.5.3b). */
+  pinyin: {
+    /**
+     * Characters whose computed reading has tone sandhi (§4.2): Gemini's citation tone (yī, bù)
+     * counts as agreeing with the computed sandhi tone (yí, bú).
+     */
+    sandhiChars: ["一", "不"],
+    /** A `pinyin` job's context: the phrase plus at most this many of its examples. */
+    maxContextExamples: 3,
   },
   /**
    * The tutor evaluation (docs/ROADMAP.md › Tutor): `GET /api/agent/eval/turns` and

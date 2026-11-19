@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { PHRASE_TAGS } from "@bamboo/shared";
-import {
-  OllamaClient,
-  OllamaError,
-  RESULT_SCHEMA,
-  checkReply,
-  extractTurn,
-  modelParams,
-} from "./ollama";
+import { RESULT_SCHEMA, checkReply, extractTurn } from "./extract";
+import { OllamaClient, OllamaError, modelParams } from "./ollama";
 import { loadPrompt } from "./prompt";
 import { FakeOllama, fixtureTurns, ollamaFixtures as F } from "./test-fakes";
 
@@ -71,21 +65,42 @@ describe("OllamaClient", () => {
     });
     expect(body.format).toEqual(RESULT_SCHEMA);
     // The model can only pick tags from the fixed list.
-    const tags = RESULT_SCHEMA.properties?.items as { items: { properties: { tags: unknown } } };
+    const tags = (RESULT_SCHEMA.properties as Record<string, unknown>).items as {
+      items: { properties: { tags: unknown } };
+    };
     expect(tags.items.properties.tags).toMatchObject({
       items: { enum: [...PHRASE_TAGS] },
       maxItems: 3,
     });
     expect(RESULT_SCHEMA).toMatchObject({ type: "object", required: ["turn_kind", "items"] });
-    // v2: no addressee; the model always answers `note` (DESIGN §10 #63).
+    // v2: no addressee; the model always answers `note` (DESIGN §10 #63). v4: no frames, pinyin
+    // and a breakdown on every item.
     const items = (RESULT_SCHEMA.properties as Record<string, { items: Record<string, unknown> }>)
       .items!.items;
     expect(items.properties).not.toHaveProperty("addressee");
-    expect(items.required).toContain("note");
+    expect(items.required).toEqual(
+      expect.arrayContaining(["note", "pinyin", "breakdown", "examples"]),
+    );
+    expect((items.properties as Record<string, unknown>).kind).toMatchObject({
+      enum: ["term", "sentence"],
+    });
   });
 });
 
-describe("checkReply", () => {
+describe("checkReply (v4 → the API's contract)", () => {
+  it("maps examples, the breakdown's summary, and keeps or drops pinyin", () => {
+    const r = checkReply(VALID);
+    if (!r.ok) throw new Error(r.errors);
+    expect(r.result.items[0]).toMatchObject({
+      example: { hanzi: "用高压锅煮汤，二十分钟就好了。" },
+      examples: [{ hanzi: "用高压锅煮汤，二十分钟就好了。" }],
+      pinyin: ["gāo", "yā", "guō"],
+      breakdown: { meaning: "A high-pressure pot." },
+    });
+    const fallback = checkReply(VALID, { keepPinyin: false });
+    expect(fallback.ok && fallback.result.items[0]!.pinyin).toBeNull();
+  });
+
   it("accepts a valid result and explains an invalid one by path", () => {
     expect(checkReply(VALID).ok).toBe(true);
     const bad = checkReply(INVALID);
@@ -129,7 +144,8 @@ describe("extractTurn (recorded fake responses)", () => {
   it("invalid twice: the attempt fails, without a third call", async () => {
     const { fake, client } = setup(NOT_JSON, INVALID, VALID);
     const x = await extractTurn(client, prompt, turn);
-    expect(x).toMatchObject({ ok: false, repaired: true, ollamaDown: false });
+    expect(x).toMatchObject({ ok: false, repaired: true });
+    expect(!x.ok && x.modelError).toBeUndefined();
     expect(!x.ok && x.error).toMatch(/invalid output after the repair turn/u);
     expect(fake.chatBodies).toHaveLength(2);
   });
@@ -138,7 +154,8 @@ describe("extractTurn (recorded fake responses)", () => {
     const { fake, client } = setup();
     fake.down = true;
     const x = await extractTurn(client, prompt, turn);
-    expect(x).toMatchObject({ ok: false, repaired: false, ollamaDown: true });
+    expect(x).toMatchObject({ ok: false, repaired: false });
+    expect(!x.ok && x.modelError).toBeInstanceOf(OllamaError);
   });
 
   it("measures latency with the given clock", async () => {

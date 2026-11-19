@@ -214,7 +214,8 @@ describe("planReextract", () => {
     english: "baking powder",
     note: null,
     heardAs: null,
-    example: null,
+    examples: [],
+    pinyin: null,
     usefulness: 3,
     tags: ["cooking"],
     breakdown: null,
@@ -257,7 +258,7 @@ describe("planReextract", () => {
     const dropped = plan([item({})], [phrase({ status: "dropped" })]).merges[0]!;
     expect(dropped).toMatchObject({ revived: false, patch: { status: "dropped" } });
     const active = plan(
-      [item({ example: { hanzi: "放泡打粉。", english: null } })],
+      [item({ examples: [{ hanzi: "放泡打粉。", english: null }] })],
       [phrase({ status: "active", introducedAt: 5 })],
     ).merges[0]!;
     expect(active.patch).toMatchObject({ status: "active", usefulness: 5, turnKind: "say" });

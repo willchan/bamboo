@@ -103,7 +103,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H1 Pinyin: large dictionary | in review | |
 | H2 Frames retired; new-card policy | planned | |
 | H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
-| H4 Worker on Gemini | planned | |
+| H4 Worker on Gemini | in review | |
 | H5 Tutor capture | planned | |
 | H6 Re-run extension | planned | |
 | H7 Backfill | planned | |
@@ -1186,6 +1186,49 @@ falling back to Ollama; names never reach a card; pinyin is merged with Gemini's
 - *Resolved (orchestrator default; Will may override):* when the free quota runs out, the worker waits for the reset (no fallback for
   quota).
 - *Resolved (orchestrator default; Will may override):* the Ollama fallback uses `extract_turn.v4`.
+- Migration `0005_pinyin_merge.sql` (expand only): `phrase.pinyin_sources` (json, nullable) and a
+  new `pinyin_job` table. **Deviation:** pinyin jobs have their own table rather than a `type` in
+  `job`, because `job.import_id` is required and a hand-added phrase has no import (DESIGN §2.3,
+  §10 #84). H2b rebases onto this.
+- **Free-tier limits (deviation: no published numbers).** On 2026-11-19 Google's rate-limit page
+  (ai.google.dev, now redirecting to aistudio.google.com/docs/rate-limits) lists no free-tier
+  RPM/RPD; it points to the per-project table at aistudio.google.com/rate-limit. It does say RPD
+  resets at midnight Pacific and that limits are per project. Developer-forum reports put the
+  free tier at about 20 requests/day for the newest Flash. Defaults: model `gemini-3.8-flash`
+  (the Stable Flash on the models page), **5/min, 20/day**, overridable with `GEMINI_MODEL`,
+  `GEMINI_RPM`, `GEMINI_RPD` in worker.env; Google's 429 is the backstop (DESIGN §10 #86). At
+  20/day, H7's 147 turns plus referee calls take more than a week: Will should read his
+  project's limits in AI Studio and set them, or pick a Flash-Lite model with a larger free
+  quota.
+- **Caps (deviation: evidence not available here).** The Gemini-deck comparison's counts aren't
+  in the repo and this session had no prod access, so the new caps are a judgment: errand 1 → 3
+  items, say 2 → 5 terms, `ExtractTurnResult.items` 8 → 12, examples per term up to 3. H7's dry
+  run (10 turns) should report items per turn and `dropped_over_cap` so they can be tuned.
+- The API's request: `generateContent` (`responseMimeType` + `responseJsonSchema`, key in the
+  `x-goog-api-key` header). Google's structured-output page now shows the newer Interactions API
+  instead; generateContent is assumed still served, which the post-merge `test:gemini` confirms.
+- Claim body `{types}` (DESIGN §3.2): without it only extract_turn jobs are offered, so the old
+  worker keeps working between the Vercel deploy and `make mac-update`.
+- A daily-quota 429 in the middle of a job reports it `failed` (one attempt), then the worker
+  claims nothing until midnight Pacific. Other Gemini failures (2 network/5xx tries, any other
+  4xx, invalid output after the repair turn) send that job to Ollama; a model failure also rests
+  Gemini 10 min (no pinyin jobs meanwhile).
+- Name filter: an item or example whose Chinese has a name is dropped; English fields are
+  rewritten to `someone` (not a role word: the list doesn't say who a name is, DESIGN §10 #87);
+  `heard_as` is cleared. A missing deny file is a startup warning, not an error.
+- Pinyin merge (DESIGN §5.5.3 *Built*, §10 #85): rule 2 is literal (Gemini's neutral tone counts
+  only if pinyin-pro lists it); 一/不's citation tones agree with the sandhi. Only new phrases
+  are merged; phrases an extraction merges into keep their pinyin (H6 refreshes them). A
+  promoted sentence gets a pinyin job (Gemini read the term, not the sentence).
+- **For H2b:** v4's schema has no frames, but the engine doesn't drop frame items yet
+  (`dropped_frame` is H2b's). `kindWeight.frame` untouched.
+- **For H6:** `mergedPinyin` / `pinyinFollowUps` (`web/lib/repo/pinyin.ts`) are what a re-run
+  should call for every phrase it picks; `storedPinyin` keeps referee choices.
+- Acceptance (local): shared 43, db 26, worker 68 (+2 opt-in evals skipped), web 287 (coverage
+  gate passed), agent/tools 117; lint, typecheck, `pnpm --filter web build`; `pnpm db:migrate` on a
+  fresh DB and on a DB seeded at 0004 then migrated (17 phrases, `repinyin` 0 changed); e2e 9/9;
+  `shot /stats` light and dark, no console or request errors. The live `test:gemini` and the
+  heartbeat check are post-merge (orchestrator).
 
 ## H5 — Tutor capture *(depends on: H4)*
 

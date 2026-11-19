@@ -77,8 +77,9 @@ describe("validateExtraction: a say turn's sentence from a term's example (§4.6
       english: "Let's give the baby a bath.",
       note: null,
       heardAs: null,
-      example: null,
+      examples: [],
       usefulness: 4,
+      pinyin: null,
       tags: ["baby"],
       breakdown: null,
       flags: ["from_example"],
@@ -143,8 +144,9 @@ describe("validateExtraction", () => {
         english: "Bath time",
         note: "Said to a small child",
         heardAs: null,
-        example: null,
+        examples: [],
         usefulness: 4,
+        pinyin: null,
         tags: ["baby"],
         breakdown: null,
         flags: [],
@@ -191,9 +193,12 @@ describe("validateExtraction", () => {
       hanzi,
       example: null,
     });
+    // v3's caps (1 and 2), to test the rule; the loosened defaults are tested below.
+    const caps = { ...config.extraction, errandMaxItems: 1, sayMaxTerms: 2 };
     const errand = validateExtraction(
       { userText: "what soy sauce", replyText: reply },
       { turn_kind: "errand", items: [t("酱油"), t("生抽"), t("老抽")] },
+      caps,
     );
     expect(errand.items.map((i) => i.hanzi)).toEqual(["酱油"]);
     expect(errand.droppedOverCap).toBe(2);
@@ -211,6 +216,7 @@ describe("validateExtraction", () => {
           t("阿姨，您是说…吗？", "frame"),
         ],
       },
+      caps,
     );
     expect(say.items.map((i) => i.hanzi)).toEqual([
       "该洗澡了",
@@ -220,6 +226,53 @@ describe("validateExtraction", () => {
     ]);
     expect(say.droppedOverCap).toBe(1);
     expect(say.droppedNotVerbatim).toBe(1);
+  });
+
+  it("H4's loosened defaults keep 3 errand items and 5 say terms", () => {
+    expect(config.extraction).toMatchObject({ errandMaxItems: 3, sayMaxTerms: 5 });
+    const reply = "买酱油、生抽、老抽、白糖和米醋，还有料酒。";
+    const t = (hanzi: string) => ({ ...item, kind: "term" as const, hanzi, example: null });
+    const all = ["酱油", "生抽", "老抽", "白糖", "米醋", "料酒"].map(t);
+    const errand = validateExtraction(
+      { userText: "", replyText: reply },
+      { turn_kind: "errand", items: all },
+    );
+    expect(errand.items).toHaveLength(3);
+    const say = validateExtraction(
+      { userText: "", replyText: reply },
+      { turn_kind: "say", items: all },
+    );
+    expect(say.items.filter((i) => i.kind === "term")).toHaveLength(5);
+    expect(say.droppedOverCap).toBe(1);
+  });
+
+  it("keeps several verbatim examples per term (v4), dropping ones not in the turn", () => {
+    const reply = "高压锅很好用。用高压锅煮饭。电饭煲也行。";
+    const v = validateExtraction(
+      { userText: "", replyText: reply },
+      {
+        turn_kind: "decode",
+        items: [
+          {
+            ...item,
+            kind: "term",
+            hanzi: "高压锅",
+            example: { hanzi: "高压锅很好用。", english: null },
+            examples: [
+              { hanzi: "高压锅很好用。", english: "Works well" },
+              { hanzi: "用高压锅煮饭。", english: null },
+              { hanzi: "用高压锅炖汤。", english: null }, // not in the turn
+              { hanzi: "电饭煲也行。", english: null }, // doesn't contain the term
+            ],
+            pinyin: ["gāo", "yā", "guō"],
+          },
+        ],
+      },
+    );
+    expect(v.items[0]!.examples.map((e) => e.hanzi)).toEqual(["高压锅很好用。", "用高压锅煮饭。"]);
+    expect(v.items[0]!.pinyin).toEqual(["gāo", "yā", "guō"]);
+    expect(v.examplesDropped).toBe(2);
+    expect(v.items[0]!.flags).toEqual(["example_dropped"]);
   });
 });
 
@@ -250,7 +303,7 @@ describe("planMerge", () => {
   };
   const item = {
     heardAs: null,
-    example: { hanzi: "x", english: null },
+    examples: [{ hanzi: "x", english: null }],
     flags: ["example_dropped"],
   };
   const ctx = { importId: "i1", turnId: "t1", now: 5 };

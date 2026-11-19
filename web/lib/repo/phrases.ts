@@ -20,9 +20,10 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { checkBreakdown } from "../domain/breakdown";
 import { newCardColumns } from "../domain/fsrs";
 import { derivedFields, examplesFor, type PhraseInput } from "../domain/phrase";
-import { computePinyin, overrideFromEdits, repinyin } from "../domain/pinyin";
+import { computePinyin, overrideFromEdits, repinyin, storedPinyin } from "../domain/pinyin";
 import { effectiveScore, orderQueue } from "../domain/queue";
 import { eventRow, newId, runBatch } from "./db";
+import { queuePinyinJob } from "./pinyin";
 
 export type PhraseWithCards = Phrase & { cards: Card[] };
 
@@ -43,6 +44,9 @@ export interface NewPhraseFields {
   flags?: string[];
   pinyinOverride?: Phrase["pinyinOverride"];
   breakdown?: Phrase["breakdown"];
+  /** The merged reading (§5.5.3b); computed from the hanzi when absent. */
+  pinyin?: Phrase["pinyin"];
+  pinyinSources?: Phrase["pinyinSources"];
 }
 
 /** Build the phrase row and its card rows (FSRS New, due now). Doesn't write. */
@@ -72,7 +76,8 @@ export function phraseRows(f: NewPhraseFields, cardTypes: readonly CardType[], n
     note: f.note ?? null,
     breakdown: f.breakdown ?? null,
     tags,
-    pinyin: computePinyin(f.hanzi),
+    pinyin: f.pinyin ?? computePinyin(f.hanzi),
+    pinyinSources: f.pinyinSources ?? null,
     pinyinOverride: f.pinyinOverride ?? null,
     usefulness: f.usefulness ?? null,
     turnKind: f.turnKind ?? null,
@@ -135,7 +140,17 @@ export async function createManualPhrase(
     input.cardTypes,
     now,
   );
-  await db.batch([db.insert(phrase).values(rows.phrase), db.insert(card).values(rows.cards)]);
+  // Gemini reads it too (§5.5.3b); until the pinyin job runs, it shows the dictionary reading.
+  await db.batch([
+    db.insert(phrase).values(rows.phrase),
+    db.insert(card).values(rows.cards),
+    queuePinyinJob(
+      db,
+      { id: rows.phrase.id, hanzi: input.hanzi, examples: rows.phrase.examples ?? [] },
+      null,
+      now,
+    ),
+  ]);
   return { ok: true, id: rows.phrase.id, overrideDropped: false };
 }
 
@@ -160,9 +175,12 @@ export async function updatePhrase(
 
   const hanziChanged = input.hanzi !== prev.hanzi;
   const py = repinyin(prev, input.hanzi);
+  // The stored reading: the merged one while the hanzi is unchanged, else the dictionary's until
+  // the new hanzi's pinyin job has run (§5.5.3b). Overrides are relative to it.
+  const stored = hanziChanged ? py.pinyin : storedPinyin(input.hanzi, prev.pinyinSources);
   const pinyinOverride =
     !hanziChanged && input.pinyinEdits
-      ? overrideFromEdits(py.pinyin, input.pinyinEdits)
+      ? overrideFromEdits(stored, input.pinyinEdits)
       : py.pinyinOverride;
   const derived = derivedFields({
     kind: input.kind,
@@ -189,7 +207,9 @@ export async function updatePhrase(
         // A breakdown stays only while it still matches the (possibly edited) hanzi and kind.
         breakdown: checkBreakdown(input.kind, input.hanzi, prev.breakdown).breakdown,
         tags: input.tags,
-        pinyin: py.pinyin,
+        // New hanzi: back to the dictionary reading until its pinyin job has run (§5.5.3b).
+        pinyin: stored,
+        pinyinSources: hanziChanged ? null : prev.pinyinSources,
         pinyinOverride,
         baseScore: derived.baseScore,
         flags: derived.flags,
@@ -197,6 +217,11 @@ export async function updatePhrase(
       })
       .where(eq(phrase.id, id)),
   ];
+
+  if (hanziChanged) {
+    const examples = examplesFor(input.kind, input.examples);
+    writes.push(queuePinyinJob(db, { id, hanzi: input.hanzi, examples }, null, now));
+  }
 
   const wanted = new Set(input.cardTypes);
   for (const type of CARD_TYPES) {
@@ -337,10 +362,16 @@ export async function allTags(db: Db): Promise<string[]> {
  */
 export async function recomputeStoredPinyin(db: Db): Promise<number> {
   const rows = await db
-    .select({ id: phrase.id, hanzi: phrase.hanzi, pinyin: phrase.pinyin })
+    .select({
+      id: phrase.id,
+      hanzi: phrase.hanzi,
+      pinyin: phrase.pinyin,
+      pinyinSources: phrase.pinyinSources,
+    })
     .from(phrase);
   const updates = rows.flatMap((r) => {
-    const computed = computePinyin(r.hanzi);
+    // The merge's referee choices stay while they're still valid readings (§5.5.3b).
+    const computed = storedPinyin(r.hanzi, r.pinyinSources);
     return JSON.stringify(computed) === JSON.stringify(r.pinyin)
       ? []
       : [db.update(phrase).set({ pinyin: computed }).where(eq(phrase.id, r.id))];

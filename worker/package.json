@@ -8,7 +8,8 @@
     "test:ollama": "BAMBOO_EVAL_OLLAMA=1 vitest run src/eval.test.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:gemini": "BAMBOO_EVAL_GEMINI=1 vitest run src/eval-gemini.test.ts"
   },
   "dependencies": {
     "@bamboo/shared": "workspace:*",

@@ -2,6 +2,7 @@ import { sharedConfig } from "@bamboo/shared";
 import { describe, expect, it } from "vitest";
 import { EngineClient } from "./api";
 import { OllamaClient } from "./ollama";
+import { parseDenyList } from "./names";
 import { loadPrompt } from "./prompt";
 import { FakeClock, FakeEngine, FakeOllama, fixtureTurns, ollamaFixtures as F } from "./test-fakes";
 import { Worker, abortableSleep } from "./worker";
@@ -20,7 +21,10 @@ function setup(opts: { idlePolls?: number } = {}) {
   const worker = new Worker({
     engine: new EngineClient("https://bamboo.test", engine.token, engine.fetch),
     ollama: new OllamaClient("http://ollama.test", "qwen3.5:9b", ollama.fetch),
+    gemini: null,
     prompt: loadPrompt(),
+    pinyinPrompts: { reading: loadPrompt("pinyin_reading"), referee: loadPrompt("pinyin_referee") },
+    deny: parseDenyList(""),
     model: "qwen3.5:9b",
     pollIntervalMs: POLL,
     version: "0.1.0",
@@ -47,7 +51,14 @@ describe("claim loop (fake engine with M3's rules)", () => {
     await worker.run();
 
     expect(engine.heartbeats).toEqual([
-      { version: "0.1.0", sha: "abc123", model: "qwen3.5:9b", ollama_ok: true },
+      {
+        version: "0.1.0",
+        sha: "abc123",
+        model: "qwen3.5:9b",
+        ollama_ok: true,
+        gemini_model: null,
+        gemini_ok: false,
+      },
     ]);
     expect(engine.calls[0]).toBe("/api/worker/heartbeat");
     expect(engine.completes.map((c) => [c.job_id, c.attempt, c.status, c.repaired])).toEqual([
@@ -55,7 +66,7 @@ describe("claim loop (fake engine with M3's rules)", () => {
       ["job-2", 1, "done", true],
     ]);
     for (const c of engine.completes) {
-      expect(c).toMatchObject({ model: "qwen3.5:9b", prompt_version: "extract_turn.v3" });
+      expect(c).toMatchObject({ model: "qwen3.5:9b", prompt_version: "extract_turn.v4" });
       expect(c.latency_ms).toBeGreaterThanOrEqual(0);
     }
     expect(engine.jobs.map((j) => j.status)).toEqual(["done", "done"]);

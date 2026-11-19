@@ -143,11 +143,13 @@ export const config = {
 
   /**
    * Caps the engine applies to each extract_turn result (DESIGN §4.6 step 1), whatever the
-   * prompt says: the model's order decides which items stay.
+   * prompt says: the model's order decides which items stay. Loosened in H4 (DESIGN §5.5.2,
+   * §10 #76) from 1 and 2, which were set for the local model: decks Gemini made from the same
+   * conversations showed Bamboo missing real words (PLAN H4 Notes).
    */
   extraction: {
-    errandMaxItems: 1,
-    sayMaxTerms: 2,
+    errandMaxItems: 3,
+    sayMaxTerms: 5,
     /**
      * A say turn the model returned without a sentence gets one: the shortest example (with
      * English) of its kept terms, already verbatim-checked (§4.6, §10 #67).

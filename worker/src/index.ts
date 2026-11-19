@@ -1,5 +1,6 @@
-// bamboo-worker (DESIGN §5.3, §8.3): claims extract_turn jobs from the State Engine and runs them
-// on the Mac's local Ollama. `main.ts` wires these together under launchd.
+// bamboo-worker (DESIGN §5.3, §5.5, §8.3): claims extract_turn and pinyin jobs from the State
+// Engine and runs them on Gemini (free tier), with the Mac's local Ollama as the extraction
+// fallback. `main.ts` wires these together under launchd.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -30,8 +31,19 @@ export function gitSha(cwd = WORKER_DIR): string | null {
   }
 }
 
-export { ConfigError, envFilePath, loadEnvFile, readConfig } from "./config";
+export {
+  ConfigError,
+  agentEnvPath,
+  envFilePath,
+  loadEnvFile,
+  readConfig,
+  readGeminiKey,
+} from "./config";
 export { EngineClient } from "./api";
-export { OllamaClient, extractTurn } from "./ollama";
+export { extractTurn } from "./extract";
+export { GeminiClient } from "./gemini";
+export { loadDenyList } from "./names";
+export { OllamaClient } from "./ollama";
 export { loadPrompt } from "./prompt";
+export { RateLimiter } from "./rate-limit";
 export { Worker } from "./worker";

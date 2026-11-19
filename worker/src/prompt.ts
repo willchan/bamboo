@@ -50,17 +50,28 @@ export function fill(template: string, values: Record<string, string>): string {
 }
 
 /** The reply as the model sees it: cut to `maxReplyCharsForModel` (DESIGN §1.2 `num_ctx`). */
-export function replyForModel(reply: string, max = sharedConfig.worker.maxReplyCharsForModel) {
+export function replyForModel(
+  reply: string,
+  max: number = sharedConfig.worker.maxReplyCharsForModel,
+) {
   const chars = [...reply];
   return chars.length <= max ? reply : `${chars.slice(0, max).join("")}\n[… reply cut here]`;
 }
 
-export function userMessage(prompt: Prompt, input: ExtractTurnInput): string {
+/**
+ * The user message for one turn. The reply is cut to `maxReplyChars` (default
+ * `maxReplyCharsForModel`, for Ollama); Gemini gets the whole stored turn (pass `Infinity`).
+ */
+export function userMessage(
+  prompt: Prompt,
+  input: ExtractTurnInput,
+  maxReplyChars: number = sharedConfig.worker.maxReplyCharsForModel,
+): string {
   return fill(prompt.user, {
     conversation_title: input.conversation_title?.trim() || "(none)",
     // Empty for a pasted answer (the PWA paste box) and for an image-only prompt (DESIGN §4.5).
     user_text: input.user_text.trim() || "(not available: only Gemini's reply was shared)",
-    reply_text: replyForModel(input.reply_text.trim()),
+    reply_text: replyForModel(input.reply_text.trim(), maxReplyChars),
   });
 }
 

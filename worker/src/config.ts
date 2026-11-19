@@ -16,6 +16,9 @@ export interface WorkerConfig {
   ollamaUrl: string;
   model: string;
   pollIntervalMs: number;
+  gemini: { model: string; requestsPerMinute: number; requestsPerDay: number };
+  /** The name deny-list's path (`BAMBOO_NAMES_DENY`, else the default). */
+  namesDenyPath: string;
 }
 
 export class ConfigError extends Error {}
@@ -83,6 +86,22 @@ export function readConfig(env: Env = process.env): WorkerConfig {
     problems.push("POLL_INTERVAL_SECONDS must be a number from 1 to 3600");
   }
 
+  const G = sharedConfig.worker.gemini;
+  const limit = (k: string, dflt: number) => {
+    const raw = get(k);
+    const n = raw === undefined ? dflt : Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 100_000) {
+      problems.push(`${k} must be a whole number from 1 to 100000`);
+      return dflt;
+    }
+    return n;
+  };
+  const gemini = {
+    model: get("GEMINI_MODEL") ?? G.model,
+    requestsPerMinute: limit("GEMINI_RPM", G.requestsPerMinute),
+    requestsPerDay: limit("GEMINI_RPD", G.requestsPerDay),
+  };
+
   if (problems.length > 0) throw new ConfigError(problems.join("; "));
   return {
     apiUrl: apiUrl!.replace(/\/+$/u, ""),
@@ -90,5 +109,38 @@ export function readConfig(env: Env = process.env): WorkerConfig {
     ollamaUrl: ollamaUrl.replace(/\/+$/u, ""),
     model: get("OLLAMA_TEXT_MODEL") ?? D.model,
     pollIntervalMs: Math.round(poll * 1000),
+    gemini,
+    namesDenyPath: expandHome(get("BAMBOO_NAMES_DENY") ?? D.namesDenyFile),
   };
+}
+
+const expandHome = (p: string, home: string = homedir()) =>
+  p.startsWith("~/") ? join(home, p.slice(2)) : p;
+
+/** `BAMBOO_AGENT_ENV`, else `~/.config/bamboo/agent.env`. */
+export function agentEnvPath(env: Env = process.env, home: string = homedir()): string {
+  return expandHome(env.BAMBOO_AGENT_ENV?.trim() || D.agentEnvFile, home);
+}
+
+/**
+ * The free-tier Gemini key (DESIGN §5.5.7, §8.1): `BAMBOO_GEMINI_API_KEY` from the process
+ * environment, else from agent.env. Only that one key is read from the file (it also holds the
+ * agent token, which the worker has no use for); the env wins, as for bamboo-tools, which is safe
+ * because the name is `BAMBOO_`-prefixed (§10 #42). Null when it's set nowhere. Never logged.
+ */
+export function readGeminiKey(
+  env: Env = process.env,
+  path: string = agentEnvPath(env),
+): { key: string | null; source: "env" | "file" | null; tooOpen: boolean } {
+  const fromEnv = env.BAMBOO_GEMINI_API_KEY?.trim();
+  if (fromEnv) return { key: fromEnv, source: "env", tooOpen: false };
+  try {
+    const mode = statSync(path).mode;
+    const key = parseEnv(readFileSync(path, "utf8")).BAMBOO_GEMINI_API_KEY?.trim();
+    return key
+      ? { key, source: "file", tooOpen: (mode & 0o077) !== 0 }
+      : { key: null, source: null, tooOpen: false };
+  } catch {
+    return { key: null, source: null, tooOpen: false };
+  }
 }
