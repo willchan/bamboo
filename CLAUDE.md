@@ -1,9 +1,11 @@
 # CLAUDE.md
 
 Bamboo helps Will remember the Mandarin he looks up in Gemini for talking to his family: the
-yuesao, his toddler and the nanny. He shares Gemini conversations to OpenClaw in Discord
-(`#bamboo`). A **local** LLM on the Mac mini extracts phrases into a ranked queue, and a PWA runs
-a short daily spoken review (one round of ~10 cards, FSRS).
+yuesao, his toddler and the nanny. He asks the `#bamboo` OpenClaw agent (Gemini Flash) in Discord,
+or shares Gemini conversations there. The Mac mini's worker has Gemini extract phrases from each
+turn into a queue, and a PWA runs a short daily spoken review (one round of ~10 cards, FSRS).
+(The move from local models to this Gemini-backed hybrid is being built: docs/PLAN.md › *Hybrid
+H1–H7*, DESIGN §5.5.)
 
 The pieces:
 - a Next.js + Turso **State Engine** on Vercel;
@@ -11,7 +13,7 @@ The pieces:
 - an authenticated HTTP API between them.
 
 It's all TypeScript. It follows PandaBase's stack and conventions (`github.com/willchan/pandabase`)
-and shares that Mac's Ollama and OpenClaw.
+and shares that Mac's OpenClaw (and its Ollama, now only the worker's fallback).
 
 ## Start here
 
@@ -21,7 +23,7 @@ and shares that Mac's Ollama and OpenClaw.
 | [docs/DESIGN.md](docs/DESIGN.md) | You're changing architecture, schema, API, algorithms, prompts or ops |
 | [docs/PLAN.md](docs/PLAN.md) | You're executing a build milestone: follow its *Session protocol* |
 | [docs/PROMPTS.md](docs/PROMPTS.md) | You're Will, starting a session (orchestrator, milestone, plan update, quality review) |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build a tutor, Cantonese, a Discord quiz, or neural TTS: they're deferred |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build Cantonese, a Discord quiz, or neural TTS: they're deferred |
 
 Read only the sections your task needs.
 
@@ -35,11 +37,19 @@ Read only the sections your task needs.
   call the API. Domain rules (validation of LLM output, dedupe, ranking, scheduling, the reminder
   decision, pinyin) are pure, tested functions in `web/lib/domain/`, or in `shared/` when the Mac
   side needs them too.
-- **Never trust LLM-written Chinese metadata.** Pinyin is always computed (pinyin-pro), and
-  Gemini's pinyin is never stored. Extracted hanzi, including example sentences, must appear
-  verbatim in the source turn, or they are dropped.
-- **Local models only at runtime.** No cloud LLM API calls anywhere in Bamboo. The worker uses
-  Ollama on the Mac. The OpenClaw skill never reads or summarizes conversation content itself.
+- **Stored pinyin is always a valid dictionary reading; Gemini only chooses among those
+  readings.** Pinyin is computed (pinyin-pro, large dictionary) and merged per syllable with
+  Gemini's: a reading that isn't valid for the character loses to the computed one, a real
+  dispute goes to a referee call limited to valid readings plus the neutral tone, and Will's
+  override wins (DESIGN §5.5.3). No context-rule heuristics (H1 removes the 得/长 rules; H4 adds
+  the merge). Extracted hanzi, including example sentences, must appear verbatim in the source
+  turn, or they are dropped; a card-back breakdown must match its phrase's hanzi exactly.
+- **Gemini at runtime, nothing else.** The `#bamboo` agent (tutor, Gemini Flash) and the
+  worker's extraction (Gemini, free-tier key) are the only LLM calls; Ollama is only the worker's
+  fallback, and the engine on Vercel calls no LLM. An extraction request carries only the prompt
+  and one turn. The tutor never writes cards: every turn goes through the worker and the engine's checks.
+  The agent never reads a share link, PDF or pasted answer itself (DESIGN §5.5, §10 #74; until
+  H4 and H5 land, the worker and agent still run on Ollama).
 - **Prompts are versioned files** in `worker/prompts/`. Changing a prompt means a new version file;
   jobs record `prompt_version`.
 - **Tunables live in config**: `web/lib/config.ts` (engine) and `shared/src/config.ts` (Mac side).
@@ -47,11 +57,22 @@ Read only the sections your task needs.
 - **Contracts are Zod schemas in `shared/src/contracts/`**, imported by web, worker and tools.
 - **Migrations are expand → contract.** Migrations run in the Vercel build before new code
   serves; add freely, and drop or rename only in a later PR.
-- **Nothing blocks on a human.** The queue picks new material automatically; stale items expire.
+- **Nothing blocks on a human.** The queue picks new material automatically, freshest first.
+  Unseen phrases don't expire (no queue budget); Not useful and Already know stay (DESIGN §5.5.5;
+  until H2 lands, the old budget and expiry still run).
 - **Privacy:** Will's real conversations (share links, PDFs) are never committed, never used as
   test fixtures, and never quoted in docs, PRs or commit messages; report counts only. Debug
   copies go in the gitignored `private/`. Children's names and health details must not appear in
-  the repo. Fixtures are synthetic.
+  the repo. Fixtures are synthetic. On the Gemini path (DESIGN §5.5.8):
+  - every prompt (tutor, extraction, referee) says never to put a person's name in an answer or
+    card (use 宝宝, 孩子, 阿姨, 月嫂 or 妈妈) and to keep personal health specifics (diagnoses,
+    doses, measurements) out of cards; ordinary words like 胀气 are fine;
+  - the name deny-list is `~/.config/bamboo/names.deny` in `openclaw-agent`'s account, on the
+    Mac only, filled in by Will. Anything extracted containing a listed name is dropped or
+    rewritten. Never read it into chat, commit it, log it or test with it; fixtures use
+    synthetic placeholder names;
+  - only the turn and the prompt go to Gemini;
+  - prod data is counts only, anywhere.
 - **Bug fixes start with a regression test** that fails before the fix.
 - **Done means seen working.** Before finishing a UI, data or scheduling change, follow
   `.claude/skills/verify/SKILL.md`: seeded screenshots first, the read-only prod copy when real

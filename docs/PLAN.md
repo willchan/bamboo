@@ -9,11 +9,11 @@
 
 1. Read `CLAUDE.md`, this file's *Session protocol*, and **your milestone only**, then the
    DESIGN/PRD sections it lists.
-2. Branch from the latest `main`: `claude/m<N>-<slug>`.
+2. Branch from the latest `main`: `claude/m<N>-<slug>` (Hybrid milestones: `claude/h<N>-<slug>`).
 3. Build to the acceptance criteria. Run every acceptance command locally; all must pass.
 4. Update the status table below (→ `in review`) and your milestone's **Notes**: versions chosen,
    deviations, and anything later milestones need to know.
-5. Open a PR titled `M<N>: <title>`. The body lists the acceptance commands and their results,
+5. Open a PR titled `M<N>: <title>` (or `H<N>: <title>`). The body lists the acceptance commands and their results,
    plus any manual steps Will must do (accounts, env vars, phone checks).
 6. Drive the PR to green and mergeable: on every check, look at mergeability before CI (a PR that
    conflicts with `main` gets no CI).
@@ -48,10 +48,14 @@ worktree). The orchestrator:
    PR. It lists those changes to Will in plain words. It never quietly drops scope; dropping or
    adding a feature is Will's call.
 6. **Hands over to Will** for anything outside the repo: account setup, env vars, phone checks,
-   and **merging**. The orchestrator asks before merging any PR, unless Will has said that green PRs
-   in this plan may be merged without asking.
+   and anything a milestone marks as Will's call. **Merging follows CLAUDE.md › *Merge when
+   green*:** a PR that is mergeable, with every required check passed and no unresolved review
+   thread, is merged without asking, unless its milestone (or Will) says he reviews it first.
+   Anything that needs `sudo` or touches production is still asked first.
 7. **Keeps the status table current,** then loops back to step 1 until M6 is merged. At the end it
-   summarizes what was built, what changed from the plan, and the open ROADMAP candidates.
+   summarizes what was built, what changed from the plan, and the open ROADMAP candidates. The
+   same loop runs the *Hybrid* milestones (H1–H7, below) until H7 is merged; their sessions
+   branch as `claude/h<N>-<slug>` and title PRs `H<N>: <title>`.
 
 If the orchestrator's context gets long, it can be restarted: everything it needs is in this file
 (the status table and Notes) and the PRs.
@@ -68,6 +72,23 @@ M0 and M1 can run in parallel. M4 and M5 can run in parallel once M3 is merged; 
 clients of M3's API. **M2 is usable** with hand-added phrases; **M5 is when Bamboo becomes
 genuinely useful** (share a conversation, get a deck).
 
+Hybrid (Gemini-backed; DESIGN §5.5, §10 #74–#83), after the docs PR that records the decisions:
+
+```
+docs ─┬─▶ H1 (pinyin a) ──┐
+      ├─▶ H3 (card back) ─┴─▶ H4 (worker on Gemini) ─┬─▶ H5 (tutor capture) ──┬─▶ H7 (backfill)
+      │                                              └─▶ H6 (re-run; also H3) ─┘
+      └─▶ H2 (estimate → Will chooses → new-card policy)
+```
+
+H1 ∥ H3 may run in parallel (H1 adds no migration). Every milestone that adds a migration (H2b,
+H3, H4, H6) runs **serially**: each starts from, or is rebased onto, the previous one's merge
+before it generates its migration, so drizzle's journal and numbering never conflict. After every
+merge, `make mac-update` on the Mac (CLAUDE.md › *Working on the live Mac mini*). H2 has no
+dependency besides the docs and can go anywhere in the serial chain; its estimate step (H2a) can
+run at once. Merging follows CLAUDE.md › *Merge when green*. Steps that need Will (H2's choice,
+H5's host change, H7's full run) are gathered by the orchestrator as inputs, as in its step 2.
+
 ## Status
 
 | Milestone | Status | PR |
@@ -79,6 +100,13 @@ genuinely useful** (share a conversation, get a deck).
 | M4 Worker | merged | [#9](https://github.com/willchan/bamboo/pull/9) |
 | M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
 | M6 Reminder & stats | merged | [#13](https://github.com/willchan/bamboo/pull/13) |
+| H1 Pinyin: large dictionary | planned | |
+| H2 Frames retired; new-card policy | planned | |
+| H3 Card back: breakdowns and glosses | planned | |
+| H4 Worker on Gemini | planned | |
+| H5 Tutor capture | planned | |
+| H6 Re-run extension | planned | |
+| H7 Backfill | planned | |
 
 ---
 
@@ -928,3 +956,279 @@ clamp; the 04:00 day boundary); stats queries on fixture data.
 (pulls; restarts the worker, which now reads `worker.env` over its env; `bamboo-tools` is a
 symlink into the checkout, so the new 401 message and nudge handling take effect at once). No
 config change, no new automation: `bamboo-nudge` already runs `bamboo-tools nudge`.
+
+---
+
+# Hybrid H1–H7 *(Gemini-backed)*
+
+Will's decisions of 2026-11 (DESIGN §5.5, §10 #74–#83) move Bamboo to Gemini for tutoring and
+extraction, with Ollama only as a fallback. Each milestone below is one task, one session, one PR,
+following the *Session protocol* (branch `claude/h<N>-<slug>`, PR title `H<N>: <title>`). Every
+session also reads DESIGN §5.5 (the target design) and CLAUDE.md › *Privacy*. As a milestone
+lands, it moves its part of §5.5 into the sections it changes (§2, §4, §5.3, §6, §7, §8) and says
+so in §5.5.
+
+**Order and merging.** See *Dependency graph*: H1 ∥ H3 may run in parallel; anything that adds a
+migration (H2b, H3, H4, H6) runs serially, each rebased onto the previous merge before
+`pnpm db:generate`, so drizzle migrations never conflict. After every merge, `make mac-update` on
+the Mac. Merging follows CLAUDE.md › *Merge when green*, except where a milestone says Will
+approves first.
+
+**Standard commands** (every milestone): `pnpm lint && pnpm typecheck && pnpm test && pnpm
+--filter web build`, plus `pnpm --filter web test:e2e` when the UI changes.
+
+## H1 — Pinyin (a): large dictionary *(depends on: docs)*
+
+**Goal:** computed pinyin reads everyday words right, neutral tones included, without a rule
+table.
+
+**Read:** DESIGN §4.2, §5.5.3, §10 #80; CLAUDE.md › the pinyin rule.
+
+**Scope:**
+- Load pinyin-pro's large dictionary (`@pinyin-pro/data`, via `addDict`), **trimmed** by a
+  committed generator script to the entries that change a reading compared with pinyin-pro's
+  built-in result, so the data fits a Vercel function. Record the package version, entry count
+  and size in Notes.
+- Remove the context-rule table (the 得 and 长 rules, and any others) from
+  `web/lib/domain/pinyin.ts`, with its tests. Add no rules: polyphones are settled by H4's merge.
+- Tests on synthetic sentences, including 梯子, 肚子, 舒服, 里脊 and 芝麻 (neutral tones).
+- `repinyin` runs on deploy as today (DESIGN §8.2) and rewrites stored pinyin; overrides stay.
+- Until H4, this is the only pinyin source (hand-added phrases keep it afterwards until their
+  pinyin job has run).
+- Update DESIGN §4.2 and §10 #23 (superseded).
+
+**Acceptance:**
+- the standard commands;
+- `pnpm --filter web test -- pinyin` passes, with the five neutral-tone words and no context-rule
+  tests left;
+- `pnpm db:seed && pnpm --filter web repinyin` runs against `file:db/dev.db` and reports how
+  many phrases changed;
+- the generator script reproduces the committed data file byte for byte; `pnpm --filter web
+  build` passes (the function bundle stays under Vercel's limit; record its size).
+
+**Notes:**
+
+## H2 — Frames retired; new-card policy *(depends on: docs)*
+
+**Goal:** no frames, and new cards learned while fresh: no budget, no expiry, freshest first, a
+daily new-card setting Will chose from an estimate.
+
+**Read:** PRD §5.1–§5.3; DESIGN §4.3, §4.4, §4.6, §4.7, §5.5.5, §10 #77, #79.
+
+H2 has two steps, possibly two sessions.
+
+**H2a — Estimate (stops and reports; no PR needed unless the script is kept).**
+- Simulate the review load with the real scheduler (`config.fsrs`, ts-fsrs) for a backlog of
+  new phrases: the current queue size (from the Stats page, counts only; no `make prod-copy`
+  without Will's OK) plus an allowance for H7's backfill. Assume recall at
+  `desiredRetention`.
+- For a few settings (for example 5, 10, 15, 20 new cards a day, and no limit), report: daily
+  reviews during the burst (mean and peak), how many days the burst lasts, and daily reviews at
+  steady state (Will's recent rate of new phrases per week, counts only).
+- Propose one setting, with rounds per day it implies. **Stop and report.** Will chooses; the
+  orchestrator passes the choice to H2b as an input.
+
+**H2b — Implementation.** *Input: Will's new-card setting.*
+- **Frames retired**: an expand-safe data migration sets every `kind = 'frame'` phrase to
+  `dropped` (rows kept, cards out of scheduling, `review_log` untouched) and logs
+  `phrase_retired {phrase_id, reason: 'frame'}`. The engine drops frame items from extraction
+  results (counted `dropped_frame`); `kindWeight.frame` goes. The `kind` enum keeps `frame`
+  (contract later).
+- **No budget, no expiry**: the daily cron stops expiring (`sunk` and `over budget`, DESIGN
+  §4.7); `config.queue.expireBelow`, `minAgeDays`, `budgetDays`, `budgetMinAgeDays` go. Existing
+  `expired` rows stay restorable. Not useful and Already know are unchanged.
+- **Freshest first**: queue order = pinned (newest pin first), then most recently asked
+  (`last_asked_at` desc), then `effective_score` as the tie-break.
+- **Daily limit**: `config.session.newPerDay` set to Will's choice (or removed); Learn more
+  (DESIGN §4.4) stays only if a limit remains.
+- Update PRD §3, §5.1–§5.3 and DESIGN §4.4, §4.6, §4.7, §6.
+
+**Acceptance:**
+- the standard commands; `pnpm db:migrate` on a fresh DB and on a seeded one;
+- tests: queue order (pins, freshness, tie-break); frames retired with cards and `review_log`
+  kept; the daily cron expires nothing; frame items dropped and counted;
+- seeded shots per `.claude/skills/verify`: `pnpm --filter web shot / /queue /phrases`.
+
+**Notes:**
+- *Open question:* the H2a estimate needs a backfill allowance before H7's dry run has counted
+  it; use v3's items per turn as the guess unless Will gives another.
+- *Open question:* does `effective_score` stay as the tie-break, or does ranking go entirely?
+  The plan assumes tie-break.
+
+## H3 — Card back: breakdowns and glosses *(depends on: docs; ∥ H1)*
+
+**Goal:** a richer card back: a character breakdown for terms, a word-by-word gloss and one note
+for sentences.
+
+**Read:** PRD §5.1; DESIGN §2.1, §6, §5.5.4, §10 #78; `.claude/skills/verify/SKILL.md`.
+
+**Scope:**
+- **Schema (expand only)**: a nullable `phrase.breakdown` json column. Terms: `{parts: [{hanzi,
+  gloss}] (one per character), meaning}`; sentences: `{parts: [{hanzi, gloss}] (one per word),
+  note}`. No pinyin stored in it: each part's pinyin is sliced from the phrase's displayed
+  pinyin (merged, overrides applied), so it always matches.
+- **Contract** in `shared/src/contracts/`: `PhraseBreakdown`, and an optional `breakdown` on
+  extraction items (H4 fills it).
+- **Validation** (pure, `web/lib/domain/`): the parts' hanzi, concatenated, must equal the
+  phrase's hanzi (punctuation ignored); otherwise the breakdown is dropped and flagged
+  `breakdown_dropped`. Glosses and notes are English only (no CJK), as `note` is today.
+- **UI**: the back shows the breakdown under the hanzi (each part with its pinyin and gloss, then
+  the meaning or note) and the example sentence(s) with pinyin and English. Without a breakdown
+  it looks as today.
+- Seed synthetic breakdowns for a term and a sentence in `pnpm db:seed` / `dev:seeded`.
+
+**Acceptance:**
+- the standard commands; `pnpm db:generate` produces one migration that only adds;
+  `pnpm db:migrate` on fresh and seeded DBs;
+- tests: the exact-match rule (match, mismatch, punctuation), English-only glosses, pinyin
+  slicing with an override;
+- seeded shots, light and dark: `pnpm --filter web shot /review/back` for a term and a sentence
+  with breakdowns and one without; no console or request errors.
+
+**Notes:**
+
+## H4 — Worker on Gemini *(depends on: H1, H3)*
+
+**Goal:** the worker extracts each turn with Gemini (`extract_turn.v4`), within the free tier,
+falling back to Ollama; names never reach a card; pinyin is merged with Gemini's.
+
+**Read:** DESIGN §4.2, §4.6, §5.3, §5.5 (all), §7, §8.1, §10 #74–#83; CLAUDE.md › *Privacy*.
+
+*Input from Will: the free-tier key in `openclaw-agent`'s `~/.config/bamboo/agent.env` (and
+`names.deny` filled in by him; the session never reads it).*
+
+**Scope:**
+- **`worker/prompts/extract_turn.v4.md`**: terms and sentences (no frames), English, note,
+  `heard_as`, examples copied verbatim (more than one allowed), usefulness, tags, Gemini's
+  pinyin per item, and the breakdown/gloss of H3. The prompt says: never a person's name in a
+  card (use 宝宝, 孩子, 阿姨, 月嫂 or 妈妈), and no personal health specifics (diagnoses, doses,
+  measurements); ordinary words like 胀气 are fine. Copy hanzi exactly.
+- **Gemini client**: the key from `agent.env` (`BAMBOO_GEMINI_API_KEY`; the session confirms or
+  renames it and records it); model and limits in `sharedConfig.worker.gemini`; JSON output
+  with a schema; one turn per request; the request carries only the prompt and the turn (the
+  whole stored turn; the 6,000-character cut stays for Ollama).
+- **Rate limiter** for the free tier (requests per minute and per day, from Google's current
+  docs, recorded in Notes); 429 backs off.
+- **Ollama fallback**: when Gemini is unreachable or keeps failing, the job runs on Ollama with
+  the same contract; `job.model` says which ran. Fallback items carry no Gemini pinyin.
+- **Name filter** (Mac side, in the worker, before posting): any item, example, note or gloss
+  containing a name from `~/.config/bamboo/names.deny` is dropped (or, for English fields,
+  rewritten); only a count goes to the result and the log (`dropped_name`). Tests use a synthetic
+  deny file with placeholder names.
+- **Pinyin (b)** (engine, pure, `web/lib/domain/`): the per-syllable merge of DESIGN §5.5.3, a
+  `pinyin` job type the worker runs (Gemini's reading for a hand-added or edited phrase, then the
+  referee: one small call per phrase choosing among that character's valid readings plus the
+  neutral tone), `phrase.pinyin_sources` (which source won for each disputed syllable),
+  `pinyin_disagreement` events, and the counts on Stats. Prompts are versioned files.
+- **Caps**: loosen `config.extraction` per-turn caps, with the evidence (the comparison with
+  Gemini-made decks, counts only) in Notes.
+- Heartbeat reports the Gemini model and `gemini_ok`; `make worker-logs` shows it.
+
+**Acceptance:**
+- the standard commands; `pnpm db:migrate` on fresh and seeded DBs;
+- `pnpm --filter @bamboo/worker test` with a fake Gemini: rate limiter, 429 backoff, fallback to
+  a fake Ollama, the name filter on the synthetic deny file, no turn text or key in logs;
+- engine tests: the merge's four rules, the referee result limited to valid readings, hand-added
+  phrase → pinyin job, events and Stats counts;
+- opt-in live eval on the Mac as `openclaw-agent`, synthetic turns only
+  (`BAMBOO_EVAL_GEMINI=1 pnpm --filter @bamboo/worker test:gemini`, added here): contract-valid,
+  verbatim rate ≥ 0.8;
+- after merge and `make mac-update`: `make worker-logs` shows a heartbeat with `gemini_ok`.
+
+**Notes:**
+- *Open question:* when the free tier's daily quota is used up, does the worker wait for the
+  reset (the plan's assumption) or fall back to Ollama?
+- *Open question:* does the Ollama fallback use v4 (asking only for the fields a local model can
+  do) or a separate fallback prompt?
+
+## H5 — Tutor capture *(depends on: H4)*
+
+**Goal:** Will asks the `#bamboo` agent directly; every question and its answer become a Bamboo
+turn, with no share link.
+
+**Read:** PRD §5.3; DESIGN §5.1, §5.5.1, §5.5.7, §5.5.8, §8.3, §10 #69, #73, #75, #82.
+
+**Scope (Bamboo):**
+- The skill and `agent/workspace/` files: the agent answers Will's Mandarin questions as a tutor
+  (a versioned tutor prompt with the privacy rules: no names, no health specifics), then hands
+  the question and answer to `bamboo-tools` by file path; share links, PDFs and pasted answers
+  still import as today.
+- A `bamboo-tools` command and an agent-token endpoint in the engine that stores one turn (and
+  its extract job), idempotent on the Discord message id; the turn then goes through H4's path.
+- `make agent-check` learns what the new agent setup should look like.
+
+**Scope (host; documented here and for PandaDen's runbook, run by the orchestrator via
+`ssh agent` only after Will approves):** the `bamboo` agent's model becomes Gemini Flash; the
+free key becomes its auth profile and is pinned (DESIGN §5.5.7). Check with
+`openclaw models status --agent bamboo --probe` and one real request.
+
+**Acceptance:**
+- the standard commands; tests for the command and the endpoint (synthetic text; idempotency;
+  agent token required);
+- on the Mac after the host change: `make agent-check` passes; `openclaw models status --agent
+  bamboo --probe` shows `google:bamboo-free` serving; one real question in `#bamboo` gets an
+  answer and its turn shows on Imports (counts only).
+
+**Notes:**
+- *Open question:* how does the agent tell a pasted Gemini answer (imported as text today) from a
+  question that contains Chinese?
+- *Open question:* does a captured tutor turn get any Discord reply of its own (the "✅ … phrases
+  queued" summary), or none?
+- *Open question:* if the endpoint needs a new `import.kind`/`origin` value, check whether that
+  needs a migration; if so, H5 joins the serial migration chain.
+
+## H6 — Re-run extension *(depends on: H3, H4)*
+
+**Goal:** a re-run with v4 refreshes every phrase it picks and reports the ones it no longer
+picks, so the queue can be rebuilt from stored turns without losing history.
+
+**Read:** PRD §5.3; DESIGN §4.6.1, §5.5.6, §6, §10 #65, #81.
+
+**Scope:**
+- A re-run refreshes `english`, `note` and `breakdown` on every phrase it picks, **in any
+  status**, leaving the hanzi, the cards and their FSRS state alone (a dropped phrase stays
+  dropped).
+- Phrases that are active, pinned or asked about more than once and that the re-run no longer
+  picks are **reported** (marked, not changed): a Phrases filter lists them, with a bulk
+  **Retire** that drops them and keeps `review_log`.
+- A re-run can be limited to N turns (for H7's dry run), and can re-run turns already on the
+  newest prompt (H7 runs all 147).
+- Re-runs go one turn per request, through H4's rate limiter.
+
+**Acceptance:**
+- the standard commands; `pnpm db:migrate` on fresh and seeded DBs;
+- tests (`planReextract`): refresh in each status, hanzi/cards/FSRS untouched, reported phrases,
+  bulk retire keeps `review_log`, the limit;
+- seeded shots: `pnpm --filter web shot /phrases /imports` with the filter on.
+
+**Notes:**
+- *Open question:* does the re-run also refresh pinyin through H4's merge (overrides kept)? The
+  plan assumes yes.
+- *Open question:* plain queued phrases it no longer picks are superseded today (`expired`);
+  with expiry gone (H2b), do they keep that status, or are they dropped?
+
+## H7 — Backfill *(depends on: H5, H6)*
+
+**Goal:** all 147 stored turns read by v4, with learning cards and review history intact.
+
+**Read:** DESIGN §5.5.6, §8.6, §10 #81; H4 and H6 Notes.
+
+**Scope:**
+1. **Dry run**: re-run 10 turns. Report counts only: items kept and dropped (by reason), phrases
+   new, refreshed and reported, pinyin disagreements and referee calls, Gemini requests, minutes.
+   **Stop.**
+2. **Full run**, after Will approves: the remaining turns, at the free-tier rate. Report the same
+   counts, plus reviewed cards and `review_log` rows before and after.
+3. Will decides, from the counts: whether to re-import the one turn cut at 12,000 characters, and
+   whether to bulk-retire the reported leftovers.
+
+**Acceptance:**
+- every stored turn has a finished `extract_turn.v4` job;
+- `review_log` rows and reviewed cards are the same before and after (counts);
+- Stats renders; `pnpm smoke https://bamboo-panda.vercel.app` passes.
+
+**Notes:**
+- *Open question:* should H7 also wait for H2b, so the backfilled phrases arrive with frames gone
+  and freshest-first ordering in place? The graph only requires H5 and H6.
+- *Open question:* how to re-import the turn cut at 12,000 characters, since its turn key is
+  already known.

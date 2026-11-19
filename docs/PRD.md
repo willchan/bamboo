@@ -38,6 +38,10 @@ Why the forgetting happens:
 Gemini is also sometimes wrong. Its pinyin can be inconsistent within one reply, and the occasional
 sentence is unnatural. So nothing it says should be trusted blindly.
 
+> **2026-11: the Gemini-backed hybrid.** Will decided to move tutoring and extraction to Gemini
+> (DESIGN §5.5, §10 #74–#83; built in docs/PLAN.md › *Hybrid H1–H7*). The sections below
+> describe the target; where the running app still differs, the text says "until H<N>".
+
 ## 2. User
 
 A single user (Will), signing in with Google, mostly on an iPhone and occasionally on a laptop.
@@ -56,17 +60,26 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 3. **Spacing.** Cards are scheduled with FSRS, aiming for about 85% recall to keep the daily load small.
 4. **A tiny daily unit.** The daily goal is **one round** (~10 cards, ~2–3 min), the way
    Duolingo-style apps use a short lesson as the unit. More rounds are optional.
-5. **Bamboo chooses; Will corrects.** New material is picked automatically from a ranked queue,
-   at most 5 new cards a day. Will never has to sort an inbox; he flags bad picks while reviewing.
-6. **Trust nothing the LLM says about pronunciation.** Pinyin is computed from characters (with
-   manual override); audio comes from a TTS voice, not from LLM text.
+5. **Bamboo chooses; Will corrects.** New material is picked automatically, **freshest first**, and
+   learned while it's fresh rather than rationed: a burst of new cards, then a steady state (the
+   daily setting is Will's choice, from an estimate of the reviews it brings; until H2, at most 5
+   a day). Will never has to sort an inbox; he flags bad picks while reviewing.
+6. **Pronunciation is never taken from the LLM alone.** Pinyin is computed from characters with a
+   dictionary; Gemini only chooses among the dictionary's readings for a character, where the
+   sentence decides (a polyphone), and Will's override wins. Audio comes from a TTS voice, not
+   from LLM text.
 
 ## 4. Product principles (inherited from PandaBase)
 
 1. **Nothing blocks on a human.** No step needs Will to act for the system to keep working.
    Skipped days don't pile up guilt.
-2. **Local models only** for every runtime LLM call (Ollama on the Mac mini). Family content
-   (children's names, health details) never goes to a cloud LLM API.
+2. **Gemini, with family details kept out.** Since 2026-11, Gemini is the tutor (the `#bamboo`
+   agent) and the extractor, because the tutor evaluation showed the local models were clearly
+   worse (DESIGN §10 #58, #74). A local model stays only as a fallback extractor. Only the turn
+   and the prompt go to Gemini. Prompts say never to put a person's name in an answer or card
+   (宝宝, 孩子, 阿姨, 月嫂 or 妈妈 instead) and to keep personal health specifics (diagnoses,
+   doses, measurements) out of cards; a name list kept only on the Mac drops anything that slips
+   through. *(Was: local models only.)*
 3. **Observable.** Extraction and ranking quality are visible so a Claude Code session can tune
    prompts and weights later.
 
@@ -77,7 +90,8 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 - A **phrase** is one thing worth remembering:
   - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen"),
     with **1–3 example sentences** taken from Gemini's answers;
-  - a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？);
+  - ~~a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？)~~ **removed** (2026-11):
+    frames are no longer extracted, and existing ones are retired (H2);
   - a **sentence**: a full thing to say, kept short. Every "how do I say" question yields one:
     if the model leaves it out, the shortest of Gemini's example sentences for its words is used.
 - Each phrase carries: hanzi, English meaning or intent, computed pinyin (tone marks), examples,
@@ -88,6 +102,11 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 - Each phrase has one or two **cards**:
   - **Say**: the front shows the English intent; he says it; the back shows hanzi
     with pinyin above it, plays audio, and (for terms) shows an example sentence.
+  - **A richer back** (H3, H4): a term's back shows a **character breakdown** (each character with
+    its pinyin and a short gloss, then the word's overall meaning) and its example sentence(s); a
+    sentence's back shows a **word-by-word gloss** and one short note on how the sentence is
+    built. Gemini writes the glosses; the breakdown always matches the phrase's characters, and
+    its pinyin is the phrase's own.
   - **Listen**: the front only plays audio; he recalls the meaning; the back shows everything
     including the example, and, if he typed what he heard when he asked, a small "you first heard:
     *podafen*" under the answer, so he sees his guess next to the real thing. (On the front it
@@ -95,15 +114,17 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   - Defaults: decoded terms get **Listen**; everything else gets **Say**. A toggle adds the other
     type.
 - He can add or edit a phrase by hand. Hand-added phrases go to the front of the queue. Pinyin
-  recomputes on save, and he can override any syllable (polyphones like 得/行/长).
+  recomputes on save (the dictionary reading at once; from H4 a quick check by Gemini on the Mac
+  settles polyphones shortly after), and he can override any syllable (得/行/长).
 
 ### 5.2 Daily review (the core loop)
 
 - A PWA installed on the iPhone home screen. **Today** shows what's due and a **Start** button.
-- A **round** is ~10 cards: due cards first, with up to 5 new cards a day mixed in. After a round:
+- A **round** is ~10 cards: due cards first, with new cards mixed in (up to 5 a day until H2
+  sets the new limit; §3, principle 5). After a round:
   "✓ Done for today" (one round is the daily goal), plus an optional "Another round (N due)" if
   more is waiting.
-- **Learn 3 more**: once today's new cards are used up and new phrases are waiting, Today and the
+- **Learn 3 more** (stays only if H2 keeps a daily limit): once today's new cards are used up and new phrases are waiting, Today and the
   end of a round offer a button that starts a round with up to 3 more new cards (plus anything
   due), for today only; he can tap it again later. It's opt-in because each new card adds reviews
   on the days after, and the daily 3 stays the default.
@@ -125,14 +146,17 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 
 In order of preference:
 
-1. **Share link** (3 taps): in the Gemini app, Share → Discord → `#bamboo`.
-2. **PDF** (fallback, always supported): a printed conversation shared to `#bamboo`.
-3. **Pasted answer**: a single Gemini answer pasted into `#bamboo`, or into the PWA's paste box.
+1. **Ask in `#bamboo`** (H5): the `#bamboo` agent is the tutor, on Gemini Flash. Every question
+   Will asks there, and its answer, is captured by Bamboo automatically, with no share link. The agent answers; it never writes cards itself.
+2. **Share link** (3 taps): in the Gemini app, Share → Discord → `#bamboo`.
+3. **PDF** (fallback, always supported): a printed conversation shared to `#bamboo`.
+4. **Pasted answer**: a single Gemini answer pasted into `#bamboo`, or into the PWA's paste box.
 
 The behavior:
 
 - OpenClaw's **bamboo** skill acknowledges in one line and hands the conversation to Bamboo. When
-  processing finishes (minutes, on the Mac's local model), it replies:
+  processing finishes (minutes; each question goes to Gemini on its own, at the free tier's
+  rate), it replies:
   "✅ 9 new questions → 14 phrases queued. Next up: 高压锅 gāo yā guō (pressure cooker), …". Any
   Mandarin in a Bamboo reply comes with its pinyin (the same reading the app shows, including his
   corrections), because new words use characters he can't read yet. After a link
@@ -148,22 +172,28 @@ The behavior:
   backlog and becomes his starter material. The conversation's title ("Yuesao…", "Toddler…") is
   used as context for who phrases are for.
 - Each new question is classified (**decode / say / errand / other**) and mined for terms (with
-  examples), frames and short sentences. A "how do I say" question gives at most its sentence,
-  2 key words and a frame; an errand question at most one noun, usually none.
+  examples) and short sentences (no frames since 2026-11). Until H4: a "how do I say" question
+  gives at most its sentence, 2 key words and a frame; an errand question at most one noun,
+  usually none. From H4 these caps are loosened: a comparison with decks Gemini made showed
+  Bamboo missing real words.
 - Everything extracted goes into a ranked **Up next** queue. Ranking:
   - **common words rank high**: how often a word is used in everyday spoken Mandarin, from a
     bundled word list (not the LLM's opinion). Baby and feeding words aren't held back for being
     rare in that list, since they're daily language at home;
   - anything asked about more than once ranks high;
   - words the yuesao said rank high;
-  - reusable frames rank a little higher;
+  - reusable frames rank a little higher (until H2; frames are being removed);
   - the local model's "how often will this come up at home" rating counts;
   - errand items and long sentences sink;
   - old items fade slowly.
+- **From H2, freshest first**: new cards are introduced most recently asked first (the ranking
+  above only breaks ties), so words are learned while the moment they were needed is fresh.
 - Each day the top items become new cards. **Up next** can be browsed (move to top, remove), but
   never has to be.
-- The queue holds about three weeks of new cards. Lower-ranked extras expire on their own;
-  anything expired comes back if he asks about it again, or he can restore it from Phrases.
+- Until H2, the queue holds about three weeks of new cards and lower-ranked extras expire on
+  their own (anything expired comes back if he asks about it again, or he can restore it from
+  Phrases). **From H2, nothing unseen expires**: no queue budget; Not useful and Already know
+  stay.
 - If he asks again about something he's already learning, Bamboo doesn't duplicate it. It treats
   this as **forgotten** and shows it again soon. A dropped item he asks about again returns to
   the queue (or straight back into review, if he had already started learning it).
@@ -171,7 +201,11 @@ The behavior:
   processed (with **Retry failed**), and the paste box. When the extraction prompt has improved,
   it offers to **Re-run** the questions read with an older one: the queue then reflects the
   newer reading (expired phrases it still wants come back, fragments it no longer wants leave),
-  without counting as asking again. Cards being learned and phrases Will removed are untouched. **Today** shows a line when questions are
+  without counting as asking again. Cards being learned and phrases Will removed are untouched.
+  From H6 a re-run also refreshes the English, note and breakdown of every phrase it picks
+  (never the characters or the review history), and lists active, pinned or asked-again phrases
+  it no longer picks under a Phrases filter, with a bulk **Retire** (history kept). H7 rebuilds
+  the queue this way from all stored questions, without wiping anything. **Today** shows a line when questions are
   waiting and the Mac's worker hasn't been heard from for a while.
 
 ### 5.4 Daily reminder
@@ -196,16 +230,17 @@ Reviewed monthly from the Stats page:
 The Stats page (its own tab) shows each of these for the last 4 weeks, next to its target. It
 measures extraction quality as the share of the model's items dropped because their hanzi weren't
 in the source; a wrong meaning that slips through shows up as "Not useful". It also shows the
-queue size and when the Mac worker was last seen.
+queue size and when the Mac worker was last seen, and (from H4) how often Bamboo's and Gemini's
+pinyin disagreed and how each disagreement was settled.
 
 ## 7. Non-goals (MVP)
 
 - **Cantonese** (deferred; see ROADMAP).
-- A chat tutor: Gemini stays the tutor. A local-model comparison is in ROADMAP.
+- A chat tutor inside the PWA. The tutor is the `#bamboo` agent on Gemini (§5.3, H5).
 - A quiz mode in Discord.
 - "Used it for real" tracking.
 - Grammar lessons, courses, gamification, streak penalties.
 - Handwriting or character-writing practice.
 - Pronunciation scoring or speech recognition.
 - Multiple users.
-- Any cloud LLM call at runtime.
+- Any cloud LLM other than Gemini, or any LLM call from the State Engine.
