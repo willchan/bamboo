@@ -86,6 +86,11 @@ const completeBase = {
    * never the names.
    */
   dropped_name: z.number().int().min(0).nullish(),
+  /**
+   * Items, examples, tags, breakdowns or ratings the worker cut to the caps Gemini's schema can't
+   * enforce (`trimToCaps`, H7): a count.
+   */
+  trimmed_over_cap: z.number().int().min(0).nullish(),
 };
 
 /**

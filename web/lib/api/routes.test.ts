@@ -1423,6 +1423,24 @@ describe("H7 backfill", () => {
     ).toEqual({ queued: 0, open: 0 });
   });
 
+  it("records what the worker cut to the caps (trimmed_over_cap) and sums it", async () => {
+    await postImport({});
+    await drain(() => ({ turn_kind: "other", items: [] }), GEMINI);
+    await reextractPOST(req("/api/agent/reextract", AGENT, { all: true, limit: 1 }));
+    const c = (await claimBackfill())!;
+    const r = await complete({
+      job_id: c.job_id,
+      attempt: c.attempt,
+      status: "done",
+      result: { turn_kind: "other", items: [] },
+      model: GEMINI,
+      prompt_version: "extract_turn.v4",
+      trimmed_over_cap: 3,
+    });
+    expect(r.status).toBe(200);
+    expect((await report()).run).toMatchObject({ turns: 1, dropped: { trimmed_over_cap: 3 } });
+  });
+
   it("needs the agent token and a valid since", async () => {
     expect((await backfillGET(req("/api/agent/backfill", WORKER))).status).toBe(401);
     expect((await backfillGET(req("/api/agent/backfill?since=-1", AGENT))).status).toBe(400);

@@ -4,6 +4,9 @@
 import {
   ExtractTurnResult,
   ModelExtractTurnResultV4,
+  trimArrays,
+  trimToCaps,
+  trimmedTotal,
   type ExtractItem,
   type ExtractTurnInput,
 } from "@bamboo/shared";
@@ -11,7 +14,10 @@ import { z } from "zod";
 import type { ChatMessage } from "./ollama";
 import { repairMessage, userMessage, type Prompt } from "./prompt";
 
-/** The JSON schema both models are constrained to (Gemini `responseJsonSchema`, Ollama `format`). */
+/**
+ * The strict JSON schema: Ollama's `format` as is; Gemini's `responseJsonSchema` without the
+ * limits it can't serve (`geminiSchema`, H7).
+ */
 export const RESULT_SCHEMA = z.toJSONSchema(ModelExtractTurnResultV4) as Record<string, unknown>;
 
 export interface ChatModel {
@@ -65,6 +71,8 @@ export function issueLines(error: z.ZodError): string {
 export function parseReply<S extends z.ZodType>(
   content: string,
   schema: S,
+  /** Cut top-level arrays to this many entries first (`trimArrays`; pinyin replies, H7). */
+  maxEntries?: number,
 ): { ok: true; value: z.output<S> } | { ok: false; errors: string } {
   let json: unknown;
   try {
@@ -72,22 +80,32 @@ export function parseReply<S extends z.ZodType>(
   } catch (e) {
     return { ok: false, errors: `- not valid JSON (${(e as Error).message})` };
   }
-  const parsed = schema.safeParse(json);
+  const parsed = schema.safeParse(maxEntries === undefined ? json : trimArrays(json, maxEntries));
   return parsed.success
     ? { ok: true, value: parsed.data }
     : { ok: false, errors: issueLines(parsed.error) };
 }
 
-/** The model's reply checked against the v4 schema, then as the API's contract. */
+/**
+ * The model's reply cut to the caps Gemini's schema can't enforce (`trimToCaps`, H7), checked
+ * against the strict v4 schema, then as the API's contract. `trimmed` counts what was cut.
+ */
 export function checkReply(
   content: string,
   opts: { keepPinyin: boolean } = { keepPinyin: true },
-): { ok: true; result: ExtractTurnResult } | { ok: false; errors: string } {
-  const r = parseReply(content, ModelExtractTurnResultV4);
-  if (!r.ok) return r;
-  const out = ExtractTurnResult.safeParse(fromModelV4(r.value, opts));
+): { ok: true; result: ExtractTurnResult; trimmed: number } | { ok: false; errors: string } {
+  let json: unknown;
+  try {
+    json = JSON.parse(content);
+  } catch (e) {
+    return { ok: false, errors: `- not valid JSON (${(e as Error).message})` };
+  }
+  const t = trimToCaps(json);
+  const r = ModelExtractTurnResultV4.safeParse(t.value);
+  if (!r.success) return { ok: false, errors: issueLines(r.error) };
+  const out = ExtractTurnResult.safeParse(fromModelV4(r.data, opts));
   return out.success
-    ? { ok: true, result: out.data }
+    ? { ok: true, result: out.data, trimmed: trimmedTotal(t.trimmed) }
     : { ok: false, errors: issueLines(out.error) };
 }
 
@@ -125,7 +143,14 @@ export async function askJson<T>(
 }
 
 export type Extraction =
-  | { ok: true; result: ExtractTurnResult; repaired: boolean; latencyMs: number }
+  | {
+      ok: true;
+      result: ExtractTurnResult;
+      repaired: boolean;
+      latencyMs: number;
+      /** Items, examples, tags, breakdowns or ratings cut to the caps (`trimToCaps`). */
+      trimmed: number;
+    }
   | { ok: false; error: string; repaired: boolean; latencyMs: number; modelError?: Error };
 
 export interface ExtractOptions {
@@ -159,12 +184,18 @@ export async function extractTurn(
     RESULT_SCHEMA,
     (c) => {
       const x = checkReply(c, { keepPinyin });
-      return x.ok ? { ok: true, value: x.result } : x;
+      return x.ok ? { ok: true, value: x } : x;
     },
     (errors) => repairMessage(prompt, errors),
   );
   return r.ok
-    ? { ok: true, result: r.value, repaired: r.repaired, latencyMs: elapsed() }
+    ? {
+        ok: true,
+        result: r.value.result,
+        trimmed: r.value.trimmed,
+        repaired: r.repaired,
+        latencyMs: elapsed(),
+      }
     : {
         ok: false,
         error: r.error,

@@ -465,6 +465,7 @@ export interface CompleteBody {
   latency_ms?: number | null;
   repaired?: boolean | null;
   dropped_name?: number | null;
+  trimmed_over_cap?: number | null;
 }
 
 export type CompleteResult =
@@ -571,6 +572,7 @@ export async function completeJob(
           sentence_promoted: applied.validation.sentencePromoted,
           breakdowns_dropped: applied.validation.breakdownsDropped,
           dropped_name: body.dropped_name ?? 0,
+          trimmed_over_cap: body.trimmed_over_cap ?? 0,
           pinyin_jobs: applied.pinyinJobs,
           pinyin_misaligned: applied.pinyinMisaligned,
           // H6: what a re-run did to the queue, for H7's counts (§5.5.6).

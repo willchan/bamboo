@@ -1,5 +1,5 @@
 // `pnpm --filter @bamboo/worker gemini-probe -- [--gemini-key=paid]` (H7), on the Mac as
-// openclaw-agent: five synthetic requests to Gemini (gemini-probe.ts), one line each. Exits 0 when
+// openclaw-agent: four synthetic requests to Gemini (gemini-probe.ts), one line each. Exits 0 when
 // all pass, 1 when any fails, 78 on a config error. Never prints a key, a prompt or a reply.
 import { sharedConfig } from "@bamboo/shared";
 import { runProbe } from "./gemini-probe";
@@ -47,4 +47,4 @@ const results = await runProbe(gemini, {
 });
 for (const r of results) log(`probe ${r.name}: ${r.ok ? "PASS" : "FAIL"} ${r.outcome}`);
 log(`probe: ${gemini.requests} request(s)`);
-process.exit(results.every((r) => r.ok) && results.length === 5 ? 0 : 1);
+process.exit(results.every((r) => r.ok) && results.length === 4 ? 0 : 1);

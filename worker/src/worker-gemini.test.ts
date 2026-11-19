@@ -5,7 +5,12 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sharedConfig, type ExtractTurnInput, type PinyinJobInput } from "@bamboo/shared";
+import {
+  UNSERVABLE_KEYWORDS,
+  sharedConfig,
+  type ExtractTurnInput,
+  type PinyinJobInput,
+} from "@bamboo/shared";
 import { describe, expect, it } from "vitest";
 import { EngineClient } from "./api";
 import { GeminiClient, errorDetail } from "./gemini";
@@ -371,6 +376,36 @@ describe("logs", () => {
     for (const s of ["gaoyaguo", "高压锅", "pressure cooker", "yuesao", "Talking"]) {
       expect(all).not.toContain(s);
     }
+  });
+});
+
+describe("Gemini's schema and the caps (H7: too many states for serving)", () => {
+  it("sends no length, count or range limit, and cuts an over-cap reply, counting the cut", async () => {
+    const { engine, fake, worker } = setup();
+    engine.add(TURN);
+    const valid = JSON.parse(VALID) as { turn_kind: string; items: Record<string, unknown>[] };
+    const first = valid.items[0]!;
+    const over = {
+      ...valid,
+      items: Array.from({ length: sharedConfig.extraction.maxItems + 2 }, () => ({
+        ...first,
+        tags: ["food", "cooking", "household", "time"],
+      })),
+    };
+    fake.replies = [JSON.stringify(over)];
+    await worker.run();
+    const sent = JSON.stringify(
+      (fake.bodies[0]!.body.generationConfig as { responseJsonSchema: unknown }).responseJsonSchema,
+    );
+    for (const k of UNSERVABLE_KEYWORDS) expect(sent).not.toContain(`"${k}"`);
+    expect(sent).toContain('"enum"');
+    expect(engine.completes[0]).toMatchObject({
+      status: "done",
+      // 2 items past the cap, and 1 tag past the cap on each of the 12 kept.
+      trimmed_over_cap: 2 + sharedConfig.extraction.maxItems,
+    });
+    const result = (engine.completes[0] as { result: { items: unknown[] } }).result;
+    expect(result.items).toHaveLength(sharedConfig.extraction.maxItems);
   });
 });
 

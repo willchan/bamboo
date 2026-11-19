@@ -8,7 +8,7 @@
 // 5xx are retried, then `unavailable`; any other 4xx (a bad key, a schema Gemini refuses) is
 // `rejected`. Both of those send the job to Ollama. Messages hold only statuses, never the key,
 // the request or the reply.
-import { sharedConfig } from "@bamboo/shared";
+import { servableSchema, sharedConfig } from "@bamboo/shared";
 import type { ChatMessage } from "./ollama";
 import { RateLimiter } from "./rate-limit";
 
@@ -36,11 +36,14 @@ export interface GeminiOptions {
   log?: (line: string) => void;
 }
 
-/** A JSON schema as Gemini takes it: zod's output without `$schema`. */
+/**
+ * A JSON schema as Gemini takes it: the strict one (zod's output) without `$schema` and the limits
+ * Gemini can't serve (`servableSchema`, H7: "too many states for serving"). Every Gemini request
+ * goes through here, so no schema can reach Gemini with them; the caps are enforced on the reply
+ * instead (`trimToCaps`, then the strict contract).
+ */
 export function geminiSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  const { $schema: _drop, ...rest } = schema;
-  void _drop;
-  return rest;
+  return servableSchema(schema);
 }
 
 interface GoogleError {

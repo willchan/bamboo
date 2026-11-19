@@ -107,7 +107,8 @@ describe("checkReply (v4 → the API's contract)", () => {
     expect(bad.ok).toBe(false);
     if (!bad.ok) {
       expect(bad.errors).toContain("items.0.english");
-      expect(bad.errors).toContain("items.0.usefulness");
+      // An out-of-range rating is clamped (trimToCaps, H7), not an error.
+      expect(bad.errors).not.toContain("items.0.usefulness");
     }
     const notJson = checkReply(NOT_JSON);
     expect(!notJson.ok && notJson.errors).toMatch(/not valid JSON/u);

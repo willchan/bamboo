@@ -1474,5 +1474,22 @@ picks, so the queue can be rebuilt from stored turns without losing history.
     output on the Mac separates a bad paid key (the minimal request fails too, often `reason
     API_KEY_INVALID`) from a schema `gemini-3.8-flash` refuses (only the extraction request
     fails, or only with limits). Prod has never had a successful v4 call on Gemini.
+- *Cause found (probe on the Mac, paid key, after PR #51):* minimal, `pinyin_reading` and the
+  extraction schema without limits pass. `extract_turn` and `pinyin_referee` fail with **HTTP 400
+  INVALID_ARGUMENT, "the specified schema produces a constraint that has too many states for
+  serving"** (Google names long array limits, nested ones above all, and bounded integers). The
+  key is fine.
+- *Fix (H7 part 3, DESIGN §10 #95):*
+  - every schema sent to Gemini drops those keywords (`servableSchema`, `shared/src/schema-caps.ts`,
+    applied in `geminiSchema`);
+  - the worker cuts the reply to the caps (`trimToCaps`, counted as `trimmed_over_cap` on
+    `complete`, in the `extraction` event and in the backfill report's `dropped`);
+  - the strict Zod contracts still check everything after that.
+
+  `extract_turn.v4` already states the limits (at most 12 items, up to 3 examples, zero to three
+  tags, usefulness 1–5), so there is no new prompt version, and the dry run's turns stay on v4.
+  The probe now sends four requests, all expected to pass. A unit test checks that none of the
+  sent schemas (referee included) carries an unservable keyword. Run the probe after any
+  `make mac-update` that changes a schema or a prompt.
 - *Still open:* the turn cut at 12,000 characters. The dry run reports how many stored turns have
   `reply_text` at exactly the cap (counts only), and Will decides then.
