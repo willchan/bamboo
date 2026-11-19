@@ -77,16 +77,16 @@ Hybrid (Gemini-backed; DESIGN §5.5, §10 #74–#83), after the docs PR that rec
 ```
 docs ─┬─▶ H1 (pinyin a) ──┐
       ├─▶ H3 (card back) ─┴─▶ H4 (worker on Gemini) ─┬─▶ H5 (tutor capture) ──┬─▶ H7 (backfill)
-      │                                              └─▶ H6 (re-run; also H3) ─┘
-      └─▶ H2 (estimate → Will chooses → new-card policy)
+      │                                              └─▶ H6 (re-run; also H3) ─┤
+      └─▶ H2 (estimate → Will chooses → new-card policy) ─────────────────────┘
 ```
 
 H1 ∥ H3 may run in parallel (H1 adds no migration). Every milestone that adds a migration (H2b,
 H3, H4, H6) runs **serially**: each starts from, or is rebased onto, the previous one's merge
 before it generates its migration, so drizzle's journal and numbering never conflict. After every
 merge, `make mac-update` on the Mac (CLAUDE.md › *Working on the live Mac mini*). H2 has no
-dependency besides the docs and can go anywhere in the serial chain; its estimate step (H2a) can
-run at once. Merging follows CLAUDE.md › *Merge when green*. Steps that need Will (H2's choice,
+dependency besides the docs and can go anywhere in the serial chain before H7, which waits for
+H2b; its estimate step (H2a) can run at once. Merging follows CLAUDE.md › *Merge when green*. Steps that need Will (H2's choice,
 H5's host change, H7's full run) are gathered by the orchestrator as inputs, as in its step 2.
 
 ## Status
@@ -1052,8 +1052,7 @@ H2 has two steps, possibly two sessions.
 **Notes:**
 - *Open question:* the H2a estimate needs a backfill allowance before H7's dry run has counted
   it; use v3's items per turn as the guess unless Will gives another.
-- *Open question:* does `effective_score` stay as the tie-break, or does ranking go entirely?
-  The plan assumes tie-break.
+- *Resolved (orchestrator default; Will may override):* `effective_score` stays as the tie-break after freshness.
 
 ## H3 — Card back: breakdowns and glosses *(depends on: docs; ∥ H1)*
 
@@ -1103,14 +1102,16 @@ falling back to Ollama; names never reach a card; pinyin is merged with Gemini's
   pinyin per item, and the breakdown/gloss of H3. The prompt says: never a person's name in a
   card (use 宝宝, 孩子, 阿姨, 月嫂 or 妈妈), and no personal health specifics (diagnoses, doses,
   measurements); ordinary words like 胀气 are fine. Copy hanzi exactly.
-- **Gemini client**: the key from `agent.env` (`BAMBOO_GEMINI_API_KEY`; the session confirms or
-  renames it and records it); model and limits in `sharedConfig.worker.gemini`; JSON output
+- **Gemini client**: the key from `agent.env` (`GEMINI_API_KEY`, already there; the worker
+  reads it from that file, and the file wins over the process env for it, as `worker.env` does
+  for its keys (DESIGN §10 #45), so no other app's key of the same name is picked up); model and limits in `sharedConfig.worker.gemini`; JSON output
   with a schema; one turn per request; the request carries only the prompt and the turn (the
   whole stored turn; the 6,000-character cut stays for Ollama).
 - **Rate limiter** for the free tier (requests per minute and per day, from Google's current
   docs, recorded in Notes); 429 backs off.
 - **Ollama fallback**: when Gemini is unreachable or keeps failing, the job runs on Ollama with
-  the same contract; `job.model` says which ran. Fallback items carry no Gemini pinyin.
+  the same contract and the same `extract_turn.v4` prompt (a used-up free quota waits for the
+  reset instead); `job.model` says which ran. Fallback items carry no Gemini pinyin.
 - **Name filter** (Mac side, in the worker, before posting): any item, example, note or gloss
   containing a name from `~/.config/bamboo/names.deny` is dropped (or, for English fields,
   rewritten); only a count goes to the result and the log (`dropped_name`). Tests use a synthetic
@@ -1136,10 +1137,9 @@ falling back to Ollama; names never reach a card; pinyin is merged with Gemini's
 - after merge and `make mac-update`: `make worker-logs` shows a heartbeat with `gemini_ok`.
 
 **Notes:**
-- *Open question:* when the free tier's daily quota is used up, does the worker wait for the
-  reset (the plan's assumption) or fall back to Ollama?
-- *Open question:* does the Ollama fallback use v4 (asking only for the fields a local model can
-  do) or a separate fallback prompt?
+- *Resolved (orchestrator default; Will may override):* when the free quota runs out, the worker waits for the reset (no fallback for
+  quota).
+- *Resolved (orchestrator default; Will may override):* the Ollama fallback uses `extract_turn.v4`.
 
 ## H5 — Tutor capture *(depends on: H4)*
 
@@ -1172,10 +1172,10 @@ free key becomes its auth profile and is pinned (DESIGN §5.5.7). Check with
 **Notes:**
 - *Open question:* how does the agent tell a pasted Gemini answer (imported as text today) from a
   question that contains Chinese?
-- *Open question:* does a captured tutor turn get any Discord reply of its own (the "✅ … phrases
-  queued" summary), or none?
-- *Open question:* if the endpoint needs a new `import.kind`/`origin` value, check whether that
-  needs a migration; if so, H5 joins the serial migration chain.
+- *Resolved (orchestrator default; Will may override):* a captured tutor turn gets no extra Discord summary reply.
+- *Resolved (orchestrator default; Will may override):* if the endpoint needs a migration (a new `import.kind`/`origin` value, say), H5
+  joins the serial migration chain.
+- *Still open, for the H5 session to propose:* pasted answer vs question (above).
 
 ## H6 — Re-run extension *(depends on: H3, H4)*
 
@@ -1185,14 +1185,16 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 **Read:** PRD §5.3; DESIGN §4.6.1, §5.5.6, §6, §10 #65, #81.
 
 **Scope:**
-- A re-run refreshes `english`, `note` and `breakdown` on every phrase it picks, **in any
-  status**, leaving the hanzi, the cards and their FSRS state alone (a dropped phrase stays
+- A re-run refreshes `english`, `note`, `breakdown` and pinyin (through H4's merge; overrides
+  kept) on every phrase it picks, **in any status**, leaving the hanzi, the cards and their FSRS state alone (a dropped phrase stays
   dropped).
 - Phrases that are active, pinned or asked about more than once and that the re-run no longer
   picks are **reported** (marked, not changed): a Phrases filter lists them, with a bulk
   **Retire** that drops them and keeps `review_log`.
 - A re-run can be limited to N turns (for H7's dry run), and can re-run turns already on the
   newest prompt (H7 runs all 147).
+- Plain queued phrases first made from a re-run turn that it no longer picks are **dropped**
+  (not expired, as superseding does today).
 - Re-runs go one turn per request, through H4's rate limiter.
 
 **Acceptance:**
@@ -1202,12 +1204,11 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 - seeded shots: `pnpm --filter web shot /phrases /imports` with the filter on.
 
 **Notes:**
-- *Open question:* does the re-run also refresh pinyin through H4's merge (overrides kept)? The
-  plan assumes yes.
-- *Open question:* plain queued phrases it no longer picks are superseded today (`expired`);
-  with expiry gone (H2b), do they keep that status, or are they dropped?
+- *Resolved (orchestrator default; Will may override):* the re-run refreshes pinyin through H4's merge and keeps Will's overrides.
+- *Resolved (orchestrator default; Will may override):* plain queued phrases it no longer picks are **dropped**, not expired (a change
+  from today's superseding, DESIGN §4.6.1).
 
-## H7 — Backfill *(depends on: H5, H6)*
+## H7 — Backfill *(depends on: H2b, H5, H6)*
 
 **Goal:** all 147 stored turns read by v4, with learning cards and review history intact.
 
@@ -1215,7 +1216,8 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 
 **Scope:**
 1. **Dry run**: re-run 10 turns. Report counts only: items kept and dropped (by reason), phrases
-   new, refreshed and reported, pinyin disagreements and referee calls, Gemini requests, minutes.
+   new, refreshed and reported, pinyin disagreements and referee calls, Gemini requests, minutes,
+   and how many stored turns have `reply_text` at exactly the 12,000-character cap.
    **Stop.**
 2. **Full run**, after Will approves: the remaining turns, at the free-tier rate. Report the same
    counts, plus reviewed cards and `review_log` rows before and after.
@@ -1228,7 +1230,7 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 - Stats renders; `pnpm smoke https://bamboo-panda.vercel.app` passes.
 
 **Notes:**
-- *Open question:* should H7 also wait for H2b, so the backfilled phrases arrive with frames gone
-  and freshest-first ordering in place? The graph only requires H5 and H6.
-- *Open question:* how to re-import the turn cut at 12,000 characters, since its turn key is
-  already known.
+- *Resolved (orchestrator default; Will may override):* H7 also waits for H2b, so backfilled phrases arrive with frames gone and
+  freshest-first ordering in place.
+- *Still open:* the turn cut at 12,000 characters. The dry run reports how many stored turns have
+  `reply_text` at exactly the cap (counts only), and Will decides then.
