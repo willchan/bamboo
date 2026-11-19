@@ -19,6 +19,7 @@ import {
 import {
   ExtractTurnResult,
   normalizeText,
+  sharedConfig,
   turnKey,
   type ClaimedJob,
   type ExtractTurnInput,
@@ -857,7 +858,8 @@ export interface ReextractScope {
  * Turns to re-run, oldest first: those whose latest extraction used an older prompt than the
  * newest one the worker has reported (the prompt of the most recently finished job), with no job
  * open and their import done (§4.6.1). With `all`, also those on the newest prompt that no re-run
- * has read with it yet. A turn whose every job failed isn't here: Retry failed covers it.
+ * has read with it yet, or whose latest result came from the Ollama fallback (H7: every turn ends
+ * up read by Gemini). A turn whose every job failed isn't here: Retry failed covers it.
  */
 export async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<string[]> {
   const res = await db.$client.execute({
@@ -868,7 +870,7 @@ export async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<
       order by finished_at desc, id desc limit 1
     ),
     last as (
-      select json_extract(input, '$.turn_id') tid, prompt_version v, reextract,
+      select json_extract(input, '$.turn_id') tid, prompt_version v, reextract, model,
         row_number() over (
           partition by json_extract(input, '$.turn_id') order by finished_at desc, id desc
         ) rn
@@ -881,14 +883,14 @@ export async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<
       and exists (select 1 from latest)
       and (
         last.v is not (select v from latest)
-        or (? = 1 and last.reextract = 0)
+        or (? = 1 and (last.reextract = 0 or coalesce(last.model, '') not like ? || '%'))
       )
       and last.tid not in (
         select json_extract(input, '$.turn_id') from job where status in ('queued', 'leased')
       )
     order by turn.created_at, turn.position
     limit ?`,
-    args: [scope.all ? 1 : 0, scope.limit ?? -1],
+    args: [scope.all ? 1 : 0, sharedConfig.reextract.geminiModelPrefix, scope.limit ?? -1],
   });
   return res.rows.map((r) => String(r.tid));
 }

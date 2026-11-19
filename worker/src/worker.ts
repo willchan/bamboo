@@ -50,6 +50,12 @@ export interface WorkerDeps {
   reextractOnly?: boolean;
   /** H7's backfill: return from `run()` once there's nothing to claim, or the quota is used up. */
   untilIdle?: boolean;
+  /**
+   * H7's backfill: Gemini only, never the Ollama fallback. While Gemini rests (5xx, network) the
+   * worker claims nothing and waits; a request Gemini refuses (4xx other than 429) is a bug, not
+   * an outage, so the job is reported failed and `run()` stops.
+   */
+  geminiOnly?: boolean;
   now?: () => number;
   /** Resolves after `ms`, or early when `signal` aborts. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -96,6 +102,8 @@ export class Worker {
   /** Gemini rests until then after failing (it sends jobs to Ollama meanwhile). */
   private geminiDownUntil = 0;
   private lastGeminiState = "";
+  /** Why a `geminiOnly` run stopped early: Gemini's refusal (sanitized), else null. */
+  refused: string | null = null;
   /** Jobs finished by this process (for logs and tests). */
   readonly reports: JobReport[] = [];
 
@@ -126,6 +134,7 @@ export class Worker {
     // A used-up quota waits for the reset: no Ollama for quota (DESIGN §5.5.2).
     if (g && g.quotaResetAt() !== null) return [];
     if (this.geminiOk()) return ["extract_turn", "pinyin"];
+    if (this.d.geminiOnly) return [];
     return this.modelOk ? ["extract_turn"] : [];
   }
 
@@ -148,7 +157,7 @@ export class Worker {
   async run(): Promise<void> {
     const { log, model, pollIntervalMs } = this.d;
     log(
-      `started: gemini ${this.d.gemini?.model ?? "off"}, fallback ${model}, prompt ${this.d.prompt.version}, poll ${pollIntervalMs / 1000}s`,
+      `started: gemini ${this.d.gemini?.model ?? "off"}, fallback ${this.d.geminiOnly ? "off (gemini only)" : model}, prompt ${this.d.prompt.version}, poll ${pollIntervalMs / 1000}s`,
     );
     if (this.d.deny.loaded) {
       log(`name filter: ${this.d.deny.count} name(s) from ${this.d.deny.path}`);
@@ -238,7 +247,18 @@ export class Worker {
       } else {
         const why = g.modelError ? g.error : "gemini: invalid output after the repair turn";
         if (g.modelError) this.restGemini(why);
-        this.d.log(`job ${job.job_id}: ${why.split("\n")[0]}; falling back to ollama`);
+        if (this.d.geminiOnly) {
+          // No fallback: report it failed (it goes back to the queue while attempts are left).
+          x = g;
+          model = gemini.model;
+          if (g.modelError instanceof GeminiError && g.modelError.kind === "rejected") {
+            this.refused = g.error;
+            this.d.log(`job ${job.job_id}: gemini refused the request; stopping (gemini only)`);
+            this.stop();
+          }
+        } else {
+          this.d.log(`job ${job.job_id}: ${why.split("\n")[0]}; falling back to ollama`);
+        }
       }
     }
     if (!x && quota === null) {
@@ -310,6 +330,15 @@ export class Worker {
       } else {
         if (r.modelError instanceof GeminiError && r.modelError.kind !== "quota")
           this.restGemini(r.error);
+        if (
+          this.d.geminiOnly &&
+          r.modelError instanceof GeminiError &&
+          r.modelError.kind === "rejected"
+        ) {
+          this.refused = r.error;
+          this.d.log(`job ${job.job_id}: gemini refused the request; stopping (gemini only)`);
+          this.stop();
+        }
         body = { ...base, status: "failed", latency_ms: latency, error: r.error.slice(0, 2000) };
       }
     }

@@ -47,12 +47,54 @@ interface GoogleError {
   error?: {
     code?: number;
     status?: string;
+    message?: string;
     details?: {
       "@type"?: string;
       retryDelay?: string;
+      reason?: string;
       violations?: { quotaId?: string; quotaMetric?: string }[];
+      fieldViolations?: { field?: string; description?: string }[];
     }[];
   };
+}
+
+/** The longest error detail kept for logs and the job's error. */
+const MAX_DETAIL_CHARS = 400;
+/** A run this long that also appears in the request means the message quotes it. */
+const QUOTE_WINDOW = 24;
+
+/**
+ * Google's own words about a refused request (message, ErrorInfo reason, field violations), for
+ * the logs (H7). They describe request fields, not the turn, but as a guard: non-ASCII runs (the
+ * turn's Chinese) become `…`, the key is masked, and a message that quotes the request's text is
+ * withheld. Never the request or the reply (DESIGN §5.5.8).
+ */
+export function errorDetail(
+  err: GoogleError["error"] | undefined,
+  requestText: string,
+  apiKey: string,
+): string {
+  if (!err) return "";
+  const parts: string[] = [];
+  if (err.message) parts.push(err.message);
+  for (const d of err.details ?? []) {
+    if (d.reason) parts.push(`reason ${d.reason}`);
+    for (const v of d.fieldViolations ?? [])
+      parts.push(`field ${v.field ?? "?"}${v.description ? `: ${v.description}` : ""}`);
+  }
+  let text = parts.join("; ");
+  if (apiKey.length >= 8) text = text.split(apiKey).join("[key]");
+  text = text
+    .replace(/[^\x20-\x7e]+/gu, "…")
+    .replace(/\s+/gu, " ")
+    .trim();
+  for (let i = 0; i + QUOTE_WINDOW <= text.length; i++) {
+    if (requestText.includes(text.slice(i, i + QUOTE_WINDOW))) {
+      text = "(message withheld: it quotes the request)";
+      break;
+    }
+  }
+  return text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS)}…` : text;
 }
 
 /** `"37s"` / `"1.5s"` → ms. */
@@ -111,6 +153,8 @@ export class GeminiClient {
       },
     };
 
+    // The request's own text, so an error message that quotes it is withheld (errorDetail).
+    const requestText = messages.map((m) => m.content).join("\n");
     let failures = 0;
     let rateRetries = 0;
     let backoff = G.backoffSeconds * 1000;
@@ -191,7 +235,8 @@ export class GeminiClient {
         await this.sleep(G.retryPauseSeconds * 1000);
         continue;
       }
-      throw new GeminiError("rejected", `gemini: ${label}`);
+      const detail = errorDetail(err, requestText, this.apiKey);
+      throw new GeminiError("rejected", `gemini: ${label}${detail ? ` (${detail})` : ""}`);
     }
   }
 

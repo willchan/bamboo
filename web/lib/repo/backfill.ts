@@ -1,7 +1,7 @@
 // `GET /api/agent/backfill` (H7, DESIGN §5.5.6): the backfill's counts. Read-only, and counts only:
 // no turn text, phrase or name leaves this function (CLAUDE.md › Privacy).
 import { card, event, job, phrase, pinyinJob, reviewLog, turn, type Db } from "@bamboo/db";
-import type { BackfillReport } from "@bamboo/shared";
+import { sharedConfig, type BackfillReport } from "@bamboo/shared";
 import { and, count, eq, gte, inArray, isNotNull, like, sql } from "drizzle-orm";
 import { config } from "../config";
 import { atReplyCap, sumRerunEvents } from "../domain/backfill";
@@ -11,14 +11,15 @@ const num = (v: unknown) => Number(v ?? 0);
 
 export async function backfillReport(db: Db, since: number): Promise<BackfillReport> {
   const cap = config.imports.replyMaxChars;
-  const turnsRes = await db.$client.execute(`
+  const turnsRes = await db.$client.execute({
+    sql: `
     with latest as (
       select prompt_version v from job
       where status = 'done' and prompt_version is not null
       order by finished_at desc, id desc limit 1
     ),
     last as (
-      select json_extract(input, '$.turn_id') tid, prompt_version v, reextract,
+      select json_extract(input, '$.turn_id') tid, prompt_version v, reextract, model,
         row_number() over (
           partition by json_extract(input, '$.turn_id') order by finished_at desc, id desc
         ) rn
@@ -29,7 +30,10 @@ export async function backfillReport(db: Db, since: number): Promise<BackfillRep
       (select count(*) from turn) stored,
       (select count(*) from last where rn = 1 and v = (select v from latest)) on_newest,
       (select count(*) from last where rn = 1 and v = (select v from latest) and reextract = 1) reread,
-      (select count(*) from turn where id not in (select tid from last)) no_finished`);
+      (select count(*) from last where rn = 1 and coalesce(model, '') not like ? || '%') fallback,
+      (select count(*) from turn where id not in (select tid from last)) no_finished`,
+    args: [sharedConfig.reextract.geminiModelPrefix],
+  });
   const t = turnsRes.rows[0]!;
 
   // A reply cut at `cap` UTF-16 units has between cap/2 and cap characters (SQLite's length);
@@ -95,6 +99,7 @@ export async function backfillReport(db: Db, since: number): Promise<BackfillRep
       reread_on_newest_prompt: num(t.reread),
       remaining: remaining.length,
       no_finished_job: num(t.no_finished),
+      latest_on_fallback: num(t.fallback),
       open_reextract: open,
       reply_at_cap: replyAtCap,
       reply_max_chars: cap,

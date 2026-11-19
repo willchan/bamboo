@@ -209,6 +209,11 @@ export const sharedConfig = {
   reextract: {
     /** The most turns one request may queue (prod has ~150 turns). */
     maxLimit: 1000,
+    /**
+     * H7: a turn whose latest finished job ran on a model without this prefix (the Ollama
+     * fallback) is re-run again by `{all: true}`, so every turn ends up read by Gemini.
+     */
+    geminiModelPrefix: "gemini-",
   },
   tutorEval: {
     defaultLimit: 20,
