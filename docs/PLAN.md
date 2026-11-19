@@ -100,10 +100,10 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | M4 Worker | merged | [#9](https://github.com/willchan/bamboo/pull/9) |
 | M5 Discord intake | merged | [#8](https://github.com/willchan/bamboo/pull/8) |
 | M6 Reminder & stats | merged | [#13](https://github.com/willchan/bamboo/pull/13) |
-| H1 Pinyin: large dictionary | in review | |
-| H2 Frames retired; new-card policy | in review | |
+| H1 Pinyin: large dictionary | merged | [#42](https://github.com/willchan/bamboo/pull/42) |
+| H2 Frames retired; new-card policy | merged | [#45](https://github.com/willchan/bamboo/pull/45) |
 | H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
-| H4 Worker on Gemini | in review | |
+| H4 Worker on Gemini | merged | [#44](https://github.com/willchan/bamboo/pull/44) |
 | H5 Tutor capture | planned | |
 | H6 Re-run extension | planned | |
 | H7 Backfill | planned | |
@@ -1238,10 +1238,10 @@ falling back to Ollama; names never reach a card; pinyin is merged with Gemini's
   resets at midnight Pacific and that limits are per project. Developer-forum reports put the
   free tier at about 20 requests/day for the newest Flash. Defaults: model `gemini-3.8-flash`
   (the Stable Flash on the models page), **5/min, 20/day**, overridable with `GEMINI_MODEL`,
-  `GEMINI_RPM`, `GEMINI_RPD` in worker.env; Google's 429 is the backstop (DESIGN §10 #86). At
-  20/day, H7's 147 turns plus referee calls take more than a week: Will should read his
-  project's limits in AI Studio and set them, or pick a Flash-Lite model with a larger free
-  quota.
+  `GEMINI_RPM`, `GEMINI_RPD` in worker.env; Google's 429 is the backstop (DESIGN §10 #86).
+  *Confirmed 2026-11-19:* Will read his project's free-tier limits in AI Studio: 5/min and
+  20/day for `gemini-3.8-flash`, so the defaults are the real limits. At 20/day H7's backfill
+  would take more than a week, so it runs on a paid key (H7, DESIGN §10 #88).
 - **Caps (deviation: evidence not available here).** The Gemini-deck comparison's counts aren't
   in the repo and this session had no prod access, so the new caps are a judgment: errand 1 → 3
   items, say 2 → 5 terms, `ExtractTurnResult.items` 8 → 12, examples per term up to 3. H7's dry
@@ -1343,19 +1343,34 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 
 **Goal:** all 147 stored turns read by v4, with learning cards and review history intact.
 
-**Read:** DESIGN §5.5.6, §8.6, §10 #81; H4 and H6 Notes.
+**Read:** DESIGN §5.5.6, §5.5.7, §8.1, §8.6, §10 #81, #82, #88; H4 and H6 Notes.
+
+*Input from Will: `BAMBOO_GEMINI_API_KEY_PAID` added to `openclaw-agent`'s
+`~/.config/bamboo/agent.env` (the session never reads or prints it).*
 
 **Scope:**
-1. **Dry run**: re-run 10 turns. Report counts only: items kept and dropped (by reason), phrases
+0. **Two keys** (worker, DESIGN §5.5.7, §10 #88): the worker reads `BAMBOO_GEMINI_API_KEY_FREE`
+   and `BAMBOO_GEMINI_API_KEY_PAID` from `agent.env` (the process env wins), and still accepts
+   `BAMBOO_GEMINI_API_KEY` as an alias for the free key (expand → contract: a later PR drops the
+   alias once Will has renamed it). Everyday extraction, referee and pinyin jobs use the free key
+   at its limits (5/min, 20/day). A backfill run asks for the paid key and gets the paid key's own
+   limits (`sharedConfig.worker.gemini.paid`, overridable with `GEMINI_PAID_RPM` and `GEMINI_PAID_RPD` in worker.env; defaults from the paid tier, recorded in Notes); a missing paid key fails
+   that run at startup instead of falling back to the free key. Startup logs name the variable
+   each key came from, never its value.
+1. **Dry run**: re-run 10 turns on the paid key. Report counts only: items kept and dropped (by reason), phrases
    new, refreshed and reported, pinyin disagreements and referee calls, Gemini requests, minutes,
    and how many stored turns have `reply_text` at exactly the 12,000-character cap.
    **Stop.**
-2. **Full run**, after Will approves: the remaining turns, at the free-tier rate. Report the same
+2. **Full run**, after Will approves: the remaining turns, on the paid key at its limits. Report the same
    counts, plus reviewed cards and `review_log` rows before and after.
 3. Will decides, from the counts: whether to re-import the one turn cut at 12,000 characters, and
    whether to bulk-retire the reported leftovers.
 
 **Acceptance:**
+- the standard commands; `pnpm --filter @bamboo/worker test` with fake keys only: both keys read,
+  the old name accepted as the free key's alias, a backfill run selects the paid key and its
+  limits, the live worker keeps the free key, and startup logs name each key's variable but
+  never contain a key value;
 - every stored turn has a finished `extract_turn.v4` job;
 - `review_log` rows and reviewed cards are the same before and after (counts);
 - Stats renders; `pnpm smoke https://bamboo-panda.vercel.app` passes.
@@ -1363,5 +1378,10 @@ picks, so the queue can be rebuilt from stored turns without losing history.
 **Notes:**
 - *Resolved (orchestrator default; Will may override):* H7 also waits for H2b, so backfilled phrases arrive with frames gone and
   freshest-first ordering in place.
+- *Decided by Will (2026-11-19):* the backfill runs on a paid key; everyday work stays on the
+  free key. **No Batch API:** it is 50% cheaper, but the backfill is about 147 turns (a dollar
+  or two), and Batch would need a new submit/collect flow, a second pass for referee calls and
+  up to 24 h turnaround (DESIGN §10 #88). The two-key support is built here, not in its own
+  milestone.
 - *Still open:* the turn cut at 12,000 characters. The dry run reports how many stored turns have
   `reply_text` at exactly the cap (counts only), and Will decides then.

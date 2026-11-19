@@ -1213,7 +1213,7 @@ the decision as made.
 #### 5.5.6 Rebuilding the queue from stored turns (H6, H7; §10 #81)
 
 Prod isn't wiped. All 147 stored turns go through v4 by the Re-run path (§4.6.1), one turn per
-request, at the free-tier rate. Learning cards and review history must survive. The re-run is
+request, on the paid key (§5.5.7, §10 #88). Learning cards and review history must survive. The re-run is
 extended first (H6):
 
 - it refreshes the English, note and breakdown of **every phrase it picks, in any status**,
@@ -1234,9 +1234,17 @@ H7 runs 10 turns as a dry run (counts only), then, after Will approves, the rest
   `openclaw models auth paste-token --provider google --agent bamboo --profile-id google:bamboo-free`,
   then `openclaw models auth order set --provider google google:bamboo-free --agent bamboo`.
 - PandaDen's paid key in `~/.openclaw/.env` stays; falling back to it is acceptable.
-- The worker reads the free key from `openclaw-agent`'s `~/.config/bamboo/agent.env`
-  as `BAMBOO_GEMINI_API_KEY` (`BAMBOO_`-prefixed per §10 #42). Will renames the existing entry in
-  `agent.env` to this name.
+- The worker reads two keys from `openclaw-agent`'s `~/.config/bamboo/agent.env`
+  (`BAMBOO_`-prefixed per §10 #42; H7, §10 #88):
+  - `BAMBOO_GEMINI_API_KEY_FREE`: everyday extraction, referee and pinyin jobs, at the free
+    tier's limits, 5/min and 20/day for `gemini-3.8-flash` (confirmed by Will in AI Studio,
+    2026-11-19);
+  - `BAMBOO_GEMINI_API_KEY_PAID`: used only by a run that asks for it (H7's backfill), with its
+    own per-minute and per-day limits.
+
+  H4's `BAMBOO_GEMINI_API_KEY` stays accepted as an alias for the free key until Will renames it;
+  a later PR drops the alias (expand → contract). Startup logs name the variable each key came
+  from, never the value. No Batch API (§10 #88).
 - Check which key serves requests with `openclaw models status --agent bamboo --probe` and one
   real request. The host setup is recorded in PandaDen's host runbook (H5), and applied by the
   orchestrator via `ssh agent` after Will approves.
@@ -1402,8 +1410,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1). On a 401, `bamboo-tools` names where its token came from (`BAMBOO_AGENT_API_TOKEN in <agent.env path>`, or `environment variable BAMBOO_AGENT_API_TOKEN`), never the value (§10 #46) |
-| `BAMBOO_GEMINI_API_KEY` (H4) | worker | the free-tier Gemini key (§5.5.7, §10 #82), in `openclaw-agent`'s `~/.config/bamboo/agent.env` (`BAMBOO_AGENT_ENV` overrides the path); the worker reads only this key from that file, and the process env wins. Not in `worker.env` or the gateway env. Without it the worker extracts on Ollama only. `~/.config/bamboo/names.deny` (§5.5.8) sits beside it |
-| `GEMINI_MODEL` (`gemini-3.8-flash`), `GEMINI_RPM` (5), `GEMINI_RPD` (20), `BAMBOO_NAMES_DENY` (`~/.config/bamboo/names.deny`) (H4) | worker | in `worker.env` (`ops/worker.env.example`); empty means the default from `sharedConfig.worker` |
+| `BAMBOO_GEMINI_API_KEY_FREE` (H7; H4's `BAMBOO_GEMINI_API_KEY` is its alias until Will renames it), `BAMBOO_GEMINI_API_KEY_PAID` (H7) | worker | the free-tier key for everyday jobs and the paid key for runs that ask for it, such as the backfill (§5.5.7, §10 #82, #88), in `openclaw-agent`'s `~/.config/bamboo/agent.env` (`BAMBOO_AGENT_ENV` overrides the path); the worker reads only these keys from that file, and the process env wins. Not in `worker.env` or the gateway env. Without a free key the worker extracts on Ollama only. `~/.config/bamboo/names.deny` (§5.5.8) sits beside it |
+| `GEMINI_MODEL` (`gemini-3.8-flash`), `GEMINI_RPM` (5), `GEMINI_RPD` (20) (the free key's limits, confirmed in AI Studio), `GEMINI_PAID_RPM`, `GEMINI_PAID_RPD` (the paid key's own limits; H7 sets the defaults), `BAMBOO_NAMES_DENY` (`~/.config/bamboo/names.deny`) (H4) | worker | in `worker.env` (`ops/worker.env.example`); empty means the default from `sharedConfig.worker` |
 | `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.8:27b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env for every key it lists (§10 #45): its keys are generic, so an inherited `WORKER_API_TOKEN` or `OLLAMA_URL` can't override Bamboo's. A key the file leaves out still comes from the env |
 
 ### 8.2 Deploy
@@ -1754,6 +1762,7 @@ bamboo/
 | 85 | The merge's rule 2 uses pinyin-pro's readings literally (a neutral tone counts only if listed); 一/不's citation tones agree with the computed sandhi; a dispute shows the computed reading until the referee answers; the worker decides whether to call the referee with the same shared rules the engine re-checks (H4, §5.5.3) | Literal rule 2 never lets Gemini put an unlisted reading on a card without a check; the referee's options still include neutral tones. Sharing the rules (`shared/src/pinyin-merge.ts`) means the worker spends a referee call only on a real dispute, and the engine still trusts nothing it sends |
 | 86 | Gemini's free-tier limits are config defaults (5/min, 20/day for `gemini-3.8-flash`) overridable in worker.env, with Google's 429 as the backstop; a daily-quota 429 stops claims until midnight Pacific, and the job that hit it uses one attempt; other Gemini failures send that job to Ollama and rest Gemini 10 min (H4, §5.3) | Google's rate-limit page now shows per-project limits only in AI Studio, not as published numbers, so the worker can't hard-code the truth; conservative defaults plus the 429s keep it inside whatever the project has. Quota waits instead of falling back (Will's decision, PLAN H4 Notes); failing the one job that hit it beats holding a lease for hours |
 | 87 | The name filter rewrites a name in an English field to `someone`, drops an item or example whose Chinese contains one, clears a `heard_as` that does, and reports only a count (H4, §5.5.8) | A generic word is safe whoever was named; a role word (阿姨, 宝宝) would need knowing who the name belongs to, which the deny-list deliberately doesn't say |
+| 88 | Refines #82: two Gemini keys in `agent.env`. `BAMBOO_GEMINI_API_KEY_FREE` serves everyday extraction, referee and pinyin jobs at the free tier's limits (5/min, 20/day for `gemini-3.8-flash`, confirmed by Will in AI Studio); `BAMBOO_GEMINI_API_KEY_PAID` is used only by a run that asks for it, with its own limits. H7's backfill runs on the paid key. H4's `BAMBOO_GEMINI_API_KEY` is the free key's alias until renamed (expand → contract). Logs name a key's variable, never its value. No Batch API (H7, §5.5.6, §5.5.7) | At 20/day the 147-turn backfill plus referee calls would take more than a week; on a paid key it is about a dollar or two. Batch is 50% cheaper, but saving cents doesn't pay for a new submit/collect flow, a second pass for referee calls and up to 24 h turnaround. Keeping everyday work on the free key keeps its cost at zero, and the paid key only spends when a run asks for it |
 
 ## Appendix A — Synthetic fixtures
 
