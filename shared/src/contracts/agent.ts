@@ -73,6 +73,8 @@ export const BackfillReport = z.object({
     remaining: count,
     /** Turns with no finished job at all (every job failed): Retry failed first. */
     no_finished_job: count,
+    /** Turns whose latest finished job ran on the Ollama fallback; `{all: true}` re-runs them. */
+    latest_on_fallback: count,
     open_reextract: count,
     /** `reply_text` exactly at the import cap (`replyMaxChars`): likely cut. */
     reply_at_cap: count,
@@ -85,7 +87,10 @@ export const BackfillReport = z.object({
     /** Items Gemini returned, per turn, in finish order. */
     items_per_turn: z.array(count),
     items: count,
+    /** Items stored: `items` minus whole-item drops, plus `sentence_promoted` (§4.6). */
     kept: count,
+    /** A say turn's sentence added from a term's example: why `kept` can exceed `items`. */
+    sentence_promoted: count,
     dropped: z.record(z.string(), count),
     phrases_created: count,
     phrases_refreshed: count,

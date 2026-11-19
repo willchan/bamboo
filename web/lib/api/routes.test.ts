@@ -49,6 +49,7 @@ import {
 } from "../repo/capture";
 
 const AGENT = "agent-token-for-tests";
+const GEMINI = "gemini-3.8-flash";
 const WORKER = "worker-token-for-tests";
 const CRON = "cron-secret-for-tests";
 const T0 = new Date("2026-06-02T03:00:00Z").getTime();
@@ -161,13 +162,14 @@ const done = (
   attempt: number,
   result: ExtractTurnResult,
   prompt_version = "extract_turn.v1",
+  model = "qwen3.5:9b",
 ) =>
   complete({
     job_id,
     attempt,
     status: "done",
     result,
-    model: "qwen3.5:9b",
+    model,
     prompt_version,
     latency_ms: 1234,
     repaired: false,
@@ -188,9 +190,10 @@ const term = (hanzi: string, english: string, o: Partial<ExtractTurnResult["item
 /** Claim every queued job and answer it from `answer(user_text, reply_text)`. */
 async function drain(
   answer: (input: { user_text: string; reply_text: string }) => ExtractTurnResult,
+  model?: string,
 ) {
   for (let c = await claim(); c; c = await claim()) {
-    const r = await done(c.job_id, c.attempt, answer(c.input));
+    const r = await done(c.job_id, c.attempt, answer(c.input), undefined, model);
     expect(r.status).toBe(200);
   }
 }
@@ -1061,8 +1064,8 @@ describe("re-extraction", () => {
     ).toEqual({ queued: 1, open: 3 });
     const first = (await claim())!;
     expect(first.input.user_text).toBe(TURNS[0]!.user_text);
-    await done(first.job_id, first.attempt, { turn_kind: "other", items: [] });
-    await drain(() => ({ turn_kind: "other", items: [] }));
+    await done(first.job_id, first.attempt, { turn_kind: "other", items: [] }, undefined, GEMINI);
+    await drain(() => ({ turn_kind: "other", items: [] }), GEMINI);
 
     // Every turn has now been re-read with the newest prompt: a second full run queues nothing.
     expect(
@@ -1341,6 +1344,7 @@ describe("H7 backfill", () => {
         reread_on_newest_prompt: 0,
         remaining: 4,
         no_finished_job: 0,
+        latest_on_fallback: 4,
         open_reextract: 0,
         reply_at_cap: 1,
         reply_max_chars: config.imports.replyMaxChars,
@@ -1364,6 +1368,7 @@ describe("H7 backfill", () => {
         items: [term("高压锅", "pressure cooker"), term("不在这里", "not here")],
       },
       "extract_turn.v4",
+      GEMINI,
     );
     expect(r.status).toBe(200);
 
@@ -1376,6 +1381,7 @@ describe("H7 backfill", () => {
         on_newest_prompt: 1,
         reread_on_newest_prompt: 1,
         remaining: 3,
+        latest_on_fallback: 3,
         open_reextract: 0,
       },
       run: {
@@ -1384,13 +1390,37 @@ describe("H7 backfill", () => {
         items_per_turn: [2],
         items: 2,
         kept: 1,
+        sentence_promoted: 0,
         dropped: { dropped_not_verbatim: 1 },
         phrases_created: 1,
-        models: { "qwen3.5:9b": 1 },
+        models: { [GEMINI]: 1 },
       },
     });
     // Before `since`, nothing.
     expect((await report(since + DAY)).run).toMatchObject({ turns: 0 });
+  });
+
+  it("a full run re-runs turns whose latest result came from the Ollama fallback", async () => {
+    await postImport({});
+    await drain(() => ({ turn_kind: "other", items: [] }), GEMINI);
+    await reextractPOST(req("/api/agent/reextract", AGENT, { all: true }));
+    // Two re-runs land on Gemini, one on the fallback.
+    for (const model of [GEMINI, GEMINI, "qwen3.8:27b"]) {
+      const c = (await claimBackfill())!;
+      await done(c.job_id, c.attempt, { turn_kind: "other", items: [] }, "extract_turn.v4", model);
+    }
+    expect((await report()).turns).toMatchObject({ latest_on_fallback: 1, remaining: 1 });
+    // The Imports button (stale prompts only) still leaves it alone; `all` takes it again.
+    expect(await queueReextraction(db, T0)).toBe(0);
+    expect(
+      await json(await reextractPOST(req("/api/agent/reextract", AGENT, { all: true }))),
+    ).toEqual({ queued: 1, open: 1 });
+    const c = (await claimBackfill())!;
+    await done(c.job_id, c.attempt, { turn_kind: "other", items: [] }, "extract_turn.v4", GEMINI);
+    expect((await report()).turns).toMatchObject({ latest_on_fallback: 0, remaining: 0 });
+    expect(
+      await json(await reextractPOST(req("/api/agent/reextract", AGENT, { all: true }))),
+    ).toEqual({ queued: 0, open: 0 });
   });
 
   it("needs the agent token and a valid since", async () => {

@@ -188,7 +188,13 @@ export class FakeOllama {
  * A fake Gemini generateContent endpoint. `replies` are served in order: a string is the reply's
  * JSON text; a number is an HTTP error status (429 per-minute unless `daily`), `"network"` throws.
  */
-export type GeminiReply = string | number | "network" | { status: 429; daily: true };
+export type GeminiReply =
+  | string
+  | number
+  | "network"
+  | { status: 429; daily: true }
+  /** Any status with Google's error body as given (e.g. a 400 with a message). */
+  | { status: number; error: Record<string, unknown> };
 
 export class FakeGemini {
   readonly key = "fake-gemini-key-0000";
@@ -205,6 +211,7 @@ export class FakeGemini {
     const r = this.replies.shift();
     if (r === undefined) return json(500, { error: { code: 500, status: "INTERNAL" } });
     if (r === "network") throw new TypeError("fetch failed");
+    if (typeof r === "object" && "error" in r) return json(r.status, { error: r.error });
     if (typeof r === "object") {
       return json(429, {
         error: {

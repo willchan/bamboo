@@ -1300,6 +1300,20 @@ Gemini requests including retries, minutes), `review_log` and reviewed cards bef
 and an estimate for the turns left (requests per turn × turns; the slower of this run's pace and
 the per-minute limit).
 
+The backfill worker is **Gemini only** (H7 fix, §10 #94): no Ollama fallback. While Gemini rests
+after a 5xx or network failure it claims nothing and waits, so pinyin jobs (which need Gemini,
+and are claimed before re-runs) are done before it goes idle. A request Gemini refuses (a 4xx
+other than 429) is a bug, not an outage: the job is reported failed and the run stops (exit 2)
+with Google's sanitized error in `stopped_on_gemini_error`. `{all: true}` also re-runs turns
+whose latest finished job ran on the fallback (a model without the `gemini-` prefix,
+`sharedConfig.reextract.geminiModelPrefix`), so every turn ends up read by Gemini; the report
+counts them as `latest_on_fallback`. For any refused request, the Gemini client logs Google's
+message, ErrorInfo reason and field violations, with non-ASCII runs replaced, the key masked,
+and a message that quotes the request withheld. `pnpm --filter @bamboo/worker gemini-probe --
+[--gemini-key=paid]` sends five synthetic requests (a tiny schema, the two pinyin schemas, the
+extraction schema with and without its limits) and prints pass/fail and Google's error per
+request, to tell a bad key from a schema Gemini refuses.
+
 #### 5.5.7 Keys (H4, H5; §10 #82)
 
 - A new **free-tier** Gemini key, in its own Google project, becomes an OpenClaw auth profile for
@@ -1876,6 +1890,7 @@ bamboo/
 | 91 | The tutor's Google auth order is the free profile, then a second profile with PandaDen's paid key (`google:bamboo-paid`); no model fallback. The host's runbook sets it (H5, §5.5.7) | Will accepted falling back to the paid key (decision 9). The free quota (20/day) is shared with the worker, so a busy day would otherwise end in quota errors in `#bamboo`; OpenClaw rotates profiles on rate limits before failing. Its docs don't promise that an env key is tried after a pinned order, so the paid key gets an explicit profile. Ollama stays the worker's only fallback |
 | 92 | H6's re-run extension: picked phrases are refreshed in place (English, note, breakdown, pinyin through the merge) in any status; leftovers from the turn are dropped if plain queued, else **reported** in a nullable `phrase.unpicked_at` (expand-only), listed by a Phrases filter with a bulk Retire (a drop: cards and `review_log` kept). H7 triggers runs with `POST /api/agent/reextract {all, limit}`; `all` skips turns a re-run already read with the newest prompt (§4.6.1, §5.5.6) | A column, not a flag in `flags`, so the filter and the Imports count are a plain `is not null` and a re-run or restore can clear it. Reporting only the turn's own phrases keeps a phrase that another question also produced from being flagged by one turn's reading. An agent route (not a script with DB credentials) keeps "the engine owns the data": H7 drives it from the Mac with the agent token. Skipping turns already re-run on the newest prompt makes the full run after the 10-turn dry run, and any retry, idempotent. A breakdown is re-checked against the phrase's own hanzi because the match is by key and punctuation can differ |
 | 93 | H7's backfill is one worker command (`backfill -- --gemini-key=paid --count \| --limit N \| --all`): it queues re-runs through the agent route, reads them in-process with a worker that claims `reextract_only` and stops when idle, and prints counts from a read-only agent route (`GET /api/agent/backfill`) and its own job reports. The paid key is required, never a fallback (§5.5.6, §5.5.7) | A claim option, not a flag in the claimed job, keeps new imports on the everyday worker's free key and leaves the claim order and the old worker untouched. A process that stops when idle makes the dry run a single command with a clear end, and the counts come from the engine's own events, so the engine still owns the data; the agent token the command reads sits beside the paid key in `agent.env` |
+| 94 | The backfill worker never falls back to Ollama: it waits out a Gemini rest, and stops on a refused request (4xx other than 429). `{all: true}` re-runs turns last read by the fallback. Gemini's 4xx errors are logged with Google's sanitized message (H7 fix after the dry run) | The dry run's first paid-key request got 400 INVALID_ARGUMENT and all 10 turns quietly went to Ollama, with pinyin jobs left unclaimed while Gemini rested; the point of the paid run is Gemini's reading, so a fallback result has to be redone anyway. A 4xx repeats on every turn, so stopping saves the run; a logged reason (field names, not the turn) makes it fixable |
 
 ## Appendix A — Synthetic fixtures
 

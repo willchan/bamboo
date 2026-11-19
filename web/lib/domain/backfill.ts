@@ -19,6 +19,7 @@ export interface RerunSums {
   items_per_turn: number[];
   items: number;
   kept: number;
+  sentence_promoted: number;
   dropped: Record<string, number>;
   phrases_created: number;
   phrases_refreshed: number;
@@ -39,6 +40,7 @@ export function sumRerunEvents(events: readonly Record<string, unknown>[]): Reru
     items_per_turn: [],
     items: 0,
     kept: 0,
+    sentence_promoted: 0,
     dropped: Object.fromEntries(DROP_FIELDS.map((f) => [f, 0])),
     phrases_created: 0,
     phrases_refreshed: 0,
@@ -54,6 +56,7 @@ export function sumRerunEvents(events: readonly Record<string, unknown>[]): Reru
     s.items_per_turn.push(n(e.items));
     s.items += n(e.items);
     s.kept += n(e.kept);
+    s.sentence_promoted += n(e.sentence_promoted);
     for (const f of DROP_FIELDS) s.dropped[f]! += n(e[f]);
     s.phrases_created += n(e.phrases_created);
     s.phrases_refreshed += n(e.phrases_refreshed);

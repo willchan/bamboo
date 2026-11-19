@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node --import tsx src/main.ts",
     "backfill": "node --import tsx src/backfill-main.ts",
+    "gemini-probe": "node --import tsx src/gemini-probe-main.ts",
     "test:ollama": "BAMBOO_EVAL_OLLAMA=1 vitest run src/eval.test.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

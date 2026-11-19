@@ -1458,5 +1458,21 @@ picks, so the queue can be rebuilt from stored turns without losing history.
   the worker's own reports and a Gemini request counter (retries included). `reply_at_cap` counts
   UTF-16 code units, as the import's `slice` cut them. No migration. The dry run itself, its
   counts and the paid tier's limits are recorded here once the orchestrator has run it.
+- *Dry run 1 (2026-11-19, prod, counts only):* the first paid-key Gemini request got **HTTP 400
+  INVALID_ARGUMENT**, so Gemini rested and all 10 turns ran on Ollama (1 Gemini request, 5.8
+  min). Items 37, kept 38 (a promoted say sentence, now reported as `sentence_promoted`),
+  dropped_name 1, breakdowns_dropped 1, over cap 0; phrases created 15, refreshed 23, dropped
+  1, reported 0; 15 pinyin jobs queued, none done (Gemini was resting, so the worker didn't
+  claim pinyin jobs, then went idle); `review_log` 110 → 110, reviewed cards 53 → 53;
+  `reply_at_cap` 1; `no_finished_job` 2; remaining 137.
+- *Fix (H7 part 2, DESIGN §10 #94):*
+  - the backfill worker is Gemini only: it waits out rests and stops on a refused request;
+  - `{all: true}` re-runs the turns whose latest result came from Ollama, the dry run's 10
+    included;
+  - Gemini's 4xx errors are logged with Google's sanitized reason;
+  - `gemini-probe` reproduces the 400 on synthetic input. The cause isn't confirmed: the probe's
+    output on the Mac separates a bad paid key (the minimal request fails too, often `reason
+    API_KEY_INVALID`) from a schema `gemini-3.8-flash` refuses (only the extraction request
+    fails, or only with limits). Prod has never had a successful v4 call on Gemini.
 - *Still open:* the turn cut at 12,000 characters. The dry run reports how many stored turns have
   `reply_text` at exactly the cap (counts only), and Will decides then.

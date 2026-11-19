@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { sharedConfig, type ExtractTurnInput, type PinyinJobInput } from "@bamboo/shared";
 import { describe, expect, it } from "vitest";
 import { EngineClient } from "./api";
-import { GeminiClient } from "./gemini";
+import { GeminiClient, errorDetail } from "./gemini";
 import { loadDenyList, parseDenyList, type DenyList } from "./names";
 import { OllamaClient } from "./ollama";
 import { loadPrompt } from "./prompt";
@@ -418,6 +418,110 @@ describe("H7 backfill worker (reextract only, until idle)", () => {
     // Retries count: two requests reached Google.
     expect(fake.bodies).toHaveLength(2);
     expect(gemini.requests).toBe(2);
+  });
+});
+
+describe("a request Gemini refuses (H7's 400)", () => {
+  const BAD_SCHEMA = {
+    status: 400,
+    error: {
+      code: 400,
+      status: "INVALID_ARGUMENT",
+      message:
+        "Invalid JSON payload received. Unknown name \"foo\" at 'generation_config': Cannot find field.",
+      details: [
+        {
+          "@type": "type.googleapis.com/google.rpc.BadRequest",
+          fieldViolations: [{ field: "generation_config", description: "Cannot find field." }],
+        },
+      ],
+    },
+  };
+
+  it("logs Google's message and field violations, never the turn", async () => {
+    const { engine, fake, worker, lines, ollama } = setup();
+    engine.add(TURN);
+    fake.replies = [BAD_SCHEMA];
+    ollama.replies = [VALID];
+    await worker.run();
+    const line = lines.find((l) => l.includes("HTTP 400"))!;
+    expect(line).toContain("INVALID_ARGUMENT");
+    expect(line).toContain("Unknown name");
+    expect(line).toContain("field generation_config: Cannot find field.");
+    // The everyday worker still falls back.
+    expect(engine.completes[0]).toMatchObject({ status: "done", model: "qwen3.5:9b" });
+    for (const l of lines) {
+      expect(l).not.toContain(TURN.reply_text.slice(0, 12));
+      expect(l).not.toContain(fake.key);
+    }
+  });
+
+  it("a gemini-only (backfill) worker fails the job and stops instead of falling back", async () => {
+    const { engine, fake, worker, ollama, lines } = setup({
+      deps: { reextractOnly: true, untilIdle: true, geminiOnly: true },
+      idlePolls: 99,
+    });
+    engine.add(TURN, "rerun-1", true);
+    engine.add(TURN, "rerun-2", true);
+    fake.replies = [BAD_SCHEMA, VALID];
+    ollama.replies = [VALID, VALID];
+    await worker.run();
+    expect(ollama.chatBodies).toHaveLength(0);
+    expect(engine.completes).toHaveLength(1);
+    expect(engine.completes[0]).toMatchObject({
+      job_id: "rerun-1",
+      status: "failed",
+      model: "gemini-test",
+    });
+    expect((engine.completes[0] as { error: string }).error).toMatch(/HTTP 400 INVALID_ARGUMENT/u);
+    expect(worker.refused).toMatch(/Unknown name/u);
+    expect(lines.some((l) => l.includes("fallback off (gemini only)"))).toBe(true);
+    expect(lines.some((l) => l.includes("stopping (gemini only)"))).toBe(true);
+  });
+
+  it("a gemini-only worker waits out a rest (5xx) instead of using Ollama, then goes on", async () => {
+    const { engine, fake, worker, ollama, clock } = setup({
+      deps: { reextractOnly: true, untilIdle: true, geminiOnly: true },
+      idlePolls: 99,
+    });
+    engine.add(TURN, "rerun-1", true);
+    fake.replies = [503, 503, VALID];
+    ollama.replies = [VALID];
+    clock.afterSleep = () => {};
+    await worker.run();
+    expect(ollama.chatBodies).toHaveLength(0);
+    expect(engine.completes.map((c) => [c.job_id, c.attempt, c.status])).toEqual([
+      ["rerun-1", 1, "failed"],
+      ["rerun-1", 2, "done"],
+    ]);
+    expect(worker.refused).toBeNull();
+  });
+});
+
+describe("errorDetail", () => {
+  const err = (message: string) => ({ code: 400, status: "INVALID_ARGUMENT", message });
+  it("keeps Google's ASCII words, reason and fields", () => {
+    expect(
+      errorDetail(
+        {
+          ...err("API key not valid. Please pass a valid API key."),
+          details: [{ reason: "API_KEY_INVALID" }],
+        },
+        "request",
+        "fake-gemini-key-0000",
+      ),
+    ).toBe("API key not valid. Please pass a valid API key.; reason API_KEY_INVALID");
+  });
+  it("masks Chinese, the key, and withholds a message that quotes the request", () => {
+    expect(errorDetail(err("bad value 高压锅 near secret-key-1"), "x", "secret-key-1")).toBe(
+      "bad value … near [key]",
+    );
+    const request = "The yuesao said something like gaoyaguo, what is it?";
+    expect(errorDetail(err(`Invalid: "${request}"`), request, "k")).toBe(
+      "(message withheld: it quotes the request)",
+    );
+    expect(errorDetail(undefined, request, "k")).toBe("");
+    expect(errorDetail(err("x".repeat(500)), "", "k")).toHaveLength(401);
   });
 });
 
