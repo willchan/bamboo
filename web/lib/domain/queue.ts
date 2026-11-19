@@ -127,8 +127,11 @@ export interface ValidItem {
   /** Who the wording is for, only when that changes it (extract_turn.v2). English only. */
   note: string | null;
   heardAs: string | null;
-  example: { hanzi: string; english: string | null } | null;
+  /** Terms only: verbatim examples that contain the term (v4 may send several). */
+  examples: { hanzi: string; english: string | null }[];
   usefulness: number;
+  /** Gemini's reading, one syllable per hanzi (v4 on Gemini); null for Ollama and older prompts. */
+  pinyin: string[] | null;
   tags: string[];
   /** The card back's breakdown, if it passed `checkBreakdown` (DESIGN §5.5.4). */
   breakdown: PhraseBreakdown | null;
@@ -235,14 +238,19 @@ export function validateExtraction(
       out.heardAsDropped += 1;
     }
 
-    let example: ValidItem["example"] = null;
-    if (raw.example && raw.kind === "term") {
-      const exHanzi = cleanHanzi(raw.example.hanzi);
-      if (occursVerbatim(exHanzi, "sentence", key) && hanziKey(exHanzi).includes(k)) {
-        example = { hanzi: exHanzi, english: raw.example.english?.trim() || null };
-      } else {
-        flags.push("example_dropped");
-        out.examplesDropped += 1;
+    const examples: ValidItem["examples"] = [];
+    const rawExamples = raw.examples?.length ? raw.examples : raw.example ? [raw.example] : [];
+    if (raw.kind === "term") {
+      for (const ex of rawExamples) {
+        const exHanzi = cleanHanzi(ex.hanzi);
+        const exKey = hanziKey(exHanzi);
+        if (examples.some((e) => hanziKey(e.hanzi) === exKey)) continue;
+        if (occursVerbatim(exHanzi, "sentence", key) && exKey.includes(k)) {
+          examples.push({ hanzi: exHanzi, english: ex.english?.trim() || null });
+        } else {
+          if (!flags.includes("example_dropped")) flags.push("example_dropped");
+          out.examplesDropped += 1;
+        }
       }
     }
 
@@ -261,8 +269,9 @@ export function validateExtraction(
       english: raw.english.trim(),
       note: englishNote(raw.note),
       heardAs,
-      example,
+      examples,
       usefulness: raw.usefulness,
+      pinyin: raw.pinyin?.length ? [...raw.pinyin] : null,
       tags: tags.tags,
       breakdown: bd.breakdown,
       flags,
@@ -287,8 +296,13 @@ export function validateExtraction(
 function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): ValidItem | null {
   if (turnKind !== "say" || items.some((i) => i.kind === "sentence")) return null;
   const candidates = items
-    .filter((i) => i.kind === "term" && i.example?.english)
-    .map((i) => ({ term: i, hanzi: i.example!.hanzi, key: hanziKey(i.example!.hanzi) }))
+    .flatMap((i) =>
+      i.kind === "term"
+        ? i.examples
+            .filter((e) => e.english)
+            .map((e) => ({ term: i, ex: e, hanzi: e.hanzi, key: hanziKey(e.hanzi) }))
+        : [],
+    )
     .filter((c) => c.key !== c.term.hanziKey)
     .sort((a, b) => Array.from(a.key).length - Array.from(b.key).length);
   const best = candidates[0];
@@ -297,11 +311,13 @@ function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): Vali
     kind: "sentence",
     hanzi: best.hanzi,
     hanziKey: best.key,
-    english: best.term.example!.english!,
+    english: best.ex.english!,
     note: null,
     heardAs: null,
-    example: null,
+    examples: [],
     usefulness: best.term.usefulness,
+    // Gemini read the term, not this sentence; the sentence gets a pinyin job (DESIGN §5.5.3).
+    pinyin: null,
     tags: best.term.tags,
     breakdown: null,
     flags: ["from_example"],
@@ -310,15 +326,16 @@ function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): Vali
 
 // --- Dedupe into an existing phrase (§4.6 step 4) -----------------------------------------------
 
-/** Append an example unless one with the same key is there; keep at most `max` (oldest win). */
+/** Append examples unless one with the same key is there; keep at most `max` (oldest win). */
 export function mergeExamples(
   existing: readonly PhraseExample[],
-  incoming: PhraseExample | null,
+  incoming: PhraseExample | readonly PhraseExample[] | null,
   max: number = config.phrase.maxExamples,
 ): PhraseExample[] {
   const out = [...existing];
-  if (incoming && !out.some((e) => hanziKey(e.hanzi) === hanziKey(incoming.hanzi))) {
-    out.push(incoming);
+  const list = incoming === null ? [] : Array.isArray(incoming) ? incoming : [incoming];
+  for (const ex of list as readonly PhraseExample[]) {
+    if (!out.some((e) => hanziKey(e.hanzi) === hanziKey(ex.hanzi))) out.push(ex);
   }
   return out.slice(0, max);
 }
@@ -378,7 +395,7 @@ export interface MergePlan {
  */
 export function planMerge(
   p: ExistingPhrase,
-  item: Pick<ValidItem, "heardAs" | "example" | "flags"> & Partial<Pick<ValidItem, "breakdown">>,
+  item: Pick<ValidItem, "heardAs" | "examples" | "flags"> & Partial<Pick<ValidItem, "breakdown">>,
   ctx: { importId: string; turnId: string; now: number },
   rank: RankConfig = config.rank,
 ): MergePlan {
@@ -389,7 +406,10 @@ export function planMerge(
   const heardAs = p.heardAs ?? item.heardAs;
   const examples =
     p.kind === "term"
-      ? mergeExamples(p.examples, item.example && { ...item.example, turn_id: ctx.turnId })
+      ? mergeExamples(
+          p.examples,
+          item.examples.map((e) => ({ ...e, turn_id: ctx.turnId })),
+        )
       : p.examples;
   const flags = [...new Set([...p.flags, ...item.flags])].filter((f) => f !== "long");
   if (isLong(p.hanziKey)) flags.push("long");
@@ -491,7 +511,10 @@ export function planReextract(
     const heardAs = p.heardAs ?? item.heardAs;
     const examples =
       p.kind === "term"
-        ? mergeExamples(p.examples, item.example && { ...item.example, turn_id: turnId })
+        ? mergeExamples(
+            p.examples,
+            item.examples.map((e) => ({ ...e, turn_id: turnId })),
+          )
         : p.examples;
     const flags = [...new Set([...p.flags, ...item.flags])].filter((f) => f !== "long");
     if (isLong(p.hanziKey)) flags.push("long");

@@ -38,6 +38,17 @@ export interface BreakdownPart {
 export type PhraseBreakdownJson =
   { parts: BreakdownPart[]; meaning: string } | { parts: BreakdownPart[]; note: string };
 
+/** One disputed syllable of the merge; mirrors `PinyinSource` in @bamboo/shared. */
+export interface PinyinSourceJson {
+  i: number;
+  char: string;
+  computed: string;
+  gemini: string;
+  chosen: string;
+  rule: "invalid" | "referee" | "rejected" | "pending";
+  winner: "computed" | "gemini" | "other";
+}
+
 /** Per-character pinyin: `[char, syllable]`, with `null` for non-hanzi (punctuation, Latin). */
 export type PinyinPairs = [string, string | null][];
 
@@ -66,6 +77,12 @@ export const phrase = sqliteTable(
       .default(sql`'[]'`),
     pinyin: text("pinyin", { mode: "json" }).$type<PinyinPairs>().notNull(),
     pinyinOverride: text("pinyin_override", { mode: "json" }).$type<PinyinPairs>(),
+    /**
+     * H4's merge (DESIGN §5.5.3b): each disputed syllable and which source won. Null until a
+     * Gemini reading has been merged (hand-added, fallback-extracted and pre-H4 phrases); `[]`
+     * when Gemini agreed everywhere. `pinyin` holds the merged reading.
+     */
+    pinyinSources: text("pinyin_sources", { mode: "json" }).$type<PinyinSourceJson[]>(),
     usefulness: integer("usefulness"),
     turnKind: text("turn_kind", { enum: TURN_KINDS }),
     baseScore: real("base_score").notNull(),

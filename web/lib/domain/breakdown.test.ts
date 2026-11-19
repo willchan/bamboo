@@ -188,7 +188,7 @@ describe("validateExtraction and merges carry the breakdown", () => {
       flags: [],
     };
     const ctx = { importId: "i2", turnId: "t2", now: 1 };
-    const v = { heardAs: null, example: null, flags: [], breakdown: term };
+    const v = { heardAs: null, examples: [], flags: [], breakdown: term };
     expect(planMerge(p, v, ctx).patch.breakdown).toEqual(term);
     const other = { ...term, meaning: "leavening" };
     expect(planMerge({ ...p, breakdown: other }, v, ctx).patch.breakdown).toBeUndefined();

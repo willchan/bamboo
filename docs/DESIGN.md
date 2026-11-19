@@ -101,7 +101,8 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `breakdown` | json null | the card back's breakdown (§5.5.4, H3): terms `{parts: [{hanzi, gloss}] (per character), meaning}`, sentences `{parts: [{hanzi, gloss}] (per word), note}`; contract `PhraseBreakdown` (`shared/src/contracts/breakdown.ts`). No pinyin stored: each part's is sliced from the displayed pinyin. Null when there's none or it failed the checks |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
-| `pinyin` | json `[char, syllable \| null][]` | computed (§4.2); from H4, merged with Gemini's among valid readings only (§5.5.3) |
+| `pinyin` | json `[char, syllable \| null][]` | computed (§4.2), merged with Gemini's among valid readings only (§5.5.3, H4) |
+| `pinyin_sources` | json null | H4: each disputed syllable and who won, `[{i, char, computed, gemini, chosen, rule: invalid\|referee\|rejected\|pending, winner: computed\|gemini\|other}]`; `[]` when Gemini agreed everywhere; null until a Gemini reading has been merged (hand-added, fallback-extracted, pre-H4) |
 | `pinyin_override` | json null | same shape; Will's per-syllable edits |
 | `usefulness` | int null | 1–5 from the model (§5.4); null for manual |
 | `turn_kind` | text null | kind of the source turn (for ranking) |
@@ -183,6 +184,11 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
   null, `reextract` bool (default false; a re-run of an extracted turn, §4.6.1), `created_at`,
   `finished_at` null. Jobs are claimed oldest first (ids are monotonic ULIDs, so one import's
   turns are processed in order), ordinary jobs before re-runs.
+- **`pinyin_job`** (H4, §5.5.3b): the same lifecycle for `pinyin` jobs, in its own table because
+  `job.import_id` is required and a hand-added phrase has no import. Columns: `id`, `phrase_id`
+  (no fk, like `source_turn_id`), `status`, `input` json (`PinyinJobInput`), `result` json null,
+  `attempt`, `lease_expires_at` null, `model` null, `prompt_version` null, `error` null,
+  `created_at`, `finished_at` null. Claimed after ordinary extract jobs and before re-runs.
 - **`event`**: telemetry. Columns: `id`, `type`, `data` json, `at`. See §7.
 - **`setting`**: key/value: `nudge_enabled`, `nudge_last_sent_day`.
 
@@ -219,7 +225,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
 | `GET /api/agent/nudge` | agent | `NudgeResponse` `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent (a conditional upsert of `nudge_last_sent_day`, so of two overlapping polls only one gets the text) and logs `nudge_sent` |
 | `GET /api/agent/eval/turns?limit=&seed=` | agent | `EvalTurnsResponse` `{turns: [{turn_id, import_id, user_text, reply_text}], pool: {turns, imports}}`: a seeded sample of past questions with Gemini's answers for the tutor evaluation (§5.4). `limit` 1–50 (default 20), `seed` ≤ 100 chars (default `bamboo`); otherwise 400 `invalid_query`. Image-only turns (empty `user_text`) are skipped; imports are visited round-robin in a seeded order (`web/lib/domain/tutor-eval.ts`). Read-only |
-| `POST /api/jobs/claim` | worker | → `{job_id, type, attempt, lease_expires_at, input: ExtractTurnInput}` or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary jobs before re-runs (§4.6.1), then oldest first; a re-run looks the same to the worker |
+| `POST /api/jobs/claim` | worker | Optional body `{types: ('extract_turn' \| 'pinyin')[]}` (H4; none = extract_turn only, for an older worker) → `{job_id, type, attempt, lease_expires_at, input}` (`ExtractTurnInput`, or `PinyinJobInput` for `pinyin`) or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary extract jobs, then pinyin jobs, then re-runs (§4.6.1), each oldest first; a re-run looks the same to the worker |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
 | `GET /api/cron/daily` | cron | give say turns stored before the sentence rule their sentence (§4.7), re-score the queue, expire sunk and over-budget queue items (§4.7), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
@@ -287,10 +293,10 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
   override is dropped and the UI says so. Overrides store only the changed syllables (`null`
   elsewhere); the editor accepts tone marks or numbers (`dei3` → `děi`, `de5` → `de`).
 - Display (§6): ruby text above each hanzi, using the override where present.
-- Gemini's own pinyin is **never stored**. Its errors are the reason this module exists.
-- **Changing (§5.5.3, §10 #80):** H4 merges Gemini's pinyin per syllable, choosing only among
-  valid dictionary readings, with a referee for real disputes. Stored pinyin stays a valid
-  dictionary reading.
+- Gemini's pinyin is **never stored as such**: since H4 the stored reading is the computed one
+  merged per syllable with Gemini's, choosing only among valid dictionary readings, with a
+  referee for real disputes (§5.5.3b). `repinyin` keeps the referee's choices while they are still
+  valid readings (`storedPinyin`), so stored pinyin stays a valid dictionary reading.
 
 ### 4.3 Scheduling (FSRS)
 
@@ -401,11 +407,12 @@ On `extract_turn` completion, for each raw item:
    repeating an earlier item's key in the same result are dropped too.
 2. Keep `heard_as` only if it occurs (case-insensitive, spaces ignored) in `user_text`;
    otherwise null it and flag `heard_as_dropped`.
-3. Keep `example` (terms only) only if it occurs verbatim in the turn **and** contains the term's
-   `hanzi_key`; otherwise drop the example and flag `example_dropped`.
+3. Keep each example (terms only; v4 sends up to 3 as `examples`, older prompts one `example`)
+   only if it occurs verbatim in the turn **and** contains the term's `hanzi_key`; otherwise drop
+   it, flag `example_dropped` and count it.
    - **Caps per turn** (`config.extraction`, applied after the checks above, in the model's
-     order): an `errand` turn keeps its first `errandMaxItems` (1) item; a `say` turn keeps its
-     first `sayMaxTerms` (2) terms (its sentence and frame are kept). Drops are counted as
+     order): an `errand` turn keeps its first `errandMaxItems` (3; 1 before H4) items; a `say` turn
+     keeps its first `sayMaxTerms` (5; 2 before H4) terms (its sentence and frame are kept). Drops are counted as
      `dropped_over_cap`. The prompt asks for the same; the engine doesn't rely on it (§10 #64).
    - **A say turn's sentence** (`config.extraction.promoteExampleSentence`): a `say` result with
      no `sentence` gets one, the shortest example of its kept terms that has English and is more
@@ -425,7 +432,7 @@ On `extract_turn` completion, for each raw item:
    - the first time **this import** asks about it (`last_asked_import_id` differs):
      `asked_count += 1`, `last_asked_at = now`, `last_asked_import_id = import`, and log
      `asked_again`. Later turns of the same import only merge their example (§10 #28);
-   - append the new example (dedupe by key; keep the oldest 3), and fill `heard_as` and
+   - append the new examples (dedupe by key; keep the oldest 3), and fill `heard_as` and
      `breakdown` if they were empty (the first good breakdown stays); re-score;
    - `active` → apply *asked again* (§4.4);
    - `queued` → re-scored as above;
@@ -435,8 +442,11 @@ On `extract_turn` completion, for each raw item:
      cards, so its reviewed cards would never come back (§10 #29).
 5. Else, create a `queued` phrase with its cards (§4.8), `last_asked_import_id = import`.
 
-**Changing (§5.5.2, §10 #76, #77):** v4 returns no frames (frame items are dropped and counted),
-the per-turn caps are loosened, and every check above stays.
+**Since H4 (§5.5.2, §10 #76):** the caps above are loosened (3 errand items, 5 say terms) and
+v4 sends several examples per term; every check stays. Each new phrase's pinyin is merged with
+Gemini's reading (§5.5.3b), and a phrase whose reading needs the referee, or came without one,
+gets a `pinyin` job. **Changing (H2b, §10 #77):** v4's schema already has no frames; the engine
+dropping and counting frame items from older workers comes with H2b.
 
 The verbatim check itself (`occursVerbatim`, `cleanHanzi`, `turnTextKey`) lives in
 `shared/src/verbatim.ts` (since M4), so the worker's eval measures exactly what the engine drops;
@@ -856,11 +866,13 @@ only the unknown turns, chunked to ≤ 2 MB.
 `bamboo-tools segment --url <link> | --file <pdf>` is a dry run. It prints the title, the turn
 count, and the first and last 5 user prompts, and makes no API calls.
 
-### 5.3 `extract_turn` (worker → Ollama)
+### 5.3 `extract_turn` (worker → Gemini, Ollama fallback)
 
-**Changing (§5.5.2, §10 #74, #76, H4):** the worker sends each turn to Gemini with
-`extract_turn.v4` (no frames; Gemini's pinyin; breakdowns and glosses), rate-limited to the free
-tier, with Ollama as the fallback and a Mac-side name filter. What follows is v3 on Ollama.
+**Since H4 (§5.5.2, §10 #74, #76):** the worker sends each turn to Gemini with
+`extract_turn.v4` (no frames; several examples; Gemini's pinyin; breakdowns and glosses),
+rate-limited to the free tier, with Ollama as the fallback (same prompt and schema) and a
+Mac-side name filter; the worker part below describes it. The contract and prompt guidance that
+follow are v3's, which v4 extends as §5.5.2 says.
 
 Input: `{turn_id, conversation_title, user_text, reply_text}`. Prompt:
 `worker/prompts/extract_turn.v{N}.md` (the highest N wins). Output contract `ExtractTurnResult`:
@@ -931,27 +943,64 @@ each result for the `extraction` event.
   `{{conversation_title}}`, `{{user_text}}` and `{{reply_text}}` filled in one pass) and
   `<!-- repair -->` (the repair turn, with `{{errors}}`: the Zod issues as `path: message` lines,
   never values). An empty `user_text` (pasted answer, image-only prompt) and a missing title get
-  a short stand-in. The reply is cut to `maxReplyCharsForModel` (6,000) characters for the
-  model, so prompt plus reply fit `num_ctx` 8192; the engine still checks verbatim against the
-  whole turn (§10 #40).
+  a short stand-in. For Ollama the reply is cut to `maxReplyCharsForModel` (6,000) characters,
+  so prompt plus reply fit `num_ctx` 8192; Gemini gets the whole stored turn. The engine checks
+  verbatim against the whole turn either way (§10 #40). `pinyin_reading.v{N}.md` and
+  `pinyin_referee.v{N}.md` (H4) use the same format with `{{hanzi}}`, `{{context}}` and
+  `{{disputes}}`.
+- **Gemini** (H4, `worker/src/gemini.ts`): `models/{model}:generateContent` with
+  `responseMimeType: application/json` and `responseJsonSchema` (`ModelExtractTurnResultV4`,
+  zod's JSON schema without `$schema`), temperature 0, the key in the `x-goog-api-key` header
+  (never the URL). The key is `BAMBOO_GEMINI_API_KEY` from the process env or, only that key, from
+  `agent.env` (§8.1); without it the worker runs on Ollama only and claims no pinyin jobs. Model
+  and limits: `sharedConfig.worker.gemini`, overridden by `GEMINI_MODEL`, `GEMINI_RPM`,
+  `GEMINI_RPD` in worker.env.
+- **Rate limit** (`worker/src/rate-limit.ts`): a 60-second sliding window (`requestsPerMinute`)
+  and a daily count (`requestsPerDay`) that resets at midnight Pacific, both in memory. A 429
+  whose `QuotaFailure` names a per-day quota marks the day used up; any other 429 waits Google's
+  `retryDelay` (else 30 s, doubling to 5 min), at most 3 times per request. While the daily quota
+  is used up, the worker **claims nothing** until the reset (no Ollama for quota, §5.5.2); a job
+  that hits it mid-request is reported `failed` (one attempt).
+- **Fallback.** A network error, timeout, 5xx, or a 429 that keeps coming is retried once after
+  5 s; a second failure, or any other 4xx (a bad key, a refused schema), or invalid output after
+  the repair turn, sends **that job** to Ollama with the same v4 prompt and schema (reply cut,
+  Gemini's pinyin dropped), and for a model failure Gemini rests 10 min (`downMinutes`), during
+  which extraction goes straight to Ollama and pinyin jobs aren't claimed. `job.model` records
+  which model ran.
+- **Name filter** (`worker/src/names.ts`, §5.5.8): after a valid result and before posting. The
+  deny-list is read at startup from `BAMBOO_NAMES_DENY` (default `~/.config/bamboo/names.deny`);
+  a missing file is a startup warning. Latin names match case-insensitively as whole words, hanzi
+  anywhere. An item whose hanzi or breakdown part contains a name is dropped, as is such an
+  example; English fields (english, note, glosses, meaning or note, example English) are
+  rewritten with `someone`; a `heard_as` naming someone is cleared. Only the count goes out, as
+  `dropped_name` on `complete` (and in the job's log line).
+- **Pinyin jobs** (`worker/src/pinyin-job.ts`, §5.5.3b): Gemini's reading (`pinyin_reading`)
+  unless the job carries the extraction's, then, only if some syllable is a real dispute (both
+  readings valid and different, `disputedSlots` in `shared/src/pinyin-merge.ts`), one
+  `pinyin_referee` call listing each disputed character's options. The result is
+  `{gemini, referee}`; the engine re-checks every choice.
 - **Loop** (concurrency 1): heartbeat, then claim → run → `complete` → claim again at once; on
-  204, wait `POLL_INTERVAL_SECONDS`. Claim errors back off, doubling up to 5 min. While the model
-  isn't pulled or Ollama doesn't answer, it doesn't claim and re-checks every 60 s (logging the
-  problem once). The heartbeat (startup, then every 10 min, between jobs) carries `version`, the
-  checkout's short `sha`, `model` and `ollama_ok`.
+  204, wait `POLL_INTERVAL_SECONDS`. The claim names the types the worker can run now:
+  `extract_turn` and `pinyin` while Gemini is usable, `extract_turn` alone while it rests or has
+  no key (if Ollama is up), nothing while the quota is used up or no model is available (it
+  re-checks every 60 s, logging a change of state once). Claim errors back off, doubling up to 5
+  min. The heartbeat (startup, then every 10 min, between jobs) carries `version`, the checkout's
+  short `sha`, `model` (Ollama's), `ollama_ok`, `gemini_model` and `gemini_ok`.
 - **Reporting.** Ollama failing mid-job (down, HTTP error, 180 s timeout) is reported as
   `failed` and stops claims until the model check passes again. 409 `stale_attempt` and 404 drop
   the job; 422 is logged (the engine already counted it). A `complete` that fails on the network
   or with a 5xx is retried after 5, 20 and 60 s, inside the 10-min lease; after that the lease
   runs out and the engine requeues it.
-- **Logs** are one timestamped line per event (start, heartbeat, model state, one line per job:
-  id, attempt, item count, repaired, seconds, the engine's answer). Never turn text, model output
-  or tokens.
-- **Eval** (opt-in, `BAMBOO_EVAL_OLLAMA=1`, `pnpm --filter @bamboo/worker test:ollama`): the synthetic
-  turns in `worker/tests/fixtures/turns.json` through the real model; it requires every result
-  to be contract-valid and an item verbatim rate ≥ `EVAL_MIN_VERBATIM` (0.8), and reports turn-kind
-  agreement and example verbatim counts. The verbatim check it uses is the engine's
-  (`shared/src/verbatim.ts`).
+- **Logs** are one timestamped line per event (start, heartbeat, model and Gemini state, one line
+  per job: type, id, attempt, model, item count, repaired, name matches dropped, seconds, the
+  engine's answer). Gemini errors are logged as HTTP status and Google's status code only. Never
+  turn text, model output, names, the key or tokens.
+- **Eval** (opt-in; `pnpm --filter @bamboo/worker test:ollama`, and since H4 `test:gemini` with
+  `BAMBOO_EVAL_GEMINI=1`, on the Mac as `openclaw-agent`): the synthetic turns in
+  `worker/tests/fixtures/turns.json` through the real model (`worker/src/eval-run.ts`); it
+  requires every result to be contract-valid and an item verbatim rate ≥ `EVAL_MIN_VERBATIM`
+  (0.8), and reports turn-kind agreement, example verbatim, pinyin-aligned and breakdown counts.
+  The verbatim check it uses is the engine's (`shared/src/verbatim.ts`).
 
 ### 5.4 Tutor evaluation (`bamboo-eval`)
 
@@ -1069,6 +1118,14 @@ There is **one extraction path**, whatever the turn's source. The worker sends e
 - **Name filter**: before posting, the worker drops anything extracted that contains a name from
   the deny-list (§5.5.8); only a count (`dropped_name`) leaves the Mac.
 
+**Built (H4):** all of the above, as §5.3 *The worker* describes, with the per-turn caps at 3
+errand items and 5 say terms (§4.6) and `ExtractTurnResult.items` up to 12. The schema Gemini
+and Ollama answer in is `ModelExtractTurnResultV4` (`shared/src/contracts/extract.ts`): terms and
+sentences only, `examples` (≤ 3), `pinyin` (one syllable per hanzi), and `breakdown {parts,
+summary}`, which the worker turns into `ExtractItem` (`summary` → a term's `meaning` or a
+sentence's `note`; `example` = the first example). The engine dropping frame items an older
+worker might still send is H2b's.
+
 Every engine check stays (§4.6): hanzi, examples included, must appear verbatim in the turn;
 pinyin is merged (§5.5.3); dedupe; and asking again counts as forgetting. Frame items, if a model
 returns one, are dropped and counted. Existing frame phrases are **retired**: set to `dropped`
@@ -1102,6 +1159,30 @@ shows the dictionary reading. The phrase stores which source won for each disput
 and Stats shows the counts. **Stored pinyin is always a valid dictionary reading; Gemini only
 chooses among those readings.**
 
+**Built (H4):** the rules are pure and shared (`shared/src/pinyin-merge.ts`: `mergeReading`,
+`disputedSlots`, `refereeOptions`, `applySources`); the engine supplies each character's
+computed reading and valid readings (`pinyinSlots` in `web/lib/domain/pinyin.ts`, pinyin-pro
+`multiple: true`). Details:
+
+- Gemini's syllables must line up one per hanzi (punctuation, digits and Latin skipped), each one
+  plain syllable (tone numbers are converted); otherwise the reading is ignored
+  (`pinyin_misaligned` on the `extraction` event) and the phrase gets a pinyin job.
+- Rule 2 is literal: Gemini's neutral tone counts as valid only if pinyin-pro lists it (了 le
+  yes, 子 zi no), so a neutral tone the dictionary doesn't know keeps the computed reading without
+  a call. The referee's options do add each valid reading's neutral tone.
+- On 一 and 不, Gemini's citation tone agrees with the computed sandhi tone (`sandhiChars`).
+- A dispute shows the computed reading (`rule: pending`) until its pinyin job's referee answers;
+  an answer outside the options, or none, is `rejected`.
+- Will's override stays on top at display time (`displayPinyin`); an edit's override is relative
+  to the stored, merged reading. A pinyin job's answer is ignored if the phrase's hanzi changed
+  since it was queued.
+- `repinyin` (the build step) keeps a referee's choice while the character and the choice are
+  still valid (`storedPinyin`).
+- Pinyin jobs are queued for: a new phrase with a dispute (carrying Gemini's reading, so only the
+  referee runs), a new phrase with no usable reading (Ollama fallback, a promoted sentence, a
+  misaligned reading), a hand-added phrase, and an edit that changes the hanzi. Existing phrases
+  an extraction merges into keep their pinyin (H6's re-run refreshes it).
+
 #### 5.5.4 Card back (H3, H4; §10 #78)
 
 - **Terms**: a character breakdown (each character with its pinyin and a short gloss, then the
@@ -1117,7 +1198,9 @@ applied. This is an expand migration (`phrase.breakdown`, nullable json) and a c
 **Built (H3):** the column (§2.1), the `PhraseBreakdown` contract and the optional `breakdown`
 on `ExtractItem` (the Ollama schema `ModelExtractTurnResult` leaves it out until v4), the checks
 (§4.6), and the card back (§6). Editing a phrase keeps its breakdown only while it still passes
-the checks against the new hanzi and kind. Gemini writing the glosses is H4.
+the checks against the new hanzi and kind. **Built (H4):** v4 asks Gemini for the breakdown as
+`{parts, summary}` (English-only glosses; the prompt says a note can't quote characters), which
+the worker maps to a term's `meaning` or a sentence's `note`.
 
 #### 5.5.5 New cards: learned while fresh (H2; §10 #79)
 
@@ -1258,7 +1341,12 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 
 - `import_finished {import_id, kind, turns_total, turns_new, jobs_failed, phrases_new, phrases_again}`
 - `share_parse_failed {host}`
-- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, breakdowns_dropped, repaired}`
+- `extraction {turn_id, job_id, reextract, model, prompt_version, latency_ms, turn_kind, items, kept, dropped_not_verbatim, dropped_duplicate, dropped_over_cap, tags_dropped, examples_dropped, heard_as_dropped, sentence_promoted, breakdowns_dropped, repaired, dropped_name, pinyin_jobs, pinyin_misaligned}`
+  (H4 added the last three: the worker's name-filter count, never a name; pinyin jobs queued for
+  the new phrases; Gemini readings that didn't line up with the hanzi)
+- `pinyin_disagreement {phrase_id, syllables: [{i, computed, gemini, chosen, rule, winner}], outcome: computed|gemini|other|mixed}`
+  (H4, §5.5.3b): logged once a phrase's disputes are settled (at once for invalid readings, after
+  the referee otherwise)
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind}`
@@ -1270,10 +1358,11 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 - `review {card_type, rating, source}`
 - `round_finished {cards, ms}`
 - `nudge_sent {local_time, nudge_at}` (`HH:MM`, household time)
-- `worker_heartbeat {...}`
+- `worker_heartbeat {version, sha, model, ollama_ok, gemini_model, gemini_ok}` (the Gemini fields
+  since H4)
 - *from H2b–H6 (§5.5):* `phrase_retired {phrase_id, reason}` (a retired frame, or a bulk Retire),
-  `pinyin_disagreement {phrase_id, syllables, outcome}`; `extraction` gains `dropped_frame` and
-  `dropped_name` (a count, never the name)
+  `extraction` gains `dropped_frame` (H2b). `pinyin_disagreement` and `dropped_name` came with H4
+  (above)
 
 The Stats page shows, for the last 4 weeks (`config.stats`; pure measures in
 `web/lib/domain/stats.ts`, queries in `web/lib/repo/stats.ts`):
@@ -1289,6 +1378,9 @@ The Stats page shows, for the last 4 weeks (`config.stats`; pure measures in
   introduced), also split by kind and by usefulness (`manual` for hand-added) (target < 15%);
 - the extraction drop rate: `dropped_not_verbatim` over `items` from `extraction` events
   (target < 5%);
+- pinyin disagreements with Gemini (H4): syllables and phrases from `pinyin_disagreement` events,
+  split into not a valid reading (dictionary kept) and the referee's picks (Gemini's, the
+  dictionary's, another, rejected);
 - queue size;
 - the last worker heartbeat.
 
@@ -1310,7 +1402,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1). On a 401, `bamboo-tools` names where its token came from (`BAMBOO_AGENT_API_TOKEN in <agent.env path>`, or `environment variable BAMBOO_AGENT_API_TOKEN`), never the value (§10 #46) |
-| `BAMBOO_GEMINI_API_KEY` *(from H4)* | worker | the free-tier Gemini key (§5.5.7, §10 #82), in `openclaw-agent`'s `~/.config/bamboo/agent.env`; not in `worker.env` or the gateway env. `~/.config/bamboo/names.deny` (§5.5.8) sits beside it |
+| `BAMBOO_GEMINI_API_KEY` (H4) | worker | the free-tier Gemini key (§5.5.7, §10 #82), in `openclaw-agent`'s `~/.config/bamboo/agent.env` (`BAMBOO_AGENT_ENV` overrides the path); the worker reads only this key from that file, and the process env wins. Not in `worker.env` or the gateway env. Without it the worker extracts on Ollama only. `~/.config/bamboo/names.deny` (§5.5.8) sits beside it |
+| `GEMINI_MODEL` (`gemini-3.8-flash`), `GEMINI_RPM` (5), `GEMINI_RPD` (20), `BAMBOO_NAMES_DENY` (`~/.config/bamboo/names.deny`) (H4) | worker | in `worker.env` (`ops/worker.env.example`); empty means the default from `sharedConfig.worker` |
 | `BAMBOO_API_URL`, `WORKER_API_TOKEN`, `OLLAMA_URL` (`http://localhost:11434`), `OLLAMA_TEXT_MODEL` (`qwen3.8:27b`), `POLL_INTERVAL_SECONDS` (15) | worker | `~/.config/bamboo/worker.env` in the `openclaw-agent` account (mode 600), from `ops/worker.env.example`; the worker reads it itself (`BAMBOO_WORKER_ENV` overrides the path). **The file wins** over the process env for every key it lists (§10 #45): its keys are generic, so an inherited `WORKER_API_TOKEN` or `OLLAMA_URL` can't override Bamboo's. A key the file leaves out still comes from the env |
 
 ### 8.2 Deploy
@@ -1551,9 +1644,11 @@ bamboo/
               seed-data.ts, scripts/dev-server.ts + shot.ts (§8.6), scripts/smoke.ts
               (`pnpm smoke`), e2e/ (Playwright; e2e/seeded/ on the seeded server)
   db/         @bamboo/db — src/schema/*, migrations/, migrate script, prod-copy.ts (§8.6)
-  shared/     @bamboo/shared — src/contracts/*, text.ts, turns.ts, segment.ts, config.ts;
+  shared/     @bamboo/shared — src/contracts/*, text.ts, turns.ts, segment.ts, config.ts,
+              pinyin-merge.ts (H4);
               tests/fixtures/ (synthetic PDF text + expected turns)
-  worker/     @bamboo/worker — src/ (claim loop, engine and ollama clients, config, eval),
+  worker/     @bamboo/worker — src/ (claim loop, engine, Gemini and Ollama clients, rate limit,
+              name filter, pinyin jobs, config, evals),
               prompts/, tests/fixtures/ (synthetic turns, recorded Ollama responses)
   agent/      skills/bamboo/SKILL.md; install.sh (`make agent-install`);
               tools/ (@bamboo/tools → bin/bamboo-tools; src/ cli, share, pdf, importer, api, env;
@@ -1652,6 +1747,10 @@ bamboo/
 | 81 | Rebuild the queue from the 147 stored turns through an extended Re-run, one turn per request at the free-tier rate; prod isn't wiped (§5.5.6) | Learning cards and review history must survive. The extension refreshes English, note and breakdown on every phrase it picks in any status, never hanzi, cards or FSRS state, and reports active, pinned or asked-again phrases it no longer picks for a bulk Retire that keeps `review_log` |
 | 82 | Keys: a new free-tier Gemini key in its own Google project is the `bamboo` agent's auth profile (`google:bamboo-free`), pinned first; PandaDen's paid key in `~/.openclaw/.env` stays, and falling back to it is acceptable; the worker reads the free key from `agent.env` (§5.5.7) | Keeps Bamboo's usage apart from PandaDen's. `agent.env` is already Bamboo's own Mac-side secret file, out of the shared gateway env (#33, #42) |
 | 83 | Privacy on the Gemini path: prompts forbid names (宝宝, 孩子, 阿姨, 月嫂, 妈妈 instead) and personal health specifics in answers and cards; a Mac-only deny-list (`~/.config/bamboo/names.deny`, filled in by Will) drops anything extracted that contains a listed name; only the turn and the prompt go to Gemini; prod data is counts only (§5.5.8) | Replaces PRD §4.2's "family content never goes to a cloud LLM": the turns already went to Gemini when Will asked them, so the rule is now that names and health details never reach cards, logs, the repo or extra context. The list stays on the Mac because writing it anywhere else would leak the names it protects |
+| 84 | `pinyin` jobs live in their own table (`pinyin_job`), claimed after ordinary extract jobs and before re-runs; the worker names the types it can run in the claim body, and an older worker (no body) gets extract jobs only (H4, §2.3, §3.2) | `job.import_id` is required and a hand-added phrase has no import; making it nullable would rebuild the table, which isn't expand-only. The claim body keeps an older worker from claiming a job it can't parse during a deploy, and lets the worker skip pinyin jobs while Gemini rests |
+| 85 | The merge's rule 2 uses pinyin-pro's readings literally (a neutral tone counts only if listed); 一/不's citation tones agree with the computed sandhi; a dispute shows the computed reading until the referee answers; the worker decides whether to call the referee with the same shared rules the engine re-checks (H4, §5.5.3) | Literal rule 2 never lets Gemini put an unlisted reading on a card without a check; the referee's options still include neutral tones. Sharing the rules (`shared/src/pinyin-merge.ts`) means the worker spends a referee call only on a real dispute, and the engine still trusts nothing it sends |
+| 86 | Gemini's free-tier limits are config defaults (5/min, 20/day for `gemini-3.8-flash`) overridable in worker.env, with Google's 429 as the backstop; a daily-quota 429 stops claims until midnight Pacific, and the job that hit it uses one attempt; other Gemini failures send that job to Ollama and rest Gemini 10 min (H4, §5.3) | Google's rate-limit page now shows per-project limits only in AI Studio, not as published numbers, so the worker can't hard-code the truth; conservative defaults plus the 429s keep it inside whatever the project has. Quota waits instead of falling back (Will's decision, PLAN H4 Notes); failing the one job that hit it beats holding a lease for hours |
+| 87 | The name filter rewrites a name in an English field to `someone`, drops an item or example whose Chinese contains one, clears a `heard_as` that does, and reports only a count (H4, §5.5.8) | A generic word is safe whoever was named; a role word (阿姨, 宝宝) would need knowing who the name belongs to, which the deny-list deliberately doesn't say |
 
 ## Appendix A — Synthetic fixtures
 

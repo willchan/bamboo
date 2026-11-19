@@ -41,15 +41,16 @@ Read only the sections your task needs.
   readings.** Pinyin is computed (pinyin-pro, large dictionary) and merged per syllable with
   Gemini's: a reading that isn't valid for the character loses to the computed one, a real
   dispute goes to a referee call limited to valid readings plus the neutral tone, and Will's
-  override wins (DESIGN §5.5.3). No context-rule heuristics (H1 removes the 得/长 rules; H4 adds
-  the merge). Extracted hanzi, including example sentences, must appear verbatim in the source
+  override wins (DESIGN §5.5.3). No context-rule heuristics (H1 removed the 得/长 rules; H4 added
+  the merge, `shared/src/pinyin-merge.ts`). Extracted hanzi, including example sentences, must appear verbatim in the source
   turn, or they are dropped; a card-back breakdown must match its phrase's hanzi exactly.
 - **Gemini at runtime, nothing else.** The `#bamboo` agent (tutor, Gemini Flash) and the
   worker's extraction (Gemini, free-tier key) are the only LLM calls; Ollama is only the worker's
   fallback, and the engine on Vercel calls no LLM. An extraction request carries only the prompt
-  and one turn. The tutor never writes cards: every turn goes through the worker and the engine's checks.
-  The agent never reads a share link, PDF or pasted answer itself (DESIGN §5.5, §10 #74; until
-  H4 and H5 land, the worker and agent still run on Ollama).
+  and one turn (a `pinyin` job's: the prompt and one phrase with its examples). The tutor never
+  writes cards: every turn goes through the worker and the engine's checks. The agent never reads
+  a share link, PDF or pasted answer itself (DESIGN §5.5, §10 #74; the worker is on Gemini since
+  H4; until H5 lands, the agent still runs on Ollama).
 - **Prompts are versioned files** in `worker/prompts/`. Changing a prompt means a new version file;
   jobs record `prompt_version`.
 - **Tunables live in config**: `web/lib/config.ts` (engine) and `shared/src/config.ts` (Mac side).
@@ -109,7 +110,8 @@ make prod-copy-clean                       # delete the copy when you're done
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
 pnpm smoke https://bamboo-panda.vercel.app   # after each deploy (prod): public, read-only checks, no secrets (cloud: README › After each deploy)
 make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
-pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model
+pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model (the fallback)
+BAMBOO_EVAL_GEMINI=1 pnpm --filter @bamboo/worker test:gemini   # Mac, as openclaw-agent: synthetic turns through Gemini (free-tier key in agent.env; counts only)
 make tutor-eval ARGS="run | serve | score …"   # Mac, as openclaw-agent: local tutor evaluation (DESIGN §5.4); output in ~/bamboo-eval/
 ```
 

@@ -665,8 +665,7 @@ describe("extract results", () => {
             items: [term("高压锅", "pressure cooker", { heard_as: "gaoyaguo", usefulness: 5 })],
           }
         : t.reply_text.includes("泡打粉")
-          ? // An errand keeps its first item (config.extraction.errandMaxItems).
-            { turn_kind: "errand", items: [term("泡打粉", "baking powder"), term("面粉", "flour")] }
+          ? { turn_kind: "errand", items: [term("泡打粉", "baking powder")] }
           : { turn_kind: "say", items: [] },
     );
     const row = await importRow(import_id);

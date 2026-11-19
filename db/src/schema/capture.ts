@@ -111,3 +111,34 @@ export const job = sqliteTable(
 );
 
 export type Job = typeof job.$inferSelect;
+
+/**
+ * `pinyin` jobs (DESIGN §5.5.3b, H4): Gemini's reading of one phrase, then the referee. Their own
+ * table because `job.import_id` is required and a hand-added phrase has no import (making it
+ * nullable would rebuild the table, which isn't expand-only). Same lifecycle as `job`: queued →
+ * leased → done | failed, attempts counted by the engine.
+ */
+export const pinyinJob = sqliteTable(
+  "pinyin_job",
+  {
+    id: text("id").primaryKey(),
+    /** `phrase.id`; a plain column, as `phrase.source_turn_id`. */
+    phraseId: text("phrase_id").notNull(),
+    status: text("status", { enum: JOB_STATUSES }).notNull(),
+    input: text("input", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    result: text("result", { mode: "json" }).$type<Record<string, unknown>>(),
+    attempt: integer("attempt").notNull().default(0),
+    leaseExpiresAt: integer("lease_expires_at"),
+    model: text("model"),
+    promptVersion: text("prompt_version"),
+    error: text("error"),
+    createdAt: integer("created_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [
+    index("pinyin_job_status_created_idx").on(t.status, t.createdAt),
+    index("pinyin_job_phrase_idx").on(t.phraseId),
+  ],
+);
+
+export type PinyinJob = typeof pinyinJob.$inferSelect;

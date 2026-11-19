@@ -135,3 +135,49 @@ export function extractionDropRate(events: readonly ExtractionEvent[]): Rate {
   }
   return rate(dropped, items);
 }
+
+export interface PinyinDisagreements {
+  /** Phrases with a settled disagreement (`pinyin_disagreement` events). */
+  phrases: number;
+  /** Disputed syllables, by how they were settled (DESIGN §5.5.3b). */
+  syllables: number;
+  /** Gemini's reading wasn't valid for the character: the computed one stayed, no call. */
+  invalid: number;
+  /** The referee chose Gemini's reading, kept the computed one, or picked a third valid one. */
+  refereeGemini: number;
+  refereeComputed: number;
+  refereeOther: number;
+  /** The referee answered outside the valid readings (or not at all): the computed one stayed. */
+  rejected: number;
+}
+
+/** Counts from `pinyin_disagreement` events: how often the merge had to settle a syllable. */
+export function pinyinDisagreements(
+  events: readonly { syllables?: unknown }[],
+): PinyinDisagreements {
+  const out: PinyinDisagreements = {
+    phrases: 0,
+    syllables: 0,
+    invalid: 0,
+    refereeGemini: 0,
+    refereeComputed: 0,
+    refereeOther: 0,
+    rejected: 0,
+  };
+  for (const e of events) {
+    const syllables = Array.isArray(e.syllables) ? (e.syllables as Record<string, unknown>[]) : [];
+    if (!syllables.length) continue;
+    out.phrases += 1;
+    for (const s of syllables) {
+      out.syllables += 1;
+      if (s.rule === "invalid") out.invalid += 1;
+      else if (s.rule === "rejected") out.rejected += 1;
+      else if (s.rule === "referee") {
+        if (s.winner === "gemini") out.refereeGemini += 1;
+        else if (s.winner === "other") out.refereeOther += 1;
+        else out.refereeComputed += 1;
+      }
+    }
+  }
+  return out;
+}

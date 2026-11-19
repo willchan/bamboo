@@ -1,16 +1,22 @@
 // Entry point (launchd: ops/launchd/com.bamboo.worker.plist; by hand: pnpm --filter @bamboo/worker
 // start). Exits 78 (EX_CONFIG) when worker.env is missing or incomplete.
+import { sharedConfig } from "@bamboo/shared";
 import {
   ConfigError,
   EngineClient,
+  GeminiClient,
   OllamaClient,
+  RateLimiter,
   WORKER_NAME,
   Worker,
+  agentEnvPath,
   envFilePath,
   gitSha,
+  loadDenyList,
   loadEnvFile,
   loadPrompt,
   readConfig,
+  readGeminiKey,
   workerVersion,
 } from "./index";
 import { consoleLog as log } from "./log";
@@ -35,10 +41,36 @@ const version = workerVersion();
 const sha = gitSha();
 log(`${WORKER_NAME} ${version} (${sha ?? "no git sha"}) → ${config.apiUrl}`);
 
+// The free-tier key (DESIGN §5.5.7): from agent.env, never logged.
+const key = readGeminiKey(process.env, agentEnvPath());
+if (key.source === "file") log(`gemini key: BAMBOO_GEMINI_API_KEY in ${agentEnvPath()}`);
+else if (key.source === "env") log("gemini key: environment variable BAMBOO_GEMINI_API_KEY");
+if (key.tooOpen) log(`warning: ${agentEnvPath()} is readable by others; run chmod 600 on it`);
+const gemini = key.key
+  ? new GeminiClient(
+      config.gemini.model,
+      key.key,
+      new RateLimiter({
+        requestsPerMinute: config.gemini.requestsPerMinute,
+        requestsPerDay: config.gemini.requestsPerDay,
+        timeZone: sharedConfig.worker.gemini.quotaTimeZone,
+      }),
+      { log },
+    )
+  : null;
+if (gemini) {
+  log(
+    `gemini: ${gemini.model}, ${config.gemini.requestsPerMinute}/min, ${config.gemini.requestsPerDay}/day`,
+  );
+}
+
 const worker = new Worker({
   engine: new EngineClient(config.apiUrl, config.token),
   ollama: new OllamaClient(config.ollamaUrl, config.model),
+  gemini,
   prompt: loadPrompt(),
+  pinyinPrompts: { reading: loadPrompt("pinyin_reading"), referee: loadPrompt("pinyin_referee") },
+  deny: loadDenyList(config.namesDenyPath),
   model: config.model,
   pollIntervalMs: config.pollIntervalMs,
   version,

@@ -10,4 +10,5 @@ export * from "./turns";
 export * from "./segment";
 export * from "./verbatim";
 export * from "./random";
+export * from "./pinyin-merge";
 export * from "./contracts/index";

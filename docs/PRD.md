@@ -173,10 +173,12 @@ The behavior:
   backlog and becomes his starter material. The conversation's title ("Yuesao…", "Toddler…") is
   used as context for who phrases are for.
 - Each new question is classified (**decode / say / errand / other**) and mined for terms (with
-  examples) and short sentences (no frames since 2026-11). Until H4: a "how do I say" question
-  gives at most its sentence, 2 key words and a frame; an errand question at most one noun,
-  usually none. From H4 these caps are loosened: a comparison with decks Gemini made showed
-  Bamboo missing real words.
+  examples) and short sentences (no frames since 2026-11). Since H4 Gemini does this, with
+  Bamboo's checks on everything it returns: a "how do I say" question gives its sentence and up to
+  5 key words (each with up to 3 example sentences from the answer); an errand question up to 3
+  nouns, often none. The earlier caps (2 words, 1 noun) were set for the local model; a comparison
+  with decks Gemini made showed Bamboo missing real words. Nothing that names a person reaches a
+  card.
 - Everything extracted goes into a ranked **Up next** queue. Ranking:
   - **common words rank high**: how often a word is used in everyday spoken Mandarin, from a
     bundled word list (not the LLM's opinion). Baby and feeding words aren't held back for being

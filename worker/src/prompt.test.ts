@@ -10,9 +10,9 @@ const FILE = (n: string) =>
   `<!-- note ${n} -->\n<!-- system -->\nS${n}\n<!-- user -->\nU {{user_text}}\n<!-- repair -->\nR {{errors}}\n`;
 
 describe("prompt files", () => {
-  it("the shipped prompt loads as extract_turn.v3 with all three parts", () => {
+  it("the shipped prompt loads as extract_turn.v4 with all three parts", () => {
     const p = loadPrompt();
-    expect(p.version).toBe("extract_turn.v3");
+    expect(p.version).toBe("extract_turn.v4");
     expect(p.system).toContain("turn_kind");
     expect(p.user).toContain("{{user_text}}");
     expect(p.user).toContain("{{reply_text}}");
@@ -20,6 +20,24 @@ describe("prompt files", () => {
     expect(p.repair).toContain("{{errors}}");
     // The comment header is not part of the system message.
     expect(p.system).not.toContain("Never edit a released version");
+  });
+
+  it("every Gemini prompt carries the privacy rules (DESIGN §5.5.8)", () => {
+    const v4 = loadPrompt().system;
+    expect(v4).toMatch(/Never put a person's name in a card/u);
+    for (const role of ["宝宝", "孩子", "阿姨", "月嫂", "妈妈"]) expect(v4).toContain(role);
+    expect(v4).toMatch(/No personal health specifics/u);
+    expect(v4).toContain("胀气");
+    // H3: a breakdown's glosses and note are English only.
+    expect(v4).toMatch(/English only\*\*: never quote Chinese/u);
+    expect(v4).not.toMatch(/frame/iu);
+    for (const name of ["pinyin_reading", "pinyin_referee"]) {
+      const p = loadPrompt(name);
+      expect(p.version).toBe(`${name}.v1`);
+      expect(p.system).toMatch(/Never a person's name/u);
+      expect(p.user).toContain("{{hanzi}}");
+    }
+    expect(loadPrompt("pinyin_referee").user).toContain("{{disputes}}");
   });
 
   it("lists exactly the engine's tags", () => {

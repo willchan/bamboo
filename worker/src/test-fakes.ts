@@ -3,11 +3,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  ClaimRequest,
   CompleteRequest,
   ExtractTurnResult,
   Heartbeat,
+  PinyinJobResult,
   type ClaimedJob,
   type ExtractTurnInput,
+  type PinyinJobInput,
 } from "@bamboo/shared";
 import { PROMPTS_DIR } from "./prompt";
 
@@ -34,12 +37,11 @@ export const fixtureTurns = (
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-interface FakeJob {
+type FakeJob = {
   job_id: string;
-  input: ExtractTurnInput;
   status: "queued" | "running" | "done" | "failed";
   attempt: number;
-}
+} & ({ type: "extract_turn"; input: ExtractTurnInput } | { type: "pinyin"; input: PinyinJobInput });
 
 /** The engine's job routes with M3's rules: attempts counted here, max 3, 409 on a stale attempt. */
 export class FakeEngine {
@@ -48,6 +50,8 @@ export class FakeEngine {
   readonly heartbeats: Heartbeat[] = [];
   readonly completes: CompleteRequest[] = [];
   readonly calls: string[] = [];
+  /** The `types` each claim asked for (undefined: no body). */
+  readonly claimTypes: (string[] | undefined)[] = [];
   /** The next N `complete` calls fail on the network (before reaching the "server"). */
   networkFailCompletes = 0;
   /** The next N `done` results get 422 invalid_result whatever they hold. */
@@ -58,7 +62,11 @@ export class FakeEngine {
   onClaim?: (job: ClaimedJob) => void;
 
   add(input: ExtractTurnInput, jobId = `job-${this.jobs.length + 1}`): void {
-    this.jobs.push({ job_id: jobId, input, status: "queued", attempt: 0 });
+    this.jobs.push({ job_id: jobId, type: "extract_turn", input, status: "queued", attempt: 0 });
+  }
+
+  addPinyin(input: PinyinJobInput, jobId = `pinyin-${this.jobs.length + 1}`): void {
+    this.jobs.push({ job_id: jobId, type: "pinyin", input, status: "queued", attempt: 0 });
   }
 
   /** Make the job's lease expire and someone else claim it (its attempt moves on). */
@@ -84,17 +92,20 @@ export class FakeEngine {
         this.serverErrorClaims -= 1;
         return json(500, { error: "conflict", message: "boom" });
       }
-      const j = this.jobs.find((x) => x.status === "queued");
+      const types = body === undefined ? undefined : ClaimRequest.parse(body).types;
+      this.claimTypes.push(types);
+      const allowed = types ?? ["extract_turn"];
+      const j = this.jobs.find((x) => x.status === "queued" && allowed.includes(x.type));
       if (!j) return new Response(null, { status: 204 });
       j.status = "running";
       j.attempt += 1;
-      const claimed: ClaimedJob = {
+      const claimed = {
         job_id: j.job_id,
-        type: "extract_turn",
+        type: j.type,
         attempt: j.attempt,
         lease_expires_at: Date.now() + 600_000,
         input: j.input,
-      };
+      } as ClaimedJob;
       this.onClaim?.(claimed);
       return json(200, claimed);
     }
@@ -114,7 +125,8 @@ export class FakeEngine {
       if (req.status === "done") {
         const refuse = this.refuseResults > 0;
         if (refuse) this.refuseResults -= 1;
-        if (refuse || !ExtractTurnResult.safeParse(req.result).success) {
+        const schema = j.type === "pinyin" ? PinyinJobResult : ExtractTurnResult;
+        if (refuse || !schema.safeParse(req.result).success) {
           retryOrFail();
           return json(422, { error: "invalid_result", message: `job is now ${j.status}` });
         }
@@ -150,6 +162,63 @@ export class FakeOllama {
       return json(200, { model: body.model, message: { role: "assistant", content }, done: true });
     }
     return json(404, { error: "not found" });
+  };
+}
+
+/**
+ * A fake Gemini generateContent endpoint. `replies` are served in order: a string is the reply's
+ * JSON text; a number is an HTTP error status (429 per-minute unless `daily`), `"network"` throws.
+ */
+export type GeminiReply = string | number | "network" | { status: 429; daily: true };
+
+export class FakeGemini {
+  readonly key = "fake-gemini-key-0000";
+  replies: GeminiReply[] = [];
+  readonly bodies: { body: Record<string, unknown>; url: string; headers: Headers }[] = [];
+
+  fetch: typeof fetch = async (input, init) => {
+    const url = String(input);
+    const headers = new Headers(init?.headers);
+    this.bodies.push({ body: JSON.parse(String(init?.body)), url, headers });
+    if (headers.get("x-goog-api-key") !== this.key) {
+      return json(400, { error: { code: 400, status: "INVALID_ARGUMENT" } });
+    }
+    const r = this.replies.shift();
+    if (r === undefined) return json(500, { error: { code: 500, status: "INTERNAL" } });
+    if (r === "network") throw new TypeError("fetch failed");
+    if (typeof r === "object") {
+      return json(429, {
+        error: {
+          code: 429,
+          status: "RESOURCE_EXHAUSTED",
+          details: [
+            {
+              "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+              violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier" }],
+            },
+          ],
+        },
+      });
+    }
+    if (r === 429) {
+      return json(429, {
+        error: {
+          code: 429,
+          status: "RESOURCE_EXHAUSTED",
+          details: [
+            {
+              "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+              violations: [{ quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" }],
+            },
+            { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "7s" },
+          ],
+        },
+      });
+    }
+    if (typeof r === "number") return json(r, { error: { code: r, status: "UNAVAILABLE" } });
+    return json(200, {
+      candidates: [{ content: { role: "model", parts: [{ text: r }] }, finishReason: "STOP" }],
+    });
   };
 }
 

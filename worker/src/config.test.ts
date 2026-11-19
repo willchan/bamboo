@@ -2,7 +2,14 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ConfigError, envFilePath, loadEnvFile, readConfig } from "./config";
+import {
+  ConfigError,
+  agentEnvPath,
+  envFilePath,
+  loadEnvFile,
+  readConfig,
+  readGeminiKey,
+} from "./config";
 
 const SECRET = "s3cret-value-never-logged";
 
@@ -16,6 +23,8 @@ describe("readConfig", () => {
       ollamaUrl: "http://localhost:11434",
       model: "qwen3.8:27b",
       pollIntervalMs: 15_000,
+      gemini: { model: "gemini-3.8-flash", requestsPerMinute: 5, requestsPerDay: 20 },
+      namesDenyPath: expect.stringMatching(/\.config\/bamboo\/names\.deny$/u),
     });
   });
 
@@ -115,6 +124,10 @@ describe("env file", () => {
     const s = loadEnvFile(join(import.meta.dirname, "..", "..", "ops", "worker.env.example"), env);
     expect(s.keys.sort()).toEqual([
       "BAMBOO_API_URL",
+      "BAMBOO_NAMES_DENY",
+      "GEMINI_MODEL",
+      "GEMINI_RPD",
+      "GEMINI_RPM",
       "OLLAMA_TEXT_MODEL",
       "OLLAMA_URL",
       "POLL_INTERVAL_SECONDS",
@@ -123,5 +136,51 @@ describe("env file", () => {
     // The token is a placeholder, so a fresh copy is refused until Will pastes the real one.
     expect(env.WORKER_API_TOKEN).toBe("");
     expect(env.BAMBOO_API_URL).toBe("https://bamboo-panda.vercel.app");
+    // The Gemini key lives in agent.env, never in worker.env.
+    expect(s.keys).not.toContain("BAMBOO_GEMINI_API_KEY");
+  });
+});
+
+describe("readGeminiKey (synthetic key and files)", () => {
+  const FAKE = "fake-gemini-key-for-tests";
+  const file = (text: string, mode = 0o600) => {
+    const dir = mkdtempSync(join(tmpdir(), "bamboo-agent-env-"));
+    const p = join(dir, "agent.env");
+    writeFileSync(p, text, { mode });
+    return p;
+  };
+
+  it("reads only BAMBOO_GEMINI_API_KEY from agent.env", () => {
+    const p = file(`BAMBOO_AGENT_API_TOKEN=other\nBAMBOO_GEMINI_API_KEY=${FAKE}\n`);
+    const env: Record<string, string | undefined> = {};
+    expect(readGeminiKey(env, p)).toEqual({ key: FAKE, source: "file", tooOpen: false });
+    // Nothing else from the file reaches the environment.
+    expect(env).toEqual({});
+  });
+
+  it("the process env wins; absent everywhere is null; an open file is flagged", () => {
+    const p = file(`BAMBOO_GEMINI_API_KEY=${FAKE}\n`, 0o644);
+    expect(readGeminiKey({ BAMBOO_GEMINI_API_KEY: "from-env" }, p).source).toBe("env");
+    expect(readGeminiKey({}, p).tooOpen).toBe(true);
+    expect(readGeminiKey({}, "/nonexistent/agent.env")).toEqual({
+      key: null,
+      source: null,
+      tooOpen: false,
+    });
+    expect(readGeminiKey({}, file("BAMBOO_API_URL=https://x\n")).key).toBeNull();
+  });
+
+  it("agentEnvPath honours BAMBOO_AGENT_ENV", () => {
+    expect(agentEnvPath({ BAMBOO_AGENT_ENV: "/x/agent.env" })).toBe("/x/agent.env");
+    expect(agentEnvPath({}, "/home/u")).toBe("/home/u/.config/bamboo/agent.env");
+  });
+
+  it("GEMINI_RPM/RPD must be whole numbers", () => {
+    const base = { BAMBOO_API_URL: "https://b.test", WORKER_API_TOKEN: "t" };
+    expect(readConfig({ ...base, GEMINI_RPM: "10", GEMINI_RPD: "500" }).gemini).toMatchObject({
+      requestsPerMinute: 10,
+      requestsPerDay: 500,
+    });
+    expect(() => readConfig({ ...base, GEMINI_RPM: "fast" })).toThrow(/GEMINI_RPM/u);
   });
 });

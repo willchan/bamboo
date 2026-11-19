@@ -7,6 +7,7 @@ import {
   imports,
   job,
   phrase,
+  pinyinJob,
   reviewLog,
   turn,
   type Db,
@@ -21,6 +22,7 @@ import {
   turnKey,
   type ClaimedJob,
   type ExtractTurnInput,
+  type JobType,
   type Heartbeat,
   type ImportRequest,
   type Notification,
@@ -31,6 +33,7 @@ import { config } from "../config";
 import { importSummary, workerStatus, type WorkerStatus } from "../domain/imports";
 import { isLeaseExpired, isStaleAttempt, leaseExpiresAt, statusAfterFailure } from "../domain/jobs";
 import { initialCardTypes } from "../domain/phrase";
+import { mergedPinyin } from "../domain/pinyin";
 import {
   expiredPhraseIds,
   planMerge,
@@ -45,6 +48,7 @@ import { reviewCard } from "../domain/fsrs";
 import { eventRow, newId, runBatch } from "./db";
 import { listQueue, phraseRows } from "./phrases";
 import { fsrsColumns } from "./review";
+import { claimPinyinJob, completePinyinJob, pinyinFollowUps, sweepPinyinLeases } from "./pinyin";
 
 const OPEN_JOB = ["queued", "leased"] as const;
 /** SQLite caps bound variables per statement; stay well under it. */
@@ -324,6 +328,7 @@ export async function sweepExpiredLeases(
     if (next === "failed") touched.add(j.importId);
   }
   for (const id of touched) await maybeFinishImport(db, id, now);
+  await sweepPinyinLeases(db, now);
   return out;
 }
 
@@ -360,17 +365,39 @@ function failWrites(
 }
 
 /**
- * `POST /api/jobs/claim`: lease the oldest queued job (attempt + 1), or null when idle. Re-runs
- * (§4.6.1) wait behind every ordinary job, so a new import is never stuck behind a backlog.
+ * `POST /api/jobs/claim`: lease the oldest queued job (attempt + 1) of the types the worker asked
+ * for, or null when idle. Order: ordinary extract_turn jobs, then `pinyin` jobs (small, H4), then
+ * re-runs (§4.6.1), so a new import is never stuck behind a backlog. Without `types` (an older
+ * worker) only extract_turn jobs are offered.
  */
-export async function claimJob(db: Db, now: number): Promise<ClaimedJob | null> {
+export async function claimJob(
+  db: Db,
+  now: number,
+  types: readonly JobType[] = ["extract_turn"],
+): Promise<ClaimedJob | null> {
   await sweepExpiredLeases(db, now);
+  if (types.includes("extract_turn")) {
+    const ordinary = await claimExtractJob(db, now, false);
+    if (ordinary) return ordinary;
+  }
+  if (types.includes("pinyin")) {
+    const p = await claimPinyinJob(db, now);
+    if (p) return p;
+  }
+  return types.includes("extract_turn") ? claimExtractJob(db, now, true) : null;
+}
+
+async function claimExtractJob(
+  db: Db,
+  now: number,
+  reextract: boolean,
+): Promise<ClaimedJob | null> {
   for (let tries = 0; tries < 3; tries++) {
     const next = await db
       .select()
       .from(job)
-      .where(eq(job.status, "queued"))
-      .orderBy(asc(job.reextract), asc(job.createdAt), asc(job.id))
+      .where(and(eq(job.status, "queued"), eq(job.reextract, reextract)))
+      .orderBy(asc(job.createdAt), asc(job.id))
       .limit(1)
       .get();
     if (!next) return null;
@@ -382,7 +409,7 @@ export async function claimJob(db: Db, now: number): Promise<ClaimedJob | null> 
     if (res.rowsAffected === 0) continue; // someone else got it
     return {
       job_id: next.id,
-      type: next.type,
+      type: "extract_turn",
       attempt: next.attempt + 1,
       lease_expires_at: lease,
       input: next.input as ExtractTurnInput,
@@ -401,6 +428,7 @@ export interface CompleteBody {
   prompt_version?: string | null;
   latency_ms?: number | null;
   repaired?: boolean | null;
+  dropped_name?: number | null;
 }
 
 export type CompleteResult =
@@ -424,7 +452,10 @@ export async function completeJob(
   now: number,
 ): Promise<CompleteResult> {
   const j = await db.query.job.findFirst({ where: eq(job.id, body.job_id) });
-  if (!j) return { ok: false, error: "not_found" };
+  if (!j) {
+    const pj = await db.query.pinyinJob.findFirst({ where: eq(pinyinJob.id, body.job_id) });
+    return pj ? completePinyinJob(db, pj, body, now) : { ok: false, error: "not_found" };
+  }
   if (isStaleAttempt(j, body.attempt)) return { ok: false, error: "stale_attempt" };
   const meta = { model: body.model ?? null, promptVersion: body.prompt_version ?? null };
 
@@ -502,6 +533,9 @@ export async function completeJob(
           tags_dropped: applied.validation.tagsDropped,
           sentence_promoted: applied.validation.sentencePromoted,
           breakdowns_dropped: applied.validation.breakdownsDropped,
+          dropped_name: body.dropped_name ?? 0,
+          pinyin_jobs: applied.pinyinJobs,
+          pinyin_misaligned: applied.pinyinMisaligned,
         },
         now,
       ),
@@ -536,32 +570,15 @@ async function applyExtraction(
     for (const p of rows) existing.set(p.hanziKey, p);
   }
 
+  const py = { pinyinJobs: 0, pinyinMisaligned: 0 };
   for (const item of validation.items) {
     const p = existing.get(item.hanziKey);
     if (!p) {
-      const rows = phraseRows(
-        {
-          status: "queued",
-          kind: item.kind,
-          hanzi: item.hanzi,
-          english: item.english,
-          note: item.note,
-          heardAs: item.heardAs,
-          examples: item.example ? [{ ...item.example, turn_id: ctx.turn.id }] : [],
-          tags: item.tags,
-          usefulness: item.usefulness,
-          turnKind: result.turn_kind,
-          source: "import",
-          sourceTurnId: ctx.turn.id,
-          flags: item.flags,
-          breakdown: item.breakdown,
-        },
-        initialCardTypes(item.kind, result.turn_kind),
-        now,
-      );
+      const rows = newImportedPhrase(db, item, result.turn_kind, ctx.turn.id, now, py);
       writes.push(
         db.insert(phrase).values({ ...rows.phrase, lastAskedImportId: ctx.importId }),
         db.insert(card).values(rows.cards),
+        ...rows.followUps,
       );
       phrasesNew += 1;
       continue;
@@ -614,7 +631,55 @@ async function applyExtraction(
       }
     }
   }
-  return { writes, validation, phrasesNew, phrasesAgain };
+  return { writes, validation, phrasesNew, phrasesAgain, ...py };
+}
+
+/**
+ * The rows for a phrase an extraction creates: the phrase (its pinyin merged with Gemini's,
+ * §5.5.3b), its cards, and the merge's follow-ups (a `pinyin_disagreement` event, a `pinyin` job).
+ * The follow-ups go after the phrase insert in the same batch.
+ */
+function newImportedPhrase(
+  db: Db,
+  item: ValidItem,
+  turnKind: ExtractTurnResult["turn_kind"],
+  turnId: string,
+  now: number,
+  counts: { pinyinJobs: number; pinyinMisaligned: number },
+) {
+  const merged = mergedPinyin(item.hanzi, item.pinyin);
+  const rows = phraseRows(
+    {
+      status: "queued",
+      kind: item.kind,
+      hanzi: item.hanzi,
+      english: item.english,
+      note: item.note,
+      heardAs: item.heardAs,
+      examples: item.examples.map((e) => ({ ...e, turn_id: turnId })),
+      tags: item.tags,
+      usefulness: item.usefulness,
+      turnKind,
+      source: "import",
+      sourceTurnId: turnId,
+      flags: item.flags,
+      breakdown: item.breakdown,
+      pinyin: merged.pinyin,
+      pinyinSources: merged.pinyinSources,
+    },
+    initialCardTypes(item.kind, turnKind),
+    now,
+  );
+  const follow = pinyinFollowUps(
+    db,
+    { id: rows.phrase.id, hanzi: item.hanzi, examples: rows.phrase.examples ?? [] },
+    merged,
+    item.pinyin,
+    now,
+  );
+  if (follow.queued) counts.pinyinJobs += 1;
+  if (merged.misaligned) counts.pinyinMisaligned += 1;
+  return { ...rows, followUps: follow.writes };
 }
 
 /**
@@ -638,32 +703,15 @@ async function applyReextraction(
   const plan = planReextract(t.id, validation, existing, fromTurn, now);
 
   const writes: BatchItem<"sqlite">[] = [];
+  const py = { pinyinJobs: 0, pinyinMisaligned: 0 };
   for (const item of plan.create) {
-    const rows = phraseRows(
-      {
-        status: "queued",
-        kind: item.kind,
-        hanzi: item.hanzi,
-        english: item.english,
-        note: item.note,
-        heardAs: item.heardAs,
-        examples: item.example ? [{ ...item.example, turn_id: t.id }] : [],
-        tags: item.tags,
-        usefulness: item.usefulness,
-        turnKind: result.turn_kind,
-        source: "import",
-        sourceTurnId: t.id,
-        flags: item.flags,
-        breakdown: item.breakdown,
-      },
-      initialCardTypes(item.kind, result.turn_kind),
-      now,
-    );
+    const rows = newImportedPhrase(db, item, result.turn_kind, t.id, now, py);
     writes.push(
       db
         .insert(phrase)
         .values({ ...rows.phrase, lastAskedAt: t.createdAt, lastAskedImportId: t.importId }),
       db.insert(card).values(rows.cards),
+      ...rows.followUps,
     );
   }
   for (const m of plan.merges) {
@@ -694,7 +742,7 @@ async function applyReextraction(
       ),
     );
   }
-  return { writes, validation, phrasesNew: 0, phrasesAgain: 0 };
+  return { writes, validation, phrasesNew: 0, phrasesAgain: 0, ...py };
 }
 
 /**

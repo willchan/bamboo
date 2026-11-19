@@ -9,6 +9,7 @@ import {
   sharedConfig,
   type CompleteRequest,
   type Heartbeat,
+  type JobType,
 } from "@bamboo/shared";
 
 export type ClaimOutcome =
@@ -25,7 +26,8 @@ export type CompleteOutcome =
   | { kind: "error"; message: string };
 
 export interface Engine {
-  claim(): Promise<ClaimOutcome>;
+  /** `types`: the job types the worker can run now (DESIGN §3.2, H4). */
+  claim(types?: readonly JobType[]): Promise<ClaimOutcome>;
   complete(body: CompleteRequest): Promise<CompleteOutcome>;
   heartbeat(body: Heartbeat): Promise<{ ok: true } | { ok: false; message: string }>;
 }
@@ -63,10 +65,10 @@ export class EngineClient implements Engine {
     });
   }
 
-  async claim(): Promise<ClaimOutcome> {
+  async claim(types?: readonly JobType[]): Promise<ClaimOutcome> {
     let res: Response;
     try {
-      res = await this.post("/api/jobs/claim");
+      res = await this.post("/api/jobs/claim", types ? { types } : undefined);
     } catch (e) {
       return { kind: "error", message: (e as Error).message };
     }

@@ -36,6 +36,13 @@
       "when": 1795101525739,
       "tag": "0004_phrase_breakdown",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795104211052,
+      "tag": "0005_pinyin_merge",
+      "breakpoints": true
     }
   ]
 }
