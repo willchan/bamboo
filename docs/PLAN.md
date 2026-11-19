@@ -102,7 +102,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | M6 Reminder & stats | merged | [#13](https://github.com/willchan/bamboo/pull/13) |
 | H1 Pinyin: large dictionary | in review | |
 | H2 Frames retired; new-card policy | planned | |
-| H3 Card back: breakdowns and glosses | in review | |
+| H3 Card back: breakdowns and glosses | merged | [#43](https://github.com/willchan/bamboo/pull/43) |
 | H4 Worker on Gemini | planned | |
 | H5 Tutor capture | planned | |
 | H6 Re-run extension | planned | |
