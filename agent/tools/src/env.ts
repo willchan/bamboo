@@ -15,7 +15,10 @@ import { z } from "zod";
 
 export const ToolsConfig = z.object({
   discord: z.object({
-    /** The `#bamboo` channel: the only one the skill acts in, and where replies go. */
+    /**
+     * The `#bamboo` forum (§10 #96): the skill acts only in it and its posts; replies go inside
+     * each post, and the automations announce here (which opens a new post).
+     */
     channel_id: z.string().regex(/^\d+$/u, "a Discord channel id (digits)"),
     /** For message links when one `replies` run answers several imports. */
     guild_id: z.string().regex(/^\d+$/u).nullish(),

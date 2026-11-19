@@ -13,8 +13,9 @@ metadata:
 
 # Bamboo
 
-Scope: messages in `#bamboo` only (its channel id is `discord.channel_id` in
-`~/.config/bamboo/bamboo.config.json`). In any other channel, this skill does nothing.
+Scope: messages in `#bamboo` only, a forum whose posts are each one question or conversation (the
+forum's id is `discord.channel_id` in `~/.config/bamboo/bamboo.config.json`; a post has its own
+id, and that is the channel id to pass). In any other channel, this skill does nothing.
 
 Ground rules:
 
@@ -51,7 +52,7 @@ When `ask` printed `"route":"question"`, it's a question for you, the tutor:
 If a command prints no JSON at all, reply "⚠️ Something went wrong on the Mac; send it again later." (after your answer, for a question).
 
 **Results** are not this skill's job: an OpenClaw command automation runs
-`bamboo-tools replies` every 5 minutes (no model call) and replies to an imported link, PDF or
-pasted answer with what was queued; a question you answered gets no second reply. The evening
+`bamboo-tools replies` every 5 minutes (no model call) and replies inside the post to an imported
+link, PDF or pasted answer with what was queued; a question you answered gets no second reply. The evening
 reminder is another automation, `bamboo-tools nudge`. Don't poll for results. If Will asks
 whether something went through, say: "Still working on it — I'll reply when it's done."

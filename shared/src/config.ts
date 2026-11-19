@@ -102,6 +102,12 @@ export const sharedConfig = {
       /** The local log (`~/Library/Logs/bamboo/bamboo-tools.log`) rolls to `.1` past this size. */
       logMaxBytes: 1024 * 1024,
     },
+    /**
+     * `#bamboo` is a forum (DESIGN §5.1, §10 #96): bamboo-tools asks OpenClaw's CLI which forum a
+     * post belongs to and posts `replies` inside each post. Each CLI call takes ~5 s to start;
+     * posts already checked are remembered (the newest this many) so follow-ups skip the lookup.
+     */
+    discord: { cliTimeoutMs: 60_000, rememberPosts: 500 },
   },
   /** The Mac worker (DESIGN §1.2, §5.3, §8.3). Env vars override `defaults`. */
   worker: {

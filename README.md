@@ -113,7 +113,7 @@ PandaBase's worker uses the same model, so nothing swaps. From your own account,
 ```
 git clone https://github.com/willchan/bamboo.git ~/Code/bamboo && cd ~/Code/bamboo
 BAMBOO_API_URL=https://<production domain> \
-BAMBOO_DISCORD_CHANNEL_ID=<#bamboo channel id> BAMBOO_DISCORD_GUILD_ID=<server id> \
+BAMBOO_DISCORD_CHANNEL_ID=<#bamboo forum id> BAMBOO_DISCORD_GUILD_ID=<server id> \
   make agent-install            # add DRY_RUN=1 first to see what it would change
 ```
 

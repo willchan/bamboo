@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Api } from "./api";
 import { COMMANDS, FAILURE_REPLIES, NO_REPLY, repliesText, run, USAGE, type Deps } from "./cli";
 import { FakeEngine } from "./fake-engine.test-util";
+import type { Discord } from "./discord";
 import { chunkBodies, uploadConversation, type Conversation } from "./importer";
 import { PdfError } from "./pdf";
 import { ShareParseError } from "./share";
@@ -25,6 +26,23 @@ let engine: FakeEngine;
 let home: string;
 let share: Conversation;
 let pdf: Conversation | Error;
+/** The fake Discord: each post's forum, the lookups made and the replies posted. */
+let parents: Record<string, string | null>;
+let lookups: string[];
+let posted: { channel: string; message: string; text: string }[];
+let discordDown: boolean;
+
+const fakeDiscord = (): Discord => ({
+  async parentOf(id) {
+    lookups.push(id);
+    if (discordDown) throw new Error("openclaw message channel failed (1)");
+    return parents[id] ?? null;
+  },
+  async reply(channel, message, text) {
+    if (discordDown) throw new Error("openclaw message send failed (1)");
+    posted.push({ channel, message, text });
+  },
+});
 
 function deps(extraEnv: Record<string, string> = {}): Deps {
   return {
@@ -42,6 +60,7 @@ function deps(extraEnv: Record<string, string> = {}): Deps {
     readText: (file) => (file === "empty.txt" ? "  \n" : "阿姨，您是说要加水吗？"),
     fetch: engine.fetch as typeof fetch,
     retryDelayMs: 0,
+    discord: fakeDiscord(),
   };
 }
 
@@ -55,6 +74,10 @@ beforeEach(() => {
   );
   share = conv(4);
   pdf = conv(4);
+  parents = {};
+  lookups = [];
+  posted = [];
+  discordDown = false;
 });
 
 const importArgs = (src: string[], message = "900") => [
@@ -250,6 +273,49 @@ const textDeps = (extra: Record<string, string> = {}): Deps => ({
   readText: (f) => files[f] ?? "",
 });
 
+describe("#bamboo is a forum (§10 #96)", () => {
+  const POST = "333333333333333333";
+  const inPost = (message: string) => [
+    "import",
+    "--url",
+    "https://share.gemini.google/x",
+    "--channel-id",
+    POST,
+    "--message-id",
+    message,
+  ];
+
+  it("takes a message in one of the forum's posts, and remembers the post", async () => {
+    parents[POST] = CHANNEL;
+    const r = await run(inPost("1"), deps());
+    expect(r.code).toBe(0);
+    expect(engine.calls.find((c) => c.path === "/api/imports")!.body).toMatchObject({
+      discord_channel_id: POST,
+    });
+    expect(lookups).toEqual([POST]);
+    await run(inPost("2"), deps());
+    expect(lookups).toEqual([POST]);
+  });
+
+  it("refuses a post of another forum, and says so when Discord can't be asked", async () => {
+    parents[POST] = "444444444444444444";
+    expect(JSON.parse((await run(inPost("1"), deps())).out)).toMatchObject({
+      error: "wrong_channel",
+    });
+    discordDown = true;
+    const r = await run(inPost("2"), deps());
+    expect(JSON.parse(r.out)).toMatchObject({
+      error: "channel_check_failed",
+      reply: FAILURE_REPLIES.channel_check_failed,
+    });
+  });
+
+  it("needs no lookup for the forum itself", async () => {
+    await run(importArgs(["--url", "https://share.gemini.google/x"]), deps());
+    expect(lookups).toEqual([]);
+  });
+});
+
 describe("bamboo-tools ask", () => {
   const ask = (file: string, message = "901") => [
     "ask",
@@ -423,20 +489,43 @@ describe("bamboo-tools replies", () => {
     expect(await run(["replies"], deps())).toEqual({ code: 0, out: NO_REPLY });
   });
 
-  it("replies to the message and marks the import notified", async () => {
-    engine.notifications = [note("i1", "900", "✅ 2 new questions → 3 phrases queued.")];
+  it("replies inside each import's post and marks the imports notified", async () => {
+    engine.notifications = [
+      note("i1", "900", "✅ 2 new questions → 3 phrases queued."),
+      { ...note("i2", "901", "✅ 1 new question → 1 phrase queued."), discord_channel_id: "55" },
+    ];
     const r = await run(["replies"], deps());
-    expect(r.out).toBe("[[reply_to:900]] ✅ 2 new questions → 3 phrases queued.");
-    expect(engine.notified).toEqual(["i1"]);
+    expect(r).toEqual({ code: 0, out: NO_REPLY });
+    expect(posted).toEqual([
+      { channel: CHANNEL, message: "900", text: "✅ 2 new questions → 3 phrases queued." },
+      { channel: "55", message: "901", text: "✅ 1 new question → 1 phrase queued." },
+    ]);
+    expect(engine.notified).toEqual(["i1", "i2"]);
     expect(await run(["replies"], deps())).toEqual({ code: 0, out: NO_REPLY });
   });
 
-  it("links each message when several finished at once", () => {
+  it("prints what has no post to reply in (announced as a new post)", async () => {
+    engine.notifications = [{ ...note("i1", "900", "A"), discord_channel_id: null }];
+    expect(await run(["replies"], deps())).toEqual({ code: 0, out: "A" });
+    expect(posted).toEqual([]);
+    expect(engine.notified).toEqual(["i1"]);
+  });
+
+  it("links each message it prints", () => {
     const text = repliesText([note("a", "1", "A"), note("b", "2", "B")], GUILD);
     expect(text).toBe(
       `A\n↪ https://discord.com/channels/${GUILD}/${CHANNEL}/1\n\nB\n↪ https://discord.com/channels/${GUILD}/${CHANNEL}/2`,
     );
     expect(repliesText([note("a", "1", "A"), note("b", "2", "B")], null)).toBe("A\n\nB");
+  });
+
+  it("reports a failed post once, and the import stays notified", async () => {
+    engine.notifications = [note("i1", "900", "A")];
+    discordDown = true;
+    const r = await run(["replies"], deps());
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("couldn't post 1 of 1 replies");
+    expect(engine.notified).toEqual(["i1"]);
   });
 
   it("fails clearly without a token", async () => {
