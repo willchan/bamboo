@@ -114,6 +114,7 @@ pnpm smoke https://bamboo-panda.vercel.app   # after each deploy (prod): public,
 make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
 pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model (the fallback)
 BAMBOO_EVAL_GEMINI=1 pnpm --filter @bamboo/worker test:gemini   # Mac, as openclaw-agent: synthetic turns through Gemini (free-tier key in agent.env; counts only)
+pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count | --limit 10 | --all   # Mac, as openclaw-agent, launchd worker stopped: H7 re-runs on the paid key; counts only
 make tutor-eval ARGS="run | serve | score …"   # Mac, as openclaw-agent: local tutor evaluation (DESIGN §5.4); output in ~/bamboo-eval/
 ```
 

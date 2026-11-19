@@ -68,6 +68,8 @@ export class GeminiClient {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly log: (line: string) => void;
+  /** generateContent requests sent by this process (H7's counts), retries included. */
+  requests = 0;
 
   constructor(
     readonly model: string,
@@ -124,6 +126,7 @@ export class GeminiClient {
         continue;
       }
       this.limiter.record();
+      this.requests += 1;
 
       let res: Response;
       try {

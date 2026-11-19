@@ -106,7 +106,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H4 Worker on Gemini | merged | [#44](https://github.com/willchan/bamboo/pull/44) |
 | H5 Tutor capture | in review | |
 | H6 Re-run extension | in review | |
-| H7 Backfill | planned | |
+| H7 Backfill | in review | |
 
 ---
 
@@ -1448,5 +1448,15 @@ picks, so the queue can be rebuilt from stored turns without losing history.
   `sharedConfig.worker.gemini.paid` (60/min, 2,000/day by default; `GEMINI_PAID_RPM`,
   `GEMINI_PAID_RPD`); without the paid key that run exits 78 at startup. Tested with fake keys
   (`worker/src/config.test.ts`). No migration.
+- *Built (H7 part 1, DESIGN §10 #93):* the run is `pnpm --filter @bamboo/worker backfill --
+  --gemini-key=paid --count | --limit 10 | --all` (`worker/src/backfill*.ts`), as
+  `openclaw-agent` with the launchd worker stopped. The paid key is required. **H6's gap closed
+  with a claim option:** `POST /api/jobs/claim {reextract_only: true}` offers only pinyin jobs and
+  re-runs, so a Discord question during the run waits for the everyday worker (free key). The
+  worker stops when nothing is left to claim, or when the paid key's daily quota is used up. Counts
+  come from a new read-only agent route, `GET /api/agent/backfill?since=` (counts only), plus
+  the worker's own reports and a Gemini request counter (retries included). `reply_at_cap` counts
+  UTF-16 code units, as the import's `slice` cut them. No migration. The dry run itself, its
+  counts and the paid tier's limits are recorded here once the orchestrator has run it.
 - *Still open:* the turn cut at 12,000 characters. The dry run reports how many stored turns have
   `reply_text` at exactly the cap (counts only), and Will decides then.

@@ -401,15 +401,17 @@ function failWrites(
  * `POST /api/jobs/claim`: lease the oldest queued job (attempt + 1) of the types the worker asked
  * for, or null when idle. Order: ordinary extract_turn jobs, then `pinyin` jobs (small, H4), then
  * re-runs (§4.6.1), so a new import is never stuck behind a backlog. Without `types` (an older
- * worker) only extract_turn jobs are offered.
+ * worker) only extract_turn jobs are offered. `reextractOnly` (H7's backfill worker) skips the
+ * ordinary jobs: only pinyin jobs and re-runs.
  */
 export async function claimJob(
   db: Db,
   now: number,
   types: readonly JobType[] = ["extract_turn"],
+  opts: { reextractOnly?: boolean } = {},
 ): Promise<ClaimedJob | null> {
   await sweepExpiredLeases(db, now);
-  if (types.includes("extract_turn")) {
+  if (types.includes("extract_turn") && !opts.reextractOnly) {
     const ordinary = await claimExtractJob(db, now, false);
     if (ordinary) return ordinary;
   }
@@ -857,7 +859,7 @@ export interface ReextractScope {
  * open and their import done (§4.6.1). With `all`, also those on the newest prompt that no re-run
  * has read with it yet. A turn whose every job failed isn't here: Retry failed covers it.
  */
-async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<string[]> {
+export async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<string[]> {
   const res = await db.$client.execute({
     sql: `
     with latest as (

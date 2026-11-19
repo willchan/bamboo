@@ -10,9 +10,14 @@ export type JobType = (typeof JOB_TYPES)[number];
  * `POST /api/jobs/claim` body (optional): the job types this worker can run now. Without it
  * (an older worker), only `extract_turn`. The worker leaves out `pinyin` while Gemini is off or
  * resting, since a pinyin job is Gemini's reading (DESIGN §5.5.3).
+ *
+ * `reextract_only` (H7's backfill worker on the paid key, DESIGN §5.5.6): never offer an
+ * ordinary extract_turn job, only `pinyin` jobs and re-runs (§4.6.1), so new imports wait for the
+ * everyday worker on the free key.
  */
 export const ClaimRequest = z.object({
   types: z.array(z.enum(JOB_TYPES)).min(1).max(JOB_TYPES.length).optional(),
+  reextract_only: z.boolean().optional(),
 });
 export type ClaimRequest = z.infer<typeof ClaimRequest>;
 

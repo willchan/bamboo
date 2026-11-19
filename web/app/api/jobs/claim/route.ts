@@ -1,6 +1,6 @@
 // POST /api/jobs/claim (worker): lease the next job, or 204 (DESIGN §3.2). The optional body
 // `{types}` names the job types the worker can run now; without one (an older worker, which sends
-// no body), only extract_turn.
+// no body), only extract_turn. `reextract_only` (H7's backfill worker): pinyin jobs and re-runs only.
 import { ClaimRequest, type ClaimedJob } from "@bamboo/shared";
 import { apiError, checkBearer } from "@/lib/api/http";
 import { claimJob } from "@/lib/repo/capture";
@@ -12,6 +12,7 @@ export const POST = timedRoute("POST /api/jobs/claim", async (req: Request): Pro
   if (denied) return denied;
   const text = await req.text();
   let types: ClaimRequest["types"];
+  let reextractOnly = false;
   if (text.trim()) {
     let json: unknown;
     try {
@@ -22,8 +23,9 @@ export const POST = timedRoute("POST /api/jobs/claim", async (req: Request): Pro
     const parsed = ClaimRequest.safeParse(json);
     if (!parsed.success) return apiError(400, "invalid_body");
     types = parsed.data.types;
+    reextractOnly = parsed.data.reextract_only ?? false;
   }
-  const claimed = await claimJob(getDb(), Date.now(), types);
+  const claimed = await claimJob(getDb(), Date.now(), types, { reextractOnly });
   return claimed
     ? Response.json(claimed satisfies ClaimedJob)
     : new Response(null, { status: 204 });

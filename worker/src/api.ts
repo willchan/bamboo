@@ -26,8 +26,11 @@ export type CompleteOutcome =
   | { kind: "error"; message: string };
 
 export interface Engine {
-  /** `types`: the job types the worker can run now (DESIGN §3.2, H4). */
-  claim(types?: readonly JobType[]): Promise<ClaimOutcome>;
+  /**
+   * `types`: the job types the worker can run now (DESIGN §3.2, H4). `reextractOnly`: H7's
+   * backfill worker takes only re-runs and pinyin jobs.
+   */
+  claim(types?: readonly JobType[], opts?: { reextractOnly?: boolean }): Promise<ClaimOutcome>;
   complete(body: CompleteRequest): Promise<CompleteOutcome>;
   heartbeat(body: Heartbeat): Promise<{ ok: true } | { ok: false; message: string }>;
 }
@@ -65,10 +68,17 @@ export class EngineClient implements Engine {
     });
   }
 
-  async claim(types?: readonly JobType[]): Promise<ClaimOutcome> {
+  async claim(
+    types?: readonly JobType[],
+    opts: { reextractOnly?: boolean } = {},
+  ): Promise<ClaimOutcome> {
+    const body = {
+      ...(types ? { types } : {}),
+      ...(opts.reextractOnly ? { reextract_only: true } : {}),
+    };
     let res: Response;
     try {
-      res = await this.post("/api/jobs/claim", types ? { types } : undefined);
+      res = await this.post("/api/jobs/claim", Object.keys(body).length ? body : undefined);
     } catch (e) {
       return { kind: "error", message: (e as Error).message };
     }

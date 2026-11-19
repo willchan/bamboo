@@ -45,3 +45,62 @@ export const ReextractResponse = z.object({
   open: z.number().int(),
 });
 export type ReextractResponse = z.infer<typeof ReextractResponse>;
+
+/** `GET /api/agent/backfill?since=<ms>` (H7, DESIGN §5.5.6): counts only, never text. */
+export const BackfillQuery = z.object({
+  /** Re-run results finished at or after this time (ms since the epoch) are summed. */
+  since: z.coerce.number().int().min(0).default(0),
+});
+export type BackfillQuery = z.infer<typeof BackfillQuery>;
+
+const count = z.number().int().min(0);
+
+/**
+ * The backfill's counts (H7). `turns` describes every stored turn now; `run` sums the re-run
+ * `extraction` events, `pinyin_disagreement` events and finished `pinyin` jobs since `since`;
+ * `review` is for the before/after check (cards and history must survive).
+ */
+export const BackfillReport = z.object({
+  since: count,
+  newest_prompt: z.string().nullable(),
+  turns: z.object({
+    stored: count,
+    /** Turns whose latest finished job ran on `newest_prompt`. */
+    on_newest_prompt: count,
+    /** Of those, read by a re-run (what a full backfill finishes). */
+    reread_on_newest_prompt: count,
+    /** Turns a full run (`{all: true}`) would queue now. */
+    remaining: count,
+    /** Turns with no finished job at all (every job failed): Retry failed first. */
+    no_finished_job: count,
+    open_reextract: count,
+    /** `reply_text` exactly at the import cap (`replyMaxChars`): likely cut. */
+    reply_at_cap: count,
+    reply_max_chars: count,
+  }),
+  run: z.object({
+    turns: count,
+    /** Re-run jobs that failed for good (every attempt used). */
+    failed: count,
+    /** Items Gemini returned, per turn, in finish order. */
+    items_per_turn: z.array(count),
+    items: count,
+    kept: count,
+    dropped: z.record(z.string(), count),
+    phrases_created: count,
+    phrases_refreshed: count,
+    phrases_dropped: count,
+    phrases_reported: count,
+    pinyin_jobs_queued: count,
+    pinyin_misaligned: count,
+    pinyin_disagreements: count,
+    pinyin_jobs_done: count,
+    pinyin_jobs_failed: count,
+    referee_calls: count,
+    /** Re-run turns by the model that read them (Gemini's or the Ollama fallback's). */
+    models: z.record(z.string(), count),
+  }),
+  phrases_reported_open: count,
+  review: z.object({ review_log_rows: count, reviewed_cards: count }),
+});
+export type BackfillReport = z.infer<typeof BackfillReport>;
