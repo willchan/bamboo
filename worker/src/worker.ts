@@ -46,6 +46,10 @@ export interface WorkerDeps {
   version: string;
   sha: string | null;
   log: Log;
+  /** H7's backfill: claim only re-runs and pinyin jobs (never a new import's job). */
+  reextractOnly?: boolean;
+  /** H7's backfill: return from `run()` once there's nothing to claim, or the quota is used up. */
+  untilIdle?: boolean;
   now?: () => number;
   /** Resolves after `ms`, or early when `signal` aborts. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
@@ -72,6 +76,8 @@ export interface JobReport {
   status: "done" | "failed";
   /** The model that ran it (Gemini's, or Ollama's on fallback). */
   model: string;
+  /** The prompt(s) that ran (a pinyin job's says whether the referee was asked). */
+  promptVersion: string | null;
   items: number;
   repaired: boolean;
   droppedName: number;
@@ -165,12 +171,19 @@ export class Worker {
       this.logGeminiState();
       const types = this.claimTypes();
       if (types.length === 0) {
+        if (this.d.untilIdle && this.d.gemini?.quotaResetAt() != null) {
+          log("until-idle: the daily quota is used up; stopping");
+          break;
+        }
         await this.sleep(W.modelRecheckSeconds * 1000, this.stopper.signal);
         if (!this.stopping) await this.checkModel();
         continue;
       }
 
-      const claim = await this.d.engine.claim(types);
+      const claim = await this.d.engine.claim(
+        types,
+        this.d.reextractOnly ? { reextractOnly: true } : undefined,
+      );
       if (claim.kind === "error") {
         log(`claim failed: ${claim.message}; retrying in ${Math.round(backoff / 1000)}s`);
         await this.sleep(backoff, this.stopper.signal);
@@ -179,6 +192,10 @@ export class Worker {
       }
       backoff = pollIntervalMs;
       if (claim.kind === "empty") {
+        if (this.d.untilIdle) {
+          log("until-idle: nothing left to claim; stopping");
+          break;
+        }
         await this.sleep(pollIntervalMs, this.stopper.signal);
         continue;
       }
@@ -316,6 +333,7 @@ export class Worker {
       attempt: job.attempt,
       status: body.status,
       model: body.model ?? "none",
+      promptVersion: body.prompt_version ?? null,
       items: x.items,
       repaired: !!body.repaired,
       droppedName: x.droppedName,

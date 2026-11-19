@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node --import tsx src/main.ts",
+    "backfill": "node --import tsx src/backfill-main.ts",
     "test:ollama": "BAMBOO_EVAL_OLLAMA=1 vitest run src/eval.test.ts",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

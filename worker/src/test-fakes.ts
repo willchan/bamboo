@@ -41,6 +41,8 @@ type FakeJob = {
   job_id: string;
   status: "queued" | "running" | "done" | "failed";
   attempt: number;
+  /** A re-run (§4.6.1): the only extract_turn jobs a `reextract_only` claim gets. */
+  reextract?: boolean;
 } & ({ type: "extract_turn"; input: ExtractTurnInput } | { type: "pinyin"; input: PinyinJobInput });
 
 /** The engine's job routes with M3's rules: attempts counted here, max 3, 409 on a stale attempt. */
@@ -52,6 +54,8 @@ export class FakeEngine {
   readonly calls: string[] = [];
   /** The `types` each claim asked for (undefined: no body). */
   readonly claimTypes: (string[] | undefined)[] = [];
+  /** Whether each claim asked for `reextract_only`. */
+  readonly claimReextractOnly: boolean[] = [];
   /** The next N `complete` calls fail on the network (before reaching the "server"). */
   networkFailCompletes = 0;
   /** The next N `done` results get 422 invalid_result whatever they hold. */
@@ -61,8 +65,15 @@ export class FakeEngine {
   /** Called on each claim with the claimed job (e.g. to stop the worker mid-job). */
   onClaim?: (job: ClaimedJob) => void;
 
-  add(input: ExtractTurnInput, jobId = `job-${this.jobs.length + 1}`): void {
-    this.jobs.push({ job_id: jobId, type: "extract_turn", input, status: "queued", attempt: 0 });
+  add(input: ExtractTurnInput, jobId = `job-${this.jobs.length + 1}`, reextract = false): void {
+    this.jobs.push({
+      job_id: jobId,
+      type: "extract_turn",
+      input,
+      status: "queued",
+      attempt: 0,
+      reextract,
+    });
   }
 
   addPinyin(input: PinyinJobInput, jobId = `pinyin-${this.jobs.length + 1}`): void {
@@ -92,10 +103,18 @@ export class FakeEngine {
         this.serverErrorClaims -= 1;
         return json(500, { error: "conflict", message: "boom" });
       }
-      const types = body === undefined ? undefined : ClaimRequest.parse(body).types;
+      const parsed = body === undefined ? undefined : ClaimRequest.parse(body);
+      const types = parsed?.types;
+      const only = parsed?.reextract_only ?? false;
       this.claimTypes.push(types);
+      this.claimReextractOnly.push(only);
       const allowed = types ?? ["extract_turn"];
-      const j = this.jobs.find((x) => x.status === "queued" && allowed.includes(x.type));
+      const j = this.jobs.find(
+        (x) =>
+          x.status === "queued" &&
+          allowed.includes(x.type) &&
+          !(only && x.type === "extract_turn" && !x.reextract),
+      );
       if (!j) return new Response(null, { status: 204 });
       j.status = "running";
       j.attempt += 1;

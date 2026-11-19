@@ -21,7 +21,7 @@ import {
   fixtureTurns,
   ollamaFixtures as F,
 } from "./test-fakes";
-import { Worker } from "./worker";
+import { Worker, type WorkerDeps } from "./worker";
 
 const VALID = F.chat_valid.message.content;
 const POLL = 15_000;
@@ -29,7 +29,15 @@ const W = sharedConfig.worker;
 const G = W.gemini;
 const TURN = fixtureTurns[0]!;
 
-function setup(o: { rpm?: number; rpd?: number; deny?: DenyList; idlePolls?: number } = {}) {
+function setup(
+  o: {
+    rpm?: number;
+    rpd?: number;
+    deny?: DenyList;
+    idlePolls?: number;
+    deps?: Partial<WorkerDeps>;
+  } = {},
+) {
   const engine = new FakeEngine();
   const ollama = new FakeOllama();
   const fake = new FakeGemini();
@@ -65,6 +73,7 @@ function setup(o: { rpm?: number; rpd?: number; deny?: DenyList; idlePolls?: num
     log,
     now: clock.now,
     sleep: clock.sleep,
+    ...o.deps,
   });
   let idle = 0;
   const idlePolls = o.idlePolls ?? 1;
@@ -72,7 +81,7 @@ function setup(o: { rpm?: number; rpd?: number; deny?: DenyList; idlePolls?: num
     idle = ms === POLL ? idle + 1 : 0;
     if (idle >= idlePolls) worker.stop();
   };
-  return { engine, ollama, fake, clock, worker, lines, limiter };
+  return { engine, ollama, fake, clock, worker, lines, limiter, gemini };
 }
 
 describe("RateLimiter", () => {
@@ -362,6 +371,53 @@ describe("logs", () => {
     for (const s of ["gaoyaguo", "高压锅", "pressure cooker", "yuesao", "Talking"]) {
       expect(all).not.toContain(s);
     }
+  });
+});
+
+describe("H7 backfill worker (reextract only, until idle)", () => {
+  it("takes only re-runs and pinyin jobs, counts its Gemini requests, and stops when idle", async () => {
+    const { engine, fake, worker, lines } = setup({
+      deps: { reextractOnly: true, untilIdle: true },
+      idlePolls: 99,
+    });
+    engine.add(TURN, "new-import");
+    engine.add(TURN, "rerun-1", true);
+    engine.add(TURN, "rerun-2", true);
+    fake.replies = [VALID, VALID];
+    await worker.run();
+    expect(engine.completes.map((c) => c.job_id)).toEqual(["rerun-1", "rerun-2"]);
+    expect(engine.jobs.find((j) => j.job_id === "new-import")?.status).toBe("queued");
+    expect(engine.claimReextractOnly.every(Boolean)).toBe(true);
+    expect(worker.reports.map((r) => r.promptVersion)).toEqual([
+      "extract_turn.v4",
+      "extract_turn.v4",
+    ]);
+    expect(lines).toContain("until-idle: nothing left to claim; stopping");
+  });
+
+  it("stops instead of waiting for the reset when the daily quota is used up", async () => {
+    const { engine, fake, worker, lines, limiter } = setup({
+      deps: { reextractOnly: true, untilIdle: true },
+      idlePolls: 99,
+    });
+    engine.add(TURN, "rerun-1", true);
+    engine.add(TURN, "rerun-2", true);
+    fake.replies = [{ status: 429, daily: true }];
+    await worker.run();
+    expect(limiter.quotaResetAt()).not.toBeNull();
+    expect(engine.completes.map((c) => [c.job_id, c.status])).toEqual([["rerun-1", "failed"]]);
+    expect(lines).toContain("until-idle: the daily quota is used up; stopping");
+  });
+
+  it("an everyday worker sends no reextract_only and counts requests on the client", async () => {
+    const { engine, fake, worker, gemini } = setup();
+    engine.add(TURN);
+    fake.replies = [429, VALID];
+    await worker.run();
+    expect(engine.claimReextractOnly.some(Boolean)).toBe(false);
+    // Retries count: two requests reached Google.
+    expect(fake.bodies).toHaveLength(2);
+    expect(gemini.requests).toBe(2);
   });
 });
 

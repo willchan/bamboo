@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as evalTurnsGET } from "@/app/api/agent/eval/turns/route";
 import { GET as notificationsGET } from "@/app/api/agent/notifications/route";
+import { GET as backfillGET } from "@/app/api/agent/backfill/route";
 import { POST as reextractPOST } from "@/app/api/agent/reextract/route";
 import { GET as cronGET } from "@/app/api/cron/daily/route";
 import { POST as notifiedPOST } from "@/app/api/imports/[id]/notified/route";
@@ -1273,5 +1274,128 @@ describe("cron", () => {
     const later = await json(await cronGET(req("/api/cron/daily", CRON)));
     expect(later.events_pruned).toBeGreaterThan(0);
     expect(await db.select().from(event)).toHaveLength(0);
+  });
+});
+
+describe("H7 backfill", () => {
+  const claimBackfill = async () => {
+    const r = await claimPOST(
+      req("/api/jobs/claim", WORKER, { types: ["extract_turn", "pinyin"], reextract_only: true }),
+    );
+    return r.status === 204
+      ? null
+      : ((await r.json()) as { job_id: string; attempt: number; type: string });
+  };
+  const report = async (since?: number) =>
+    json(
+      await backfillGET(
+        req(`/api/agent/backfill${since === undefined ? "" : `?since=${since}`}`, AGENT),
+      ),
+    );
+
+  it("a reextract_only claim takes re-runs and leaves ordinary jobs to the everyday worker", async () => {
+    await postImport({});
+    await drain(() => ({ turn_kind: "other", items: [] }));
+    expect(await claimBackfill()).toBeNull();
+    await reextractPOST(req("/api/agent/reextract", AGENT, { all: true, limit: 1 }));
+    // A new import arrives during the backfill: its job is older-first for the everyday worker only.
+    await postImport({
+      discord_message_id: "m2",
+      source_ref: "https://gemini.google.com/share/fake2",
+      turns_total: 1,
+      turns: [{ user_text: "Another question?", reply_text: "好的。", position: 0 }],
+    });
+    const c = (await claimBackfill())!;
+    expect(c.type).toBe("extract_turn");
+    expect(
+      (await db.query.job.findFirst({ where: (j, { eq: e }) => e(j.id, c.job_id) }))?.reextract,
+    ).toBe(true);
+    expect(await claimBackfill()).toBeNull();
+    // The everyday claim still gets the new import's job.
+    expect(await claim()).not.toBeNull();
+  });
+
+  it("reports counts only: turns, the reply cap, and a re-run's sums since a time", async () => {
+    await postImport({});
+    await postImport({
+      discord_message_id: "m2",
+      source_ref: "https://gemini.google.com/share/fake2",
+      turns_total: 1,
+      turns: [
+        {
+          user_text: "Long one?",
+          reply_text: "好".repeat(config.imports.replyMaxChars + 50),
+          position: 0,
+        },
+      ],
+    });
+    await drain(() => ({ turn_kind: "other", items: [] }));
+
+    const before = await report();
+    expect(before).toMatchObject({
+      since: 0,
+      newest_prompt: "extract_turn.v1",
+      turns: {
+        stored: 4,
+        on_newest_prompt: 4,
+        reread_on_newest_prompt: 0,
+        remaining: 4,
+        no_finished_job: 0,
+        open_reextract: 0,
+        reply_at_cap: 1,
+        reply_max_chars: config.imports.replyMaxChars,
+      },
+      run: { turns: 0, items_per_turn: [] },
+      review: { review_log_rows: 0, reviewed_cards: 0 },
+    });
+    // No text in the report: every leaf is a number, a model name or the prompt version.
+    expect(JSON.stringify(before)).not.toContain("好");
+
+    const since = T0 + MIN;
+    at(since);
+    await reextractPOST(req("/api/agent/reextract", AGENT, { all: true, limit: 1 }));
+    expect((await report(since)).turns).toMatchObject({ open_reextract: 1, remaining: 3 });
+    const c = (await claimBackfill())!;
+    const r = await done(
+      c.job_id,
+      c.attempt,
+      {
+        turn_kind: "decode",
+        items: [term("高压锅", "pressure cooker"), term("不在这里", "not here")],
+      },
+      "extract_turn.v4",
+    );
+    expect(r.status).toBe(200);
+
+    const after = await report(since);
+    expect(after).toMatchObject({
+      since,
+      newest_prompt: "extract_turn.v4",
+      turns: {
+        stored: 4,
+        on_newest_prompt: 1,
+        reread_on_newest_prompt: 1,
+        remaining: 3,
+        open_reextract: 0,
+      },
+      run: {
+        turns: 1,
+        failed: 0,
+        items_per_turn: [2],
+        items: 2,
+        kept: 1,
+        dropped: { dropped_not_verbatim: 1 },
+        phrases_created: 1,
+        models: { "qwen3.5:9b": 1 },
+      },
+    });
+    // Before `since`, nothing.
+    expect((await report(since + DAY)).run).toMatchObject({ turns: 0 });
+  });
+
+  it("needs the agent token and a valid since", async () => {
+    expect((await backfillGET(req("/api/agent/backfill", WORKER))).status).toBe(401);
+    expect((await backfillGET(req("/api/agent/backfill?since=-1", AGENT))).status).toBe(400);
+    expect((await backfillGET(req("/api/agent/backfill?since=x", AGENT))).status).toBe(400);
   });
 });
