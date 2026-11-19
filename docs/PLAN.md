@@ -1405,7 +1405,7 @@ picks, so the queue can be rebuilt from stored turns without losing history.
    whether to bulk-retire the reported leftovers.
 
 **Acceptance:**
-- the standard commands (the two-key tests landed in PR #PRNUM);
+- the standard commands (the two-key tests landed in PR #48);
 - the dry and full runs log `gemini: using the paid key (BAMBOO_GEMINI_API_KEY_PAID)`, and the
   launchd worker logs the free key after it restarts;
 - every stored turn has a finished `extract_turn.v4` job;
@@ -1420,7 +1420,7 @@ picks, so the queue can be rebuilt from stored turns without losing history.
   or two), and Batch would need a new submit/collect flow, a second pass for referee calls and
   up to 24 h turnaround (DESIGN §10 #88). The two-key support is built here, not in its own
   milestone.
-- *Two keys done early in PR #PRNUM* (2026-11-19), because Will had already renamed the key in
+- *Two keys done early in PR #48* (2026-11-19), because Will had already renamed the key in
   `agent.env` and the live worker was on Ollama only. The worker reads `BAMBOO_GEMINI_API_KEY_FREE`
   and `BAMBOO_GEMINI_API_KEY_PAID` from `agent.env` (the process env wins), still accepts
   `BAMBOO_GEMINI_API_KEY` as the free key's deprecated alias (a later PR drops it), and logs each
