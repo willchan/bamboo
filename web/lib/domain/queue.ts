@@ -121,6 +121,24 @@ export { cleanHanzi, occursVerbatim, turnTextKey };
 
 const squash = (s: string) => s.toLowerCase().replace(/\s+/gu, "");
 
+const LATIN_RUN = /\p{Script=Latin}+/gu;
+const LOWER = /\p{Ll}/u;
+
+/**
+ * False when the sentence spells a word in Latin letters (a quoted mishearing like “qincai”,
+ * pinyin, or an English gloss in brackets): a run of `romanizedMinLetters` Latin letters with a
+ * lowercase one. Such a sentence is usually a question about the word, not a use of it, and its
+ * ruby breaks around the Latin. Letter words in caps (A菜, B超) pass.
+ */
+export function isLearnableExample(
+  hanzi: string,
+  minLetters: number = config.phrase.romanizedMinLetters,
+): boolean {
+  for (const [run] of hanzi.matchAll(LATIN_RUN))
+    if (run.length >= minLetters && LOWER.test(run)) return false;
+  return true;
+}
+
 /** A validated item, ready to become (or merge into) a phrase. */
 export interface ValidItem {
   kind: PhraseKind;
@@ -189,7 +207,8 @@ export function englishNote(note: string | null | undefined): string | null {
 /**
  * §4.6 steps 1–3 on one `extract_turn` result: drop frame items (retired, §10 #77) and items not
  * copied from the turn, keep `heard_as` only if Will typed it, keep a term's example only if it is
- * verbatim and contains the term. Items for the same key collapse to the first. Then the per-turn caps: an errand turn keeps
+ * verbatim, contains the term and spells no word in romanization. Items for the same key collapse
+ * to the first. Then the per-turn caps: an errand turn keeps
  * its first `errandMaxItems` items, a say turn its first `sayMaxTerms` terms. Tags are limited to
  * the fixed list.
  */
@@ -255,7 +274,11 @@ export function validateExtraction(
         const exHanzi = cleanHanzi(ex.hanzi);
         const exKey = hanziKey(exHanzi);
         if (examples.some((e) => hanziKey(e.hanzi) === exKey)) continue;
-        if (occursVerbatim(exHanzi, "sentence", key) && exKey.includes(k)) {
+        if (
+          occursVerbatim(exHanzi, "sentence", key) &&
+          exKey.includes(k) &&
+          isLearnableExample(exHanzi)
+        ) {
           examples.push({ hanzi: exHanzi, english: ex.english?.trim() || null });
         } else {
           if (!flags.includes("example_dropped")) flags.push("example_dropped");
@@ -336,7 +359,11 @@ function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): Vali
 
 // --- Dedupe into an existing phrase (§4.6 step 4) -----------------------------------------------
 
-/** Append examples unless one with the same key is there; keep at most `max` (oldest win). */
+/**
+ * Append examples unless one with the same key is there; keep at most `max` (oldest win). A kept
+ * example without English takes a matching one's English (extract_turn.v6 translates examples the
+ * reply left bare, §10 #100); English already there, Will's edits included, is never replaced.
+ */
 export function mergeExamples(
   existing: readonly PhraseExample[],
   incoming: PhraseExample | readonly PhraseExample[] | null,
@@ -345,7 +372,9 @@ export function mergeExamples(
   const out = [...existing];
   const list = incoming === null ? [] : Array.isArray(incoming) ? incoming : [incoming];
   for (const ex of list as readonly PhraseExample[]) {
-    if (!out.some((e) => hanziKey(e.hanzi) === hanziKey(ex.hanzi))) out.push(ex);
+    const i = out.findIndex((e) => hanziKey(e.hanzi) === hanziKey(ex.hanzi));
+    if (i < 0) out.push(ex);
+    else if (!out[i]!.english && ex.english) out[i] = { ...out[i]!, english: ex.english };
   }
   return out.slice(0, max);
 }

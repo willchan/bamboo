@@ -207,6 +207,12 @@ export const config = {
     maxExamples: 3,
     /** Flag `long` above this many key characters. */
     longChars: 20,
+    /**
+     * An example with a run of at least this many Latin letters, one of them lowercase, spells a
+     * word in romanization or English (“qincai”, dòujiǎo, “(beef)”) and isn't kept or shown; letter words in caps
+     * (A菜, B超, AA制, KTV) stay (§4.6 step 3).
+     */
+    romanizedMinLetters: 2,
   },
 
   /** The review screen (DESIGN §6 *Review*). */

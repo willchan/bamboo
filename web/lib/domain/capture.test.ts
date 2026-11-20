@@ -7,6 +7,7 @@ import { isLeaseExpired, isStaleAttempt, leaseExpiresAt, statusAfterFailure } fr
 import {
   englishNote,
   frequencyPoints,
+  isLearnableExample,
   mergeExamples,
   occursVerbatim,
   planMerge,
@@ -287,6 +288,46 @@ describe("validateExtraction", () => {
     expect(v.examplesDropped).toBe(2);
     expect(v.items[0]!.flags).toEqual(["example_dropped"]);
   });
+
+  it("drops an example that spells a word in Latin letters, keeping letter words like A菜", () => {
+    const reply = "您说的“doujiao”是豆角吗？豆角要炒熟。B超看了。A菜和豆角都买了。";
+    const v = validateExtraction(
+      { userText: "", replyText: reply },
+      {
+        turn_kind: "decode",
+        items: [
+          {
+            ...item,
+            kind: "term",
+            hanzi: "豆角",
+            examples: [
+              { hanzi: "您说的“doujiao”是豆角吗？", english: "Did you mean green beans?" },
+              { hanzi: "豆角要炒熟。", english: "Cook beans through." },
+              { hanzi: "A菜和豆角都买了。", english: null },
+            ],
+            pinyin: ["dòu", "jiǎo"],
+          },
+        ],
+      },
+    );
+    expect(v.items[0]!.examples.map((e) => e.hanzi)).toEqual(["豆角要炒熟。", "A菜和豆角都买了。"]);
+    expect(v.examplesDropped).toBe(1);
+    expect(v.items[0]!.flags).toEqual(["example_dropped"]);
+  });
+});
+
+describe("isLearnableExample", () => {
+  it("tells romanization and English glosses from letter words", () => {
+    expect(isLearnableExample("豆角要炒熟。")).toBe(true);
+    expect(isLearnableExample("B超看了。")).toBe(true);
+    expect(isLearnableExample("我们AA制吧。")).toBe(true);
+    expect(isLearnableExample("去KTV唱歌。")).toBe(true);
+    expect(isLearnableExample("您说的“doujiao”是豆角吗？")).toBe(false);
+    expect(isLearnableExample("这个叫 dòujiǎo。")).toBe(false);
+    expect(isLearnableExample("Doujiao 是豆角。")).toBe(false);
+    expect(isLearnableExample("阿姨，您是说豆角（green beans）吗？")).toBe(false);
+    expect(isLearnableExample("she may just call them 豆角")).toBe(false);
+  });
 });
 
 describe("mergeExamples", () => {
@@ -296,6 +337,14 @@ describe("mergeExamples", () => {
     expect(mergeExamples([ex("一")], null)).toEqual([ex("一")]);
     expect(mergeExamples([ex("一"), ex("二"), ex("三")], ex("四"))).toHaveLength(3);
     expect(mergeExamples([ex("一")], ex("二"), 5)).toHaveLength(2);
+  });
+  it("fills in a kept example's missing English from a matching one, never replacing English", () => {
+    const en = (hanzi: string, english: string) => ({ hanzi, english, turn_id: "t2" });
+    expect(mergeExamples([ex("一")], en("一！", "one"))).toEqual([
+      { hanzi: "一", english: "one", turn_id: null },
+    ]);
+    expect(mergeExamples([en("一", "kept")], en("一", "new"))).toEqual([en("一", "kept")]);
+    expect(mergeExamples([ex("一")], ex("一"))).toEqual([ex("一")]);
   });
 });
 

@@ -97,7 +97,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `english` | text | meaning (term) or intent (frame/sentence) |
 | `addressee` | text null | **unused** since §10 #63: not written or shown; to be dropped in a later PR |
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
-| `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; verbatim from Gemini (§4.6) |
+| `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; hanzi verbatim from Gemini (§4.6); English from the reply or, since v6, translated (§10 #100) |
 | `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `breakdown` | json null | the card back's breakdown (§5.5.4, H3): terms `{parts: [{hanzi, gloss}] (per character), meaning}`, sentences `{parts: [{hanzi, gloss}] (per word), note}`; contract `PhraseBreakdown` (`shared/src/contracts/breakdown.ts`). No pinyin stored: each part's is sliced from the displayed pinyin. Null when there's none or it failed the checks |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
@@ -150,7 +150,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `id` | |
 | `kind` | `'link' \| 'pdf' \| 'text' \| 'tutor'` (`tutor` since H5: a question asked in `#bamboo` and the agent's answer, §5.1; SQLite text, so no migration) |
 | `origin` | `'discord' \| 'web'` |
-| `source_ref` | share URL or file name; the tutor prompt's version (`tutor.v1`) for a tutor turn; null for text |
+| `source_ref` | share URL or file name; the tutor prompt's version (`tutor.v2`; `tutor.v1` before §10 #99) for a tutor turn; null for text |
 | `conversation_title` | from the page or PDF title; null for text |
 | `discord_channel_id`, `discord_message_id` | null for web; the reply target |
 | `idempotency_key` | **unique** null; the `Idempotency-Key` header of the call that created it |
@@ -418,8 +418,13 @@ On `extract_turn` completion, for each raw item:
 2. Keep `heard_as` only if it occurs (case-insensitive, spaces ignored) in `user_text`;
    otherwise null it and flag `heard_as_dropped`.
 3. Keep each example (terms only; v4 sends up to 3 as `examples`, older prompts one `example`)
-   only if it occurs verbatim in the turn **and** contains the term's `hanzi_key`; otherwise drop
-   it, flag `example_dropped` and count it.
+   only if it occurs verbatim in the turn **and** contains the term's `hanzi_key` **and** spells
+   no word in romanization (`isLearnableExample`: no run of `config.phrase.romanizedMinLetters`
+   (2) Latin letters with a lowercase one, so a quoted mishearing like “qincai”, pinyin or an
+   English gloss in brackets fails
+   while A菜, B超 and KTV pass); otherwise drop it, flag `example_dropped` and count it. The
+   review card applies the same romanization check to stored examples, so older phrases stop
+   showing them without a data change (§10 #98).
    - **Caps per turn** (`config.extraction`, applied after the checks above, in the model's
      order): an `errand` turn keeps its first `errandMaxItems` (3; 1 before H4) items; a `say` turn
      keeps its first `sayMaxTerms` (5; 2 before H4) terms (its sentence is kept). Drops are counted as
@@ -641,7 +646,7 @@ so the model never has to:
 A pasted answer is imported as `import --text-file` would (`kind: 'text'`); `ask` prints the
 same JSON plus `"route":"paste"`, and the skill posts its `reply`. A question prints
 `{"route":"question"}` and sends nothing. The agent then answers it as the **tutor** (the rules
-of `worker/prompts/tutor.v1.md`, which are in its `AGENTS.md`), writes its answer to a file, runs
+of `worker/prompts/tutor.v2.md`, which are in its `AGENTS.md`), writes its answer to a file, runs
 `bamboo-tools turn --question-file <file> --answer-file <file> --channel-id … --message-id …`
 (`POST /api/turns`, §3.2), and posts only the answer. `turn` prints `{import_id, turn_new}`; on a
 failure (`not_saved`, after `Api`'s retries) the agent adds its `reply` line under the answer:
@@ -691,7 +696,7 @@ Bamboo never adds an agent or changes `bindings`. What Bamboo needs from that ag
 - **the instructions inline** in its workspace `AGENTS.md` (a ⚠ otherwise): with thinking off,
   the model doesn't open `SKILL.md` on its own and guessed wrong flags; with the skill's body in
   `AGENTS.md` it picked the right command for a link, a PDF, pasted text and chit-chat every
-  time. Since H5 the tutor prompt (`worker/prompts/tutor.v1.md`, without its leading note) is
+  time. Since H5 the tutor prompt (`worker/prompts/tutor.v2.md` since §10 #99, without its leading note) is
   inline too, between the header and the skill's instructions, and checked the same way. The host's `AGENTS.md` has its own `#bamboo` section heading and scope; the check is that
   every non-blank line of `SKILL.md` after its title and `Scope:` paragraph is in that file
   (`missingInstructions`, `agent/tools/src/openclaw/agent.ts`), so a `SKILL.md` change shows up
@@ -1173,6 +1178,12 @@ a pasted-answer import or to the tutor, and `bamboo-tools turn` stores the answe
 through `POST /api/turns` as a `tutor` import (§5.1, §3.2, §10 #89–#91). The host's model and
 key change is in PandaDen's runbook (§5.5.7).
 
+*Since `tutor.v2` (§10 #99):* the prompt is `worker/prompts/tutor.v2.md`. It adds one rule: every
+example sentence is a short everyday sentence in Chinese only, using the word, with pinyin and
+English after it and nothing in Latin letters between the characters; a clarifying question for
+阿姨 or 月嫂 comes in addition to it. Extraction can then copy a usable example verbatim, and
+§4.6 step 3's romanization check stays as the backstop (§10 #98).
+
 #### 5.5.2 Extraction: `extract_turn.v4` (H4; §10 #74, #76, #77)
 
 There is **one extraction path**, whatever the turn's source. The worker sends each turn to Gemini
@@ -1281,7 +1292,11 @@ the checks against the new hanzi and kind. **Built (H4):** v4 asks Gemini for th
 the worker maps to a term's `meaning` or a sentence's `note`. **v5 (§10 #97):** the `summary`
 must add what the glosses don't say (a figurative sense, a nuance or register, when it's said; for
 a sentence, the pattern to reuse); no grammar labels or part-by-part walk-throughs, no restating the glosses. Same
-schema; a backfill re-run (`--all`, §5.5.6) refreshes older cards' breakdowns.
+schema; a backfill re-run (`--all`, §5.5.6) refreshes older cards' breakdowns. **v6 (§10
+#100):** every example gets English: the reply's when it gives one, otherwise Gemini's short
+translation (never null). Only English is written; the example's hanzi is still verbatim. A
+merge or re-run fills a stored example's missing English from the same example
+(`mergeExamples`), never replacing English already there.
 
 #### 5.5.5 New cards: learned while fresh (H2; §10 #79)
 
@@ -1449,7 +1464,7 @@ full-screen.
     that changes with every build, so a page loaded before a deploy calls actions the new build
     doesn't have: Next 16 throws `UnrecognizedActionError` and no retry can succeed. That froze a
     round with "Couldn't save 3 answers" and a Retry that never worked. Vercel's Skew Protection
-    would keep the page on its own deploy, but needs a paid plan, so the page handles it (§10 #98):
+    would keep the page on its own deploy, but needs a paid plan, so the page handles it (§10 #101):
     - Every build inlines its id (`NEXT_PUBLIC_BUILD_ID`: the Vercel deployment, else the commit,
       else `dev`; `next.config.ts`). `components/app-health.tsx`, in the root layout, asks
       `GET /api/version` on load and whenever the app comes back to the foreground; a different
@@ -1691,7 +1706,7 @@ the nudge, an alert, an import with no post): `bamboo-replies`
   agent or changes `bindings` or the system agent. With no matching binding it warns.
 - **A dedicated agent's workspace files** (§10 #73): when the serving agent's `skills` allowlist
   is exactly `["bamboo"]`, `make agent-install` writes its `AGENTS.md`
-  (`agent/workspace/AGENTS.header.md` + the tutor prompt `worker/prompts/tutor.v1.md` without
+  (`agent/workspace/AGENTS.header.md` + the tutor prompt `worker/prompts/tutor.v2.md` without
   its note (H5) + `SKILL.md` after its title and `Scope:` paragraph, `agentsMd`), `SOUL.md` and `IDENTITY.md`, keeping a replaced file in `<workspace>/.orig/`,
   and writes `USER.md` only over OpenClaw's placeholder (the agent records preferences there).
   A shared agent's workspace (e.g. a personal agent that also serves `#bamboo`) is the host's,
@@ -1975,7 +1990,10 @@ bamboo/
 | 95 | Gemini gets each schema without length, count and range limits (`servableSchema`, one helper in the Gemini client, so no request can skip it). The prompt states the limits, and the worker cuts the reply to the caps (`trimToCaps`, counted as `trimmed_over_cap`) before the strict Zod contract checks it (H7) | Gemini refused extract_turn.v4's and the referee's schemas with HTTP 400 "too many states for serving" (nested `maxItems`, string lengths, integer bounds); the same schemas without those keywords pass. Deriving the sent schema from the strict one keeps the two from drifting, and the strict contract stays the real check (on the Mac and again in the engine). Cutting extra items or tags keeps a good answer that a repair turn would only shorten; strings over their limit still go to the repair turn, as before |
 | 96 | `#bamboo` is a Discord forum, not a text channel: one post per question or conversation, so each gets its own OpenClaw session; follow-ups are replies in the post. `bamboo-tools` checks a post's forum through `openclaw message channel info` (cached in `posts.json`), and `replies` posts each summary inside its post with `openclaw message send`; the automations still announce to the forum, which opens a new post (the nudge, alerts) (§5.1) | In a text channel every message joined one session that never reset, so each question carried all the earlier ones. A forum post is a session of its own (OpenClaw routes posts through their parent, so the binding and channel pin carry over). The agent sees only a post's id, and an announce can't target a post chosen at run time, so both lookups go through OpenClaw's CLI, which uses the gateway's Discord connection: Bamboo still holds no Discord token |
 | 97 | extract_turn.v5: the breakdown `summary` must tell Will something the parts don't (figurative sense, nuance, register, when it's said, the reusable pattern); never grammar labels like "verb + object" or a restatement of the glosses. Schema unchanged (§5.5.4) | v4's summaries often described the parts in grammar labels (terms: "verb combined with its object"; sentences: "subject, then the verb phrase and a completion particle"), which a heritage speaker doesn't need and the glosses already show. Keeping the field required (rather than nullable) avoids a contract change across worker, engine and stored JSON; for a transparent word the prompt asks for when it's used instead |
-| 98 | A page from an older deploy reloads into the new one: the app compares its build with `GET /api/version` on load and on returning to the foreground, and a save that fails as stale reloads too. Unconfirmed saves wait in localStorage and are resent after the reload (idempotent by `reviewId`). Failures on the phone are reported to `POST /api/client-log` as fixed-field log lines (§6 *Saving*, §8.5) | A round froze on "Couldn't save 3 answers" after a deploy: the page's server actions no longer existed, every retry failed the same way, reloading would have lost the grades, and nothing logged why. Vercel's Skew Protection fixes the first part but isn't on the free plan. localStorage, not IndexedDB: a handful of small records written once per grade and read only by the page; iOS keeps both while the app is on the home screen, and IndexedDB would add a wrapper for nothing at this size |
+| 98 | A term's example that spells a word in romanization is dropped at extraction and hidden on the review card (§4.6 step 3) | The tutor often answers a "what did she mean by qinxiangcai?" question with a clarifying question that quotes the romanization, or glosses the word in English in brackets, and names candidate words. It is verbatim and contains the term, so it passed, but it's a question *about* the word, not a use of it, and its ruby pinyin breaks around the Latin. Requiring a lowercase letter keeps real letter words (A菜, B超, AA制, KTV). Filtering at read time too fixes stored phrases without a migration; the stored example stays visible on the phrase's edit page |
+| 99 | `tutor.v2`: each example sentence is everyday Chinese only, using the word, with pinyin and English after it; a clarifying question for 阿姨 or 月嫂 is extra, never the example (§5.5.1) | Cards kept getting the tutor's clarifying questions, bracketed English glosses or English lines as examples, which #98 now drops, often leaving a card with none. Asking the tutor for a clean sentence keeps every example verbatim from an answer Will has read (no generated Chinese goes on a card unseen), rather than adding a step that writes examples. Shared Gemini-app conversations can't be steered this way; generating examples for those stays a later, separate decision |
+| 100 | extract_turn.v6: an example's `english` is the reply's, or else Gemini's short translation, never null; a merge or re-run fills a stored example's missing English, never replacing English (§5.5.4) | Shared Gemini-app answers often use a word in a sentence of the explanation with no English after it, so the card showed a Chinese sentence Will had to decode himself. The no-generated-Chinese rule is about Chinese; the reply's English is Gemini's too, so a translation by the extraction call is no less trusted and isn't marked. Same schema, so no new Gemini serving risk. Older cards get English through a backfill re-run |
+| 101 | A page from an older deploy reloads into the new one: the app compares its build with `GET /api/version` on load and on returning to the foreground, and a save that fails as stale reloads too. Unconfirmed saves wait in localStorage and are resent after the reload (idempotent by `reviewId`). Failures on the phone are reported to `POST /api/client-log` as fixed-field log lines (§6 *Saving*, §8.5) | A round froze on "Couldn't save 3 answers" after a deploy: the page's server actions no longer existed, every retry failed the same way, reloading would have lost the grades, and nothing logged why. Vercel's Skew Protection fixes the first part but isn't on the free plan. localStorage, not IndexedDB: a handful of small records written once per grade and read only by the page; iOS keeps both while the app is on the home screen, and IndexedDB would add a wrapper for nothing at this size |
 
 ## Appendix A — Synthetic fixtures
 

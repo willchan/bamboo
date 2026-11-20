@@ -10,9 +10,9 @@ const FILE = (n: string) =>
   `<!-- note ${n} -->\n<!-- system -->\nS${n}\n<!-- user -->\nU {{user_text}}\n<!-- repair -->\nR {{errors}}\n`;
 
 describe("prompt files", () => {
-  it("the shipped prompt loads as extract_turn.v5 with all three parts", () => {
+  it("the shipped prompt loads as extract_turn.v6 with all three parts", () => {
     const p = loadPrompt();
-    expect(p.version).toBe("extract_turn.v5");
+    expect(p.version).toBe("extract_turn.v6");
     expect(p.system).toContain("turn_kind");
     expect(p.user).toContain("{{user_text}}");
     expect(p.user).toContain("{{reply_text}}");
@@ -31,6 +31,9 @@ describe("prompt files", () => {
     // H3: a breakdown's glosses and note are English only.
     expect(v4).toMatch(/English only\*\*: never quote Chinese/u);
     expect(v4).not.toMatch(/frame/iu);
+    // v6: an example the reply leaves untranslated gets English, never Chinese written by Gemini.
+    expect(v4).toMatch(/write a short, natural\s+English translation/u);
+    expect(v4).not.toMatch(/null if\s+the reply gives none/u);
     for (const name of ["pinyin_reading", "pinyin_referee"]) {
       const p = loadPrompt(name);
       expect(p.version).toBe(`${name}.v1`);

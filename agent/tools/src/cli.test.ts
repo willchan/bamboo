@@ -383,7 +383,7 @@ describe("bamboo-tools turn", () => {
       reply_text: files["a.txt"],
       discord_channel_id: CHANNEL,
       discord_message_id: "902",
-      prompt_version: "tutor.v1",
+      prompt_version: "tutor.v2",
     });
     const again = await run(turn(), textDeps());
     expect(JSON.parse(again.out)).toEqual({ import_id: "imp1", turn_new: false });

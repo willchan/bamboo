@@ -50,8 +50,8 @@ Read only the sections your task needs.
   and one turn (a `pinyin` job's: the prompt and one phrase with its examples). The tutor never
   writes cards: every turn goes through the worker and the engine's checks. The agent never reads
   a share link, PDF or pasted answer itself (DESIGN §5.5, §10 #74; the worker is on Gemini since
-  H4; the agent answers with `worker/prompts/tutor.v1.md` since H5, once the host has moved its
-  model to Gemini Flash).
+  H4; the agent answers with a `worker/prompts/tutor.v*.md` prompt since H5, v2 since §10 #99,
+  once the host has moved its model to Gemini Flash).
 - **Prompts are versioned files** in `worker/prompts/`. Changing a prompt means a new version file;
   jobs record `prompt_version`.
 - **Tunables live in config**: `web/lib/config.ts` (engine) and `shared/src/config.ts` (Mac side).
@@ -127,9 +127,18 @@ Lessons from live runs (November 2026). Ask before anything that changes product
   `openclaw-agent`. Run there with `ssh agent '<cmd>'` from `~/Code/bamboo`. Its token lives in
   that account's `~/.config/bamboo/agent.env` as `BAMBOO_AGENT_API_TOKEN` (Vercel's stays
   `AGENT_API_TOKEN`), never in the admin's home.
-- **After a PR merges,** run `make mac-update` there. If it changed a schema or a prompt, run the
-  Gemini probe there too (`gemini-probe`, above): Google rejects some schemas only on a real
-  request ("too many states for serving", H7), which CI can't see.
+- **After a PR merges,** run `make mac-update` there. It pulls, installs, restarts the worker and
+  runs `agent-install` (which ends with `agent-check`), so it also picks up a new tutor prompt or
+  skill. If it changed an extraction schema or prompt, run the Gemini probe there too
+  (`gemini-probe`, above): Google rejects some schemas only on a real request ("too many states
+  for serving", H7), which CI can't see.
+- **Cloud sessions can't reach the Mac.** When you merge a PR that touches the Mac side
+  (`worker/`, `agent/`, `shared/`, `ops/`, a prompt), end your report by giving Will this line to
+  run from his own account (a login shell, so `pnpm` is on the PATH):
+
+  ```
+  ssh agent 'zsh -lc "cd ~/Code/bamboo && make mac-update"'
+  ```
 - **Shared with PandaBase:** the OpenClaw gateway and Ollama. Ollama's settings, models and memory
   budget belong to the host's runbook, not to Bamboo: don't change them from here. New
   automations need `--agent` (the installer passes the agent the host binds `#bamboo` to, on
