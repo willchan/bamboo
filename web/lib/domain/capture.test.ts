@@ -326,6 +326,7 @@ describe("isLearnableExample", () => {
     expect(isLearnableExample("这个叫 dòujiǎo。")).toBe(false);
     expect(isLearnableExample("Doujiao 是豆角。")).toBe(false);
     expect(isLearnableExample("阿姨，您是说豆角（green beans）吗？")).toBe(false);
+    expect(isLearnableExample("she may just call them 豆角")).toBe(false);
   });
 });
 
