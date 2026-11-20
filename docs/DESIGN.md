@@ -416,8 +416,13 @@ On `extract_turn` completion, for each raw item:
 2. Keep `heard_as` only if it occurs (case-insensitive, spaces ignored) in `user_text`;
    otherwise null it and flag `heard_as_dropped`.
 3. Keep each example (terms only; v4 sends up to 3 as `examples`, older prompts one `example`)
-   only if it occurs verbatim in the turn **and** contains the term's `hanzi_key`; otherwise drop
-   it, flag `example_dropped` and count it.
+   only if it occurs verbatim in the turn **and** contains the term's `hanzi_key` **and** spells
+   no word in romanization (`isLearnableExample`: no run of `config.phrase.romanizedMinLetters`
+   (2) Latin letters with a lowercase one, so a quoted mishearing like “qincai”, pinyin or an
+   English gloss in brackets fails
+   while A菜, B超 and KTV pass); otherwise drop it, flag `example_dropped` and count it. The
+   review card applies the same romanization check to stored examples, so older phrases stop
+   showing them without a data change (§10 #98).
    - **Caps per turn** (`config.extraction`, applied after the checks above, in the model's
      order): an `errand` turn keeps its first `errandMaxItems` (3; 1 before H4) items; a `say` turn
      keeps its first `sayMaxTerms` (5; 2 before H4) terms (its sentence is kept). Drops are counted as
@@ -1933,6 +1938,7 @@ bamboo/
 | 95 | Gemini gets each schema without length, count and range limits (`servableSchema`, one helper in the Gemini client, so no request can skip it). The prompt states the limits, and the worker cuts the reply to the caps (`trimToCaps`, counted as `trimmed_over_cap`) before the strict Zod contract checks it (H7) | Gemini refused extract_turn.v4's and the referee's schemas with HTTP 400 "too many states for serving" (nested `maxItems`, string lengths, integer bounds); the same schemas without those keywords pass. Deriving the sent schema from the strict one keeps the two from drifting, and the strict contract stays the real check (on the Mac and again in the engine). Cutting extra items or tags keeps a good answer that a repair turn would only shorten; strings over their limit still go to the repair turn, as before |
 | 96 | `#bamboo` is a Discord forum, not a text channel: one post per question or conversation, so each gets its own OpenClaw session; follow-ups are replies in the post. `bamboo-tools` checks a post's forum through `openclaw message channel info` (cached in `posts.json`), and `replies` posts each summary inside its post with `openclaw message send`; the automations still announce to the forum, which opens a new post (the nudge, alerts) (§5.1) | In a text channel every message joined one session that never reset, so each question carried all the earlier ones. A forum post is a session of its own (OpenClaw routes posts through their parent, so the binding and channel pin carry over). The agent sees only a post's id, and an announce can't target a post chosen at run time, so both lookups go through OpenClaw's CLI, which uses the gateway's Discord connection: Bamboo still holds no Discord token |
 | 97 | extract_turn.v5: the breakdown `summary` must tell Will something the parts don't (figurative sense, nuance, register, when it's said, the reusable pattern); never grammar labels like "verb + object" or a restatement of the glosses. Schema unchanged (§5.5.4) | v4's summaries often described the parts in grammar labels (terms: "verb combined with its object"; sentences: "subject, then the verb phrase and a completion particle"), which a heritage speaker doesn't need and the glosses already show. Keeping the field required (rather than nullable) avoids a contract change across worker, engine and stored JSON; for a transparent word the prompt asks for when it's used instead |
+| 98 | A term's example that spells a word in romanization is dropped at extraction and hidden on the review card (§4.6 step 3) | The tutor often answers a "what did she mean by qinxiangcai?" question with a clarifying question that quotes the romanization, or glosses the word in English in brackets, and names candidate words. It is verbatim and contains the term, so it passed, but it's a question *about* the word, not a use of it, and its ruby pinyin breaks around the Latin. Requiring a lowercase letter keeps real letter words (A菜, B超, AA制, KTV). Filtering at read time too fixes stored phrases without a migration; the stored example stays visible on the phrase's edit page |
 
 ## Appendix A — Synthetic fixtures
 
