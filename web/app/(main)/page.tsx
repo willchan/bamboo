@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { signOut } from "@/auth";
 import { BambooMark } from "@/components/bamboo-mark";
-import { LearnMoreButton, StartButton } from "@/components/start-button";
+import { LearnMoreButton, NewToday, StartButton } from "@/components/start-button";
 import { VoiceHint } from "@/components/voice-hint";
 import { APP_NAME } from "@/lib/app";
 import { requireUser } from "@/lib/auth/current";
@@ -30,10 +30,8 @@ export default async function TodayPage() {
   return timed("page /", async () => {
     const user = await requireUser();
     const clock = serverClock();
-    const { status, queueSize, learnMore, worker, nudgeOn, nudgeAt } = await loadTodayPage(
-      getDb(),
-      clock,
-    );
+    const { status, queueSize, learnMore, newToday, keepGoing, worker, nudgeOn, nudgeAt } =
+      await loadTodayPage(getDb(), clock);
 
     return (
       <>
@@ -56,7 +54,12 @@ export default async function TodayPage() {
               <p className="text-2xl font-semibold text-primary" data-testid="done-for-today">
                 ✓ Done for today
               </p>
-              {status.another ? (
+              {status.another && keepGoing ? (
+                <StartButton
+                  keepGoing
+                  label={`Keep going (${newToday.target - newToday.introduced} new left)`}
+                />
+              ) : status.another ? (
                 <StartButton
                   primary={false}
                   label={`Another round (${plural(status.another.due, "due", "due")}${
@@ -74,6 +77,7 @@ export default async function TodayPage() {
             </>
           )}
           {learnMore > 0 ? <LearnMoreButton n={learnMore} /> : null}
+          {newToday.introduced > 0 || keepGoing ? <NewToday {...newToday} /> : null}
           {worker.kind === "offline" ? (
             <p className="text-sm text-muted" data-testid="worker-offline">
               ⏳ {plural(worker.waiting, "question")} waiting for the Mac worker (

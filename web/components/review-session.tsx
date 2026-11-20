@@ -16,7 +16,8 @@ import {
   type ReactNode,
 } from "react";
 import { finishRoundAction, gradeAction, notUsefulAction } from "@/app/actions";
-import { LearnMoreButton, StartButton } from "@/components/start-button";
+import { LearnMoreButton, NewToday, StartButton } from "@/components/start-button";
+import { startRoundAction } from "@/app/actions";
 import { Ruby } from "@/components/ruby";
 import { speak } from "@/lib/audio";
 import { config, type SessionConfig } from "@/lib/config";
@@ -153,7 +154,15 @@ function RoundSession({
         return;
       }
       const today = await finishRoundAction(roundId);
-      setFinished(today ?? { status: { kind: "done", another: null }, queueSize: 0, learnMore: 0 });
+      setFinished(
+        today ?? {
+          status: { kind: "done", another: null },
+          queueSize: 0,
+          learnMore: 0,
+          newToday: { introduced: 0, target: 0 },
+          keepGoing: false,
+        },
+      );
     });
   }, [roundId, saves]);
 
@@ -476,8 +485,51 @@ function Breakdown({ view }: { view: NonNullable<ReviewCardView["breakdown"]> })
   );
 }
 
+/**
+ * Keep going (DESIGN §4.4): during a backlog, the round's end starts the next round by itself,
+ * new cards first, until today's target is reached. ✕ on the next card stops.
+ */
+function KeepGoing({ today }: { today: Today }) {
+  const form = useRef<HTMLFormElement>(null);
+  const sent = useRef(false);
+  useEffect(() => {
+    if (sent.current) return;
+    sent.current = true;
+    form.current?.requestSubmit();
+  }, []);
+  const left = today.newToday.target - today.newToday.introduced;
+  return (
+    <>
+      <p className="text-2xl font-semibold text-primary" data-testid="keep-going">
+        ✓ Round done
+      </p>
+      <NewToday {...today.newToday} />
+      <form ref={form} action={startRoundAction} className="w-full">
+        <input type="hidden" name="keepGoing" value="1" />
+        <button
+          type="submit"
+          className="h-12 w-full rounded-2xl border border-border text-base font-medium"
+        >
+          Keep going ({left} new left)…
+        </button>
+      </form>
+    </>
+  );
+}
+
 function RoundDone({ today, alert }: { today: Today | null; alert: ReactNode }) {
   const status = today?.status;
+  if (today?.keepGoing && status?.kind === "done") {
+    return (
+      <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-5 px-5 text-center">
+        {alert}
+        <KeepGoing today={today} />
+        <Link href="/" className="text-primary underline underline-offset-4">
+          Back to Today
+        </Link>
+      </div>
+    );
+  }
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-md flex-col items-center justify-center gap-5 px-5 text-center">
       {alert}
@@ -494,6 +546,7 @@ function RoundDone({ today, alert }: { today: Today | null; alert: ReactNode }) 
             <StartButton primary={false} label="Another round" />
           ) : null}
           {today.learnMore > 0 ? <LearnMoreButton n={today.learnMore} /> : null}
+          {today.newToday.introduced > 0 ? <NewToday {...today.newToday} /> : null}
           <Link href="/" className="text-primary underline underline-offset-4">
             Back to Today
           </Link>

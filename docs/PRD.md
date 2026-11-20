@@ -129,6 +129,11 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   principle 5). After a round:
   "✓ Done for today" (one round is the daily goal), plus an optional "Another round (N due)" if
   more is waiting.
+- **Keep going** (while there's a backlog: 30 or more phrases waiting, and today's 30 new cards
+  not yet reached): after the first round, the end of a round starts the next one by itself, new
+  cards first, until today's 30 are introduced; ✕ stops, and Today offers "Keep going (N new
+  left)". Once the backlog is gone it's "Another round" again. Today and the end of a round show
+  "N of 30 new today".
 - **Learn 3 more**: once today's new cards are used up and new phrases are waiting, Today and the
   end of a round offer a button that starts a round with up to 3 more new cards (plus anything
   due), for today only; he can tap it again later. It's opt-in because each new card adds reviews
@@ -142,8 +147,9 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   a reload. When Bamboo has been updated since the page opened, the app reloads itself into the
   new version (on opening, or when a save fails because of it) and sends those answers then,
   instead of offering a Retry that can't work.
-- A new card he gets right comes back once more later that evening (a ~10-minute learning step),
-  then not for weeks. Cards on a learning step come in a different order each round.
+- A new card he gets right is done for the evening and comes back in about two weeks. One he
+  misses (Again) or finds hard comes back a minute or two later, in the same round or the next.
+  Cards on a learning step come in a different order each round.
 - The **first time** a new card appears, two more buttons:
   - **Not useful**: the phrase is dropped, and the drop teaches the ranking.
   - **Already know**: graded Easy, so it comes back much later.

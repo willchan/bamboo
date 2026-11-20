@@ -318,6 +318,15 @@ describe("Again within a round", () => {
   });
 });
 
+const W0 = {
+  due: 0,
+  newAvailable: 0,
+  roundCards: 0,
+  learnMore: 0,
+  newToday: { introduced: 0, target: 3 },
+  keepGoing: false,
+};
+
 describe("workload and done-for-today", () => {
   it("counts due and new for Today", () => {
     const st = state({
@@ -330,13 +339,15 @@ describe("workload and done-for-today", () => {
       newAvailable: 2,
       roundCards: 4,
       learnMore: 0,
+      newToday: { introduced: 1, target: 3 },
+      keepGoing: false,
     });
   });
 
   it("offers Learn more once the cap is used up and new phrases are waiting", () => {
     const queue = queued(fresh(), fresh(), fresh(), fresh());
     const w = workload(NOW, state({ queue, introducedToday: 3 }), { dayEnd: DAY_END });
-    expect(w).toEqual({ due: 0, newAvailable: 0, roundCards: 0, learnMore: 3 });
+    expect(w).toMatchObject({ due: 0, newAvailable: 0, roundCards: 0, learnMore: 3 });
     // Fewer waiting than a batch: offer what's there.
     const two = workload(NOW, state({ queue: queued(fresh(), fresh()), introducedToday: 4 }), {
       dayEnd: DAY_END,
@@ -353,12 +364,12 @@ describe("workload and done-for-today", () => {
   });
 
   it("asks to start when no round is finished and there is something to do", () => {
-    const w = { due: 3, newAvailable: 1, roundCards: 4, learnMore: 0 };
+    const w = { ...W0, due: 3, newAvailable: 1, roundCards: 4 };
     expect(todayStatus(false, w)).toEqual({ kind: "start", workload: w });
   });
 
   it("is done for today with nothing due and the new cap used up", () => {
-    const w = { due: 0, newAvailable: 0, roundCards: 0, learnMore: 3 };
+    const w = { ...W0, learnMore: 3 };
     expect(todayStatus(false, w)).toEqual({ kind: "done", another: null });
     expect(todayStatus(true, w)).toEqual({ kind: "done", another: null });
   });
@@ -369,8 +380,62 @@ describe("workload and done-for-today", () => {
   });
 
   it("offers another round after a finished round when more is waiting", () => {
-    const w = { due: 4, newAvailable: 0, roundCards: 4, learnMore: 3 };
+    const w = { ...W0, due: 4, roundCards: 4, learnMore: 3 };
     expect(todayStatus(true, w)).toEqual({ kind: "done", another: w });
+  });
+});
+
+describe("Keep going (a backlog of new cards)", () => {
+  const session = { ...config.session, newPerDay: 30, keepGoingMinQueue: 5 };
+  const backlog = (k: number) => queued(...Array.from({ length: k }, () => fresh()));
+
+  it("is offered while the backlog is big and today's target has room", () => {
+    const w = workload(NOW, state({ queue: backlog(5), introducedToday: 19 }), {
+      dayEnd: DAY_END,
+      session,
+    });
+    expect(w.keepGoing).toBe(true);
+    expect(w.newToday).toEqual({ introduced: 19, target: 30 });
+  });
+
+  it("isn't offered in steady state (a small queue): Another round as before", () => {
+    const w = workload(NOW, state({ queue: backlog(4) }), { dayEnd: DAY_END, session });
+    expect(w.keepGoing).toBe(false);
+    expect(w.newAvailable).toBe(4);
+  });
+
+  it("stops once today's target is reached", () => {
+    const w = workload(NOW, state({ queue: backlog(8), introducedToday: 30 }), {
+      dayEnd: DAY_END,
+      session,
+    });
+    expect(w.keepGoing).toBe(false);
+  });
+
+  it("fills the round with new cards first, due cards after", () => {
+    const due = [review(-DAY), review(-2 * DAY), card({ state: State.Learning, due: NOW })];
+    const st = state({ activeCards: due, queue: backlog(12) });
+    const round = buildRound(NOW, st, { dayEnd: DAY_END, session, keepGoing: true });
+    expect(kinds(round)).toBe("nnnnnnnnnn");
+    // An ordinary round puts the due cards first and new ones in what's left.
+    const plain = buildRound(NOW, st, { dayEnd: DAY_END, session });
+    expect(plain.filter((x) => x.kind === "new")).toHaveLength(7);
+    // Near the target, the rest of the round goes to due cards.
+    const near = buildRound(
+      NOW,
+      { ...st, introducedToday: 27 },
+      {
+        dayEnd: DAY_END,
+        session,
+        keepGoing: true,
+      },
+    );
+    expect(kinds(near)).toBe("nnnlrr");
+  });
+
+  it("is an ordinary round once the target is used up", () => {
+    const st = state({ activeCards: [review(-DAY)], queue: backlog(12), introducedToday: 30 });
+    expect(kinds(buildRound(NOW, st, { dayEnd: DAY_END, session, keepGoing: true }))).toBe("r");
   });
 });
 

@@ -311,7 +311,8 @@ days, a second `stability_fast` memory field). Bamboo starts with no review hist
 FSRS-7 rather than pinning FSRS-6. `web/lib/domain/fsrs.ts` wraps it (convert columns ↔ scheduler
 card, grade, preview the four intervals). Parameters live in `config.fsrs`, with ts-fsrs 6's
 camelCase names: `version: 'FSRS-7'`, `desiredRetention: 0.85`, `maximumInterval: 365`,
-`enableFuzz: true`, `enableShortTerm: true`, `learningSteps: ['1m', '10m']`,
+`enableFuzz: true`, `enableShortTerm: true`, `learningSteps: ['1m']` (one step since §10 #102:
+Good on a new card graduates it; Again and Hard bring it back within the round),
 `relearningSteps: ['10m']`, and `allowModelOverride: false`: with it on, FSRS-7 may skip the
 learning steps (a Good after Again jumped to ~2 h), which breaks Again-within-a-round. Fuzz is
 seeded by card id + reps, so it is deterministic per card.
@@ -333,7 +334,8 @@ cards, in this order:
 3. **new cards**, interleaved one per `config.session.newEvery` (3) cards (d d N d d N …; extras
    go at the end). New cards are limited by `config.session.newPerDay` (30 since H2, Will's
    choice from an FSRS estimate, §10 #79; 5 until then, 3 before §10 #64) minus those already
-   introduced today. Due cards take priority: new cards only fill the slots the due cards leave.
+   introduced today. Due cards take priority: new cards only fill the slots the due cards leave
+   (except in a Keep going round, below).
    **Learn more**: `buildRound(…, { learnMore: true })` (Start with `learnMore=1`), once
    today's cap is used up, allows `config.session.extraNewBatch` (3) more new cards in that round
    and reserves room for them (due cards beyond the rest of the round wait). While the cap still
@@ -354,16 +356,35 @@ round, judged as `config.session.secondsPerCard` (15 s) per remaining card: a 1-
 back after 4 more cards if at least 4 remain; otherwise it waits for the next round or day. The
 same rule applies to any grade whose next step is that short.
 
-**Same evening**: a new card rated Good goes to its 10-minute learning step, which is inside
-learn-ahead, so it comes back in the next round even a minute later; Good again graduates it
-(FSRS-7 then schedules it weeks out). So with all-Good answers a card is seen at most twice in an
-evening, and "Another round" disappears once nothing is due.
+**Same evening** (since §10 #102): a new card rated Good graduates at once (FSRS-7 schedules it
+about two weeks out), so it's seen once that evening. Again (1 m) or Hard (~2 m) keeps it on the
+learning step: it comes back later in the round if the step fits, or in the next round (the step
+is inside learn-ahead); Good then graduates it. "Another round" disappears once nothing is due.
+Until §10 #102 a Good went to a 10-minute step and every new card was shown twice an evening.
 
 **After a round**: the daily goal is met by one finished round, or by having nothing to do, and
 the screen says "✓ Done for today". If something is still waiting (due cards, or new cards under
 the cap), it also offers "Another round (N due)". Once the cap is used up and new phrases are
 waiting, Today and the round's end also offer **Learn N more** (`Workload.learnMore`, N =
 min(`extraNewBatch`, waiting phrases)). It doesn't count toward the reminder's "something to do".
+
+**Keep going** (a backlog, §10 #102): `Workload.keepGoing` holds while at least
+`config.session.keepGoingMinQueue` (30) phrases are `queued` and today's `newPerDay` has room
+for new cards. Then, once a round is finished:
+
+- the round's end shows "✓ Round done · N of 30 new today" and starts the next round by itself
+  (`startRound(…, { keepGoing: true })`, Start's `keepGoing=1`); ✕ on a card stops, and Today
+  offers **Keep going (N new left)** in place of "Another round";
+- a Keep going round puts new cards first and fills the round with them (up to the rest of
+  today's `newPerDay`), due cards after them in what's left. The engine grants `keepGoing` only
+  while `Workload.keepGoing` holds, so a stale request gives an ordinary round;
+- once today's target is reached, or the queue drops below the threshold (steady state, about 11
+  new phrases a day), it's "✓ Done for today" with "Another round (N due)" and Learn N more as
+  before.
+
+The first round of the day stays an ordinary one (due cards first): it's the daily goal, and the
+reminder and "Done for today" still count it. Today and the round's end show **N of 30 new
+today** (`Workload.newToday`) once a card has been introduced or Keep going is on.
 
 **First sight of a new card** shows, besides the grades:
 
@@ -1802,7 +1823,7 @@ remote-database writes. Ported from PandaBase (its PRs #41, #47, #50, #52).
   `dev@example.com`. Its own build directory (`.next-seeded`, `NEXT_DIST_DIR`), so it runs beside
   `pnpm dev`. Real-service secrets are set to `""`, which Next keeps over any `.env` file.
 - The seed is relative to *now*: review cards due now, five phrases introduced a few minutes ago
-  (on their learning step), six new phrases waiting in Up next, two retired frames (`dropped`), finished rounds and reviews on past days (Stats), three imports
+  (rated Again, so on their learning step), six new phrases waiting in Up next, two retired frames (`dropped`), finished rounds and reviews on past days (Stats), three imports
   with turns, extraction events and one failed job (Imports), and a recent worker heartbeat.
   `pnpm db:seed` adds the same data to `db/dev.db`.
 - `pnpm --filter web shot [paths…]`: Playwright phone screenshots (390×844 @2x) of each path in
@@ -1994,6 +2015,7 @@ bamboo/
 | 99 | `tutor.v2`: each example sentence is everyday Chinese only, using the word, with pinyin and English after it; a clarifying question for 阿姨 or 月嫂 is extra, never the example (§5.5.1) | Cards kept getting the tutor's clarifying questions, bracketed English glosses or English lines as examples, which #98 now drops, often leaving a card with none. Asking the tutor for a clean sentence keeps every example verbatim from an answer Will has read (no generated Chinese goes on a card unseen), rather than adding a step that writes examples. Shared Gemini-app conversations can't be steered this way; generating examples for those stays a later, separate decision |
 | 100 | extract_turn.v6: an example's `english` is the reply's, or else Gemini's short translation, never null; a merge or re-run fills a stored example's missing English, never replacing English (§5.5.4) | Shared Gemini-app answers often use a word in a sentence of the explanation with no English after it, so the card showed a Chinese sentence Will had to decode himself. The no-generated-Chinese rule is about Chinese; the reply's English is Gemini's too, so a translation by the extraction call is no less trusted and isn't marked. Same schema, so no new Gemini serving risk. Older cards get English through a backfill re-run |
 | 101 | A page from an older deploy reloads into the new one: the app compares its build with `GET /api/version` on load and on returning to the foreground, and a save that fails as stale reloads too. Unconfirmed saves wait in localStorage and are resent after the reload (idempotent by `reviewId`). Failures on the phone are reported to `POST /api/client-log` as fixed-field log lines (§6 *Saving*, §8.5) | A round froze on "Couldn't save 3 answers" after a deploy: the page's server actions no longer existed, every retry failed the same way, reloading would have lost the grades, and nothing logged why. Vercel's Skew Protection fixes the first part but isn't on the free plan. localStorage, not IndexedDB: a handful of small records written once per grade and read only by the page; iOS keeps both while the app is on the home screen, and IndexedDB would add a wrapper for nothing at this size |
+| 102 | Good on a new card graduates it (`learningSteps: ['1m']`), and during a backlog the round's end goes straight on with new cards first (**Keep going**, `keepGoingMinQueue` 30) until today's `newPerDay` is reached; "N of 30 new today" on Today and the round's end | Measured on a read-only prod copy (counts only) on an evening of five rounds: 19 new cards took 43 showings, and 2–6 of each round's 10 cards were the previous round's, because the 10-minute step sat inside the 20-minute learn-ahead and due cards fill a round before new ones; 30 a day needed about 12 rounds behind a "Done for today" that said one was enough. A synthetic FSRS run (343 queued, 11 new a day, 0.85 recall) at 30 a day: two steps ~101 cards (~25 min) a day in the burst, ~80 after; one step ~52 (~13 min) and ~51, the burst ~18 days either way. Will chose one step. Keep going only during a backlog: in steady state "Another round" (one more short round) suits an evening better, and a threshold in config switches by itself. Rounds stay 10 cards so the daily minimum stays small; Keep going removes the end screens instead |
 
 ## Appendix A — Synthetic fixtures
 

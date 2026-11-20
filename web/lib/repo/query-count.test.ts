@@ -62,11 +62,11 @@ describe("database calls per request in the review flow", () => {
     );
     await gradeCard(
       db,
-      { roundId, cardId: second!.cardId, grade: 3, source: "session", durationMs: 1 },
+      { roundId, cardId: second!.cardId, grade: 1, source: "session", durationMs: 1 },
       clock(),
     );
     const finish = await measure(() => finishRound(db, roundId, clock()));
-    // A second round: the same cards are now learning cards (not new).
+    // A second round: the card rated Again is now a learning card (not new).
     const later = clock(T0 + 9 * 60_000);
     const round2 = (await startRound(db, later))!;
     const card2 = (await getRound(db, round2, later))!.cards[0]!;

@@ -42,7 +42,7 @@ export interface Seed {
   usefulness: number;
   /** Days ago it was introduced and reviewed (Good, Good); seeded as due now. */
   activeDaysAgo?: number;
-  /** Introduced today (one Good, now on its learning step): uses up today's new cards. */
+  /** Introduced today (one Again, now on its learning step): uses up today's new cards. */
   learningToday?: boolean;
   extraCard?: CardType;
   /** A frame retired by H2b's migration (DESIGN §10 #77): `dropped`, never scheduled. */
@@ -362,11 +362,11 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
           at0,
         ),
       );
-    // Today's: one Good, so it's on its learning step. Older ones: Good, Good, and those from
+    // Today's: one Again, so it's on its learning step (Good graduates since DESIGN §10 #102). Older ones: Good, Good, and those from
     // 6+ days ago a review two days later (Again for the oldest, so Stats' retention isn't 100%
     // and one card is relearning); then due now.
     const days = s.activeDaysAgo ?? 0;
-    const grades: Grade[] = s.learningToday ? [3] : days >= 6 ? [3, 3, days >= 12 ? 1 : 3] : [3, 3];
+    const grades: Grade[] = s.learningToday ? [1] : days >= 6 ? [3, 3, days >= 12 ? 1 : 3] : [3, 3];
     let cols: FsrsColumns = { ...(first as unknown as FsrsColumns) };
     let at = at0;
     for (const grade of grades) {

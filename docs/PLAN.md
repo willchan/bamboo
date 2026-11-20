@@ -1102,6 +1102,10 @@ H2 has two steps, possibly two sessions.
   (about 10 cards a day per daily new phrase).
 - *H2b, Will's input:* `newPerDay` = 30 (about a 22-day burst, then about 115 cards, ~29 min, a
   day). A limit remains, so **Learn more** stays (still 3, `extraNewBatch`).
+- *After H2 (DESIGN §10 #102):* the estimate's ~124 cards a day meant about 12 rounds an evening,
+  behind a "Done for today" after one. A new card rated Good now graduates (one learning step),
+  and Keep going runs rounds back to back, new cards first, while a backlog lasts. Re-estimated
+  (synthetic, 343 queued): ~52 cards (~13 min) a day in an ~18-day burst, then ~51.
 - *H2b, built:* migration `0006_retire_frames` (custom SQL, data only: frames not already
   `dropped` → `dropped`, unpinned, `dropped_at` set; one `phrase_retired {phrase_id, reason:
   'frame', status_before}` each; cards and `review_log` untouched; idempotent). The engine drops

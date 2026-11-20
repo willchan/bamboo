@@ -27,15 +27,19 @@ export function StartButton({
   label = "Start",
   primary = true,
   learnMore = false,
+  keepGoing = false,
 }: {
   label?: string;
   primary?: boolean;
   /** Ask for extra new cards beyond today's cap ("Learn N more", DESIGN §4.4). */
   learnMore?: boolean;
+  /** Ask for new cards first (Keep going, DESIGN §4.4). */
+  keepGoing?: boolean;
 }) {
   return (
     <form action={startRoundAction} className="w-full">
       {learnMore ? <input type="hidden" name="learnMore" value="1" /> : null}
+      {keepGoing ? <input type="hidden" name="keepGoing" value="1" /> : null}
       <Submit label={label} primary={primary} />
     </form>
   );
@@ -44,4 +48,13 @@ export function StartButton({
 /** "Learn N more": opt-in, once today's new cards are used up and more are waiting. */
 export function LearnMoreButton({ n }: { n: number }) {
   return <StartButton primary={false} learnMore label={`Learn ${n} more`} />;
+}
+
+/** "19 of 30 new today": progress against `newPerDay` (DESIGN §4.4). */
+export function NewToday({ introduced, target }: { introduced: number; target: number }) {
+  return (
+    <p className="text-sm text-muted" data-testid="new-today">
+      {Math.min(introduced, target)} of {target} new today
+    </p>
+  );
 }
