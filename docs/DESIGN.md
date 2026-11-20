@@ -97,7 +97,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `english` | text | meaning (term) or intent (frame/sentence) |
 | `addressee` | text null | **unused** since §10 #63: not written or shown; to be dropped in a later PR |
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
-| `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; verbatim from Gemini (§4.6) |
+| `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; hanzi verbatim from Gemini (§4.6); English from the reply or, since v6, translated (§10 #100) |
 | `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `breakdown` | json null | the card back's breakdown (§5.5.4, H3): terms `{parts: [{hanzi, gloss}] (per character), meaning}`, sentences `{parts: [{hanzi, gloss}] (per word), note}`; contract `PhraseBreakdown` (`shared/src/contracts/breakdown.ts`). No pinyin stored: each part's is sliced from the displayed pinyin. Null when there's none or it failed the checks |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
@@ -1290,7 +1290,11 @@ the checks against the new hanzi and kind. **Built (H4):** v4 asks Gemini for th
 the worker maps to a term's `meaning` or a sentence's `note`. **v5 (§10 #97):** the `summary`
 must add what the glosses don't say (a figurative sense, a nuance or register, when it's said; for
 a sentence, the pattern to reuse); no grammar labels or part-by-part walk-throughs, no restating the glosses. Same
-schema; a backfill re-run (`--all`, §5.5.6) refreshes older cards' breakdowns.
+schema; a backfill re-run (`--all`, §5.5.6) refreshes older cards' breakdowns. **v6 (§10
+#100):** every example gets English: the reply's when it gives one, otherwise Gemini's short
+translation (never null). Only English is written; the example's hanzi is still verbatim. A
+merge or re-run fills a stored example's missing English from the same example
+(`mergeExamples`), never replacing English already there.
 
 #### 5.5.5 New cards: learned while fresh (H2; §10 #79)
 
@@ -1946,6 +1950,7 @@ bamboo/
 | 97 | extract_turn.v5: the breakdown `summary` must tell Will something the parts don't (figurative sense, nuance, register, when it's said, the reusable pattern); never grammar labels like "verb + object" or a restatement of the glosses. Schema unchanged (§5.5.4) | v4's summaries often described the parts in grammar labels (terms: "verb combined with its object"; sentences: "subject, then the verb phrase and a completion particle"), which a heritage speaker doesn't need and the glosses already show. Keeping the field required (rather than nullable) avoids a contract change across worker, engine and stored JSON; for a transparent word the prompt asks for when it's used instead |
 | 98 | A term's example that spells a word in romanization is dropped at extraction and hidden on the review card (§4.6 step 3) | The tutor often answers a "what did she mean by qinxiangcai?" question with a clarifying question that quotes the romanization, or glosses the word in English in brackets, and names candidate words. It is verbatim and contains the term, so it passed, but it's a question *about* the word, not a use of it, and its ruby pinyin breaks around the Latin. Requiring a lowercase letter keeps real letter words (A菜, B超, AA制, KTV). Filtering at read time too fixes stored phrases without a migration; the stored example stays visible on the phrase's edit page |
 | 99 | `tutor.v2`: each example sentence is everyday Chinese only, using the word, with pinyin and English after it; a clarifying question for 阿姨 or 月嫂 is extra, never the example (§5.5.1) | Cards kept getting the tutor's clarifying questions, bracketed English glosses or English lines as examples, which #98 now drops, often leaving a card with none. Asking the tutor for a clean sentence keeps every example verbatim from an answer Will has read (no generated Chinese goes on a card unseen), rather than adding a step that writes examples. Shared Gemini-app conversations can't be steered this way; generating examples for those stays a later, separate decision |
+| 100 | extract_turn.v6: an example's `english` is the reply's, or else Gemini's short translation, never null; a merge or re-run fills a stored example's missing English, never replacing English (§5.5.4) | Shared Gemini-app answers often use a word in a sentence of the explanation with no English after it, so the card showed a Chinese sentence Will had to decode himself. The no-generated-Chinese rule is about Chinese; the reply's English is Gemini's too, so a translation by the extraction call is no less trusted and isn't marked. Same schema, so no new Gemini serving risk. Older cards get English through a backfill re-run |
 
 ## Appendix A — Synthetic fixtures
 

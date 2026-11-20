@@ -338,6 +338,14 @@ describe("mergeExamples", () => {
     expect(mergeExamples([ex("一"), ex("二"), ex("三")], ex("四"))).toHaveLength(3);
     expect(mergeExamples([ex("一")], ex("二"), 5)).toHaveLength(2);
   });
+  it("fills in a kept example's missing English from a matching one, never replacing English", () => {
+    const en = (hanzi: string, english: string) => ({ hanzi, english, turn_id: "t2" });
+    expect(mergeExamples([ex("一")], en("一！", "one"))).toEqual([
+      { hanzi: "一", english: "one", turn_id: null },
+    ]);
+    expect(mergeExamples([en("一", "kept")], en("一", "new"))).toEqual([en("一", "kept")]);
+    expect(mergeExamples([ex("一")], ex("一"))).toEqual([ex("一")]);
+  });
 });
 
 describe("planMerge", () => {
