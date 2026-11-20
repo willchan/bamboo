@@ -41,6 +41,11 @@ export interface RoundOptions {
    * cards in this round, with room reserved for them. No effect while the daily cap has room.
    */
   learnMore?: boolean;
+  /**
+   * Keep going (§4.4): while today's `newPerDay` has room, new cards come first and fill the
+   * round; due cards take what's left. The caller decides when to ask (`Workload.keepGoing`).
+   */
+  keepGoing?: boolean;
 }
 
 const isLearning = (c: SchedCard) => c.state === State.Learning || c.state === State.Relearning;
@@ -98,7 +103,8 @@ const byDue = (a: SchedCard, b: SchedCard) => a.due - b.due;
  * order), then review cards due today (most overdue first), with new cards interleaved roughly one
  * per `newEvery` cards. Due cards take priority over new ones; new cards are capped by `newPerDay`
  * minus today's. With `learnMore` and the cap used up, up to `extraNewBatch` new cards come in
- * instead, and due cards make room for them.
+ * instead, and due cards make room for them. With `keepGoing` and the cap not used up, new cards
+ * come first and fill the round, due cards after them in what's left.
  */
 export function buildRound(now: number, state: RoundState, opts: RoundOptions): RoundSlot[] {
   const s = opts.session ?? config.session;
@@ -112,14 +118,17 @@ export function buildRound(now: number, state: RoundState, opts: RoundOptions): 
     ...c.review.map((x) => slot(x, "review")),
   ];
   const extra = opts.learnMore ? c.extraNew : 0;
+  const newFirst = opts.keepGoing === true && c.newAllowance > 0;
   const nNew =
     extra > 0
       ? Math.min(extra, s.roundSize)
-      : Math.min(c.newAllowance, c.fresh.length, Math.max(0, s.roundSize - allDue.length));
+      : newFirst
+        ? Math.min(c.newAllowance, c.fresh.length, s.roundSize)
+        : Math.min(c.newAllowance, c.fresh.length, Math.max(0, s.roundSize - allDue.length));
   const due = allDue.slice(0, s.roundSize - nNew);
   const fresh = c.fresh.slice(0, nNew).map((x) => slot(x, "new"));
 
-  return interleave(due, fresh, s.newEvery);
+  return newFirst ? [...fresh, ...due] : interleave(due, fresh, s.newEvery);
 }
 
 /** A deterministic shuffle (Fisher–Yates driven by mulberry32, seeded by `seed`). */
@@ -168,6 +177,13 @@ export interface Workload {
   roundCards: number;
   /** "Learn N more": new cards a Learn-more round would add beyond the cap (0: don't offer it). */
   learnMore: number;
+  /** New cards first shown today, and the daily target (`newPerDay`): "19 of 30 new today". */
+  newToday: { introduced: number; target: number };
+  /**
+   * Keep going (§4.4): a backlog of at least `keepGoingMinQueue` queued phrases and new cards
+   * still allowed today. The round's end then starts the next round, new cards first.
+   */
+  keepGoing: boolean;
 }
 
 /** What a round started now would contain, in counts (Today's "1 round · N due · M new"). */
@@ -181,6 +197,8 @@ export function workload(now: number, state: RoundState, opts: RoundOptions): Wo
     newAvailable,
     roundCards: buildRound(now, state, { ...opts, session: s, learnMore: false }).length,
     learnMore: c.extraNew,
+    newToday: { introduced: state.introducedToday, target: s.newPerDay },
+    keepGoing: newAvailable > 0 && state.queue.length >= s.keepGoingMinQueue,
   };
 }
 

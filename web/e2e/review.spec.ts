@@ -42,7 +42,7 @@ test("add a phrase, review it, done for today", async ({ page }) => {
 });
 
 // DESIGN §6: grading shows the next card at once; the grade is saved in the background, and a
-// failed save is retried. Runs after the test above (one card on its 10-minute step).
+// failed save is retried. Runs after the test above (its card graduated on Good, §10 #102).
 test("grading moves on at once and a failed save is retried", async ({ page }) => {
   for (const [hanzi, english] of [
     ["喝水吗？", "Want some water?"],
@@ -70,8 +70,8 @@ test("grading moves on at once and a failed save is retried", async ({ page }) =
   await page.goto("/");
   await page.getByRole("button", { name: /^Another round/ }).click();
   const progress = page.getByTestId("progress");
-  for (const i of [1, 2, 3]) {
-    await expect(progress).toHaveText(`${i} / 3`);
+  for (const i of [1, 2]) {
+    await expect(progress).toHaveText(`${i} / 2`);
     // A tap right after grading doesn't reveal the next card (config.review.revealGuardMs).
     await expect(async () => {
       await page.getByRole("button", { name: "Show", exact: true }).click();
@@ -82,9 +82,10 @@ test("grading moves on at once and a failed save is retried", async ({ page }) =
   await expect(page.getByTestId("done-for-today")).toBeVisible();
   expect(failed).toBe(1);
 
-  // Every grade landed: the two new cards are on their learning step, the first card graduated.
+  // Every grade landed: Good graduates a new card, so nothing is due and 3 of 5 are introduced.
   await page.getByRole("link", { name: "Back to Today" }).click();
-  await expect(page.getByRole("button", { name: /^Another round \(2 due\)/ })).toBeVisible();
+  await expect(page.getByTestId("new-today")).toHaveText("3 of 5 new today");
+  await expect(page.getByRole("button", { name: /^Another round/ })).toHaveCount(0);
 });
 
 // Will's iPhone feedback: a Listen card's front is just the audio (no "you heard" hint, no "Tap
@@ -151,11 +152,11 @@ test("Learn more adds new cards past the cap; a Listen card's hint is on the bac
   await page.goto("/");
   await page.getByRole("button", { name: "Learn 2 more" }).click();
 
-  // The 2 cards still on their learning step, plus the 2 extra new ones.
+  // The 2 extra new ones (Good graduated everything before them).
   const progress = page.getByTestId("progress");
   let sawListen = false;
-  for (const i of [1, 2, 3, 4]) {
-    await expect(progress).toHaveText(`${i} / 4`);
+  for (const i of [1, 2]) {
+    await expect(progress).toHaveText(`${i} / 2`);
     await expect(page.getByText("Tap to show")).toHaveCount(0);
     await expect(page.getByText(/you (first )?heard/)).toHaveCount(0);
     // Tapping the card itself reveals it (past the reveal guard).

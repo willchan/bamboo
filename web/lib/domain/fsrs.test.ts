@@ -32,7 +32,7 @@ describe("fsrs", () => {
     });
   });
 
-  it("follows the 1m / 10m learning steps", async () => {
+  it("graduates a new card on Good; Again takes the 1m learning step (§10 #102)", async () => {
     const card = newCardColumns(T0);
     const again = await reviewCard("c1", card, 1, T0);
     expect(again.next.state).toBe(State.Learning);
@@ -41,12 +41,12 @@ describe("fsrs", () => {
     expect(again.next.reps).toBe(1);
 
     const good = await reviewCard("c1", card, 3, T0);
-    expect(good.next.state).toBe(State.Learning);
-    expect(good.next.due - T0).toBe(10 * MIN);
+    expect(good.next.state).toBe(State.Review);
+    expect(good.next.due - T0).toBeGreaterThanOrEqual(7 * DAY);
 
-    const graduate = await reviewCard("c1", good.next, 3, T0 + 10 * MIN);
+    const graduate = await reviewCard("c1", again.next, 3, T0 + MIN);
     expect(graduate.next.state).toBe(State.Review);
-    expect(graduate.next.due - (T0 + 10 * MIN)).toBeGreaterThanOrEqual(DAY);
+    expect(graduate.next.due - (T0 + MIN)).toBeGreaterThanOrEqual(DAY);
   });
 
   it("sends Easy (and Already know) straight to review, far out", async () => {
@@ -73,7 +73,7 @@ describe("fsrs", () => {
   it("previews each grade's interval", async () => {
     const p = await previewIntervals("c1", newCardColumns(T0), T0);
     expect(p[1]).toBe(1 * MIN);
-    expect(p[3]).toBe(10 * MIN);
+    expect(p[3]).toBeGreaterThanOrEqual(7 * DAY);
     expect(p[4]).toBeGreaterThan(p[3]);
     expect(p[2]).toBeGreaterThan(p[1]);
   });

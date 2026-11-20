@@ -33,13 +33,15 @@ import { timed } from "@/lib/timing";
 
 /**
  * Start a round and open it; back to Today if there's nothing to review. A `learnMore=1` field
- * asks for extra new cards (§4.4); the engine decides whether they're allowed.
+ * asks for extra new cards, `keepGoing=1` for new cards first (§4.4); the engine decides whether
+ * they're allowed.
  */
 export async function startRoundAction(fd?: FormData): Promise<void> {
   return timed("action startRound", async () => {
     await requireUser();
     const learnMore = fd?.get("learnMore") === "1";
-    const id = await startRound(getDb(), serverClock(), { learnMore });
+    const keepGoing = fd?.get("keepGoing") === "1";
+    const id = await startRound(getDb(), serverClock(), { learnMore, keepGoing });
     redirect(id ? `/review/${id}` : "/");
   });
 }

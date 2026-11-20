@@ -34,6 +34,7 @@ import {
   type RoundState,
   type SchedCard,
   type TodayStatus,
+  type Workload,
 } from "../domain/session";
 import { eventRow, newId, runBatch } from "./db";
 import { isLearnableExample, orderQueue } from "../domain/queue";
@@ -136,6 +137,10 @@ export interface Today {
   queueSize: number;
   /** "Learn N more" (§4.4): N, or 0 when it isn't offered. */
   learnMore: number;
+  /** "19 of 30 new today". */
+  newToday: Workload["newToday"];
+  /** Keep going (§4.4): a backlog and room under today's target; the round's end goes on. */
+  keepGoing: boolean;
 }
 
 export async function getToday(db: Db, clock: Clock): Promise<Today> {
@@ -148,22 +153,28 @@ function todayFrom(loaded: LoadedState, clock: Clock): Today {
     status: todayStatus(loaded.finishedRoundToday, w),
     queueSize: loaded.state.queue.length,
     learnMore: w.learnMore,
+    newToday: w.newToday,
+    keepGoing: w.keepGoing,
   };
 }
 
 /**
  * Build a round now and record it. Null when there's nothing to review. `learnMore` asks for
  * extra new cards beyond today's cap; the engine grants them only once the cap is used up (§4.4).
+ * `keepGoing` asks for new cards first; granted only while `Workload.keepGoing` holds.
  */
 export async function startRound(
   db: Db,
   clock: Clock,
-  opts: { learnMore?: boolean } = {},
+  opts: { learnMore?: boolean; keepGoing?: boolean } = {},
 ): Promise<string | null> {
   const loaded = await loadRoundState(db, clock);
+  const base = { dayEnd: loaded.dayEnd };
+  const keepGoing = opts.keepGoing === true && workload(clock.now, loaded.state, base).keepGoing;
   const slots = buildRound(clock.now, loaded.state, {
-    dayEnd: loaded.dayEnd,
+    ...base,
     learnMore: opts.learnMore ?? false,
+    keepGoing,
   });
   if (slots.length === 0) return null;
   const id = newId();

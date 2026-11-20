@@ -28,6 +28,8 @@ const work = (o: Partial<Workload> = {}): Workload => ({
   newAvailable: 2,
   roundCards: 9,
   learnMore: 0,
+  newToday: { introduced: 0, target: 30 },
+  keepGoing: false,
   ...o,
 });
 

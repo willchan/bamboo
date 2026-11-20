@@ -8,6 +8,7 @@ export interface SessionConfig {
   newEvery: number;
   learnAheadMinutes: number;
   secondsPerCard: number;
+  keepGoingMinQueue: number;
 }
 
 export interface RankConfig {
@@ -64,7 +65,12 @@ export const config = {
     maximumInterval: 365,
     enableFuzz: true,
     enableShortTerm: true,
-    learningSteps: ["1m", "10m"],
+    /**
+     * One step since §10 #102: Good on a new card graduates it, Again (and Hard) bring it back in
+     * a minute, inside the round. Two steps (["1m", "10m"]) showed every new card twice an
+     * evening, about twice the daily cards for the same new words.
+     */
+    learningSteps: ["1m"],
     relearningSteps: ["10m"],
     /** FSRS-7 may otherwise skip the learning steps above; keep them as designed. */
     allowModelOverride: false,
@@ -95,6 +101,12 @@ export const config = {
     learnAheadMinutes: 20,
     /** Rough time per card, to decide whether an Again's learning step lands inside the round. */
     secondsPerCard: 15,
+    /**
+     * Keep going (§4.4, §10 #102): while at least this many phrases are queued (a backlog of more
+     * than a day of new cards) and today's `newPerDay` has room, the round's end starts the next
+     * round, new cards first, instead of offering "Another round". Below it, steady state.
+     */
+    keepGoingMinQueue: 30,
   } as SessionConfig,
 
   /**

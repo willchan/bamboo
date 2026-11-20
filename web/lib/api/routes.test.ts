@@ -702,7 +702,8 @@ describe("extract results", () => {
     const logs = await db.select().from(reviewLog).where(eq(reviewLog.source, "asked_again"));
     expect(logs).toHaveLength(1);
     expect(logs[0]).toMatchObject({ rating: 1, cardId: c.cardId, roundId: null });
-    expect(p.cards[0]!.lapses).toBe(0); // a learning card's Again isn't a lapse
+    // Good graduated the card (§10 #102), so asked-again's Again is a lapse: relearning in 10m.
+    expect(p.cards[0]!.lapses).toBe(1);
     expect(p.cards[0]!.due).toBeLessThanOrEqual(T0 + 10 * MIN);
     const again = await db.select().from(event).where(eq(event.type, "asked_again"));
     expect(again.map((e) => e.data)).toEqual([

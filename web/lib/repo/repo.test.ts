@@ -28,10 +28,14 @@ import {
 } from "./review";
 
 // The round cases assume a cap one round can hold (≤ `roundSize`); the rules don't depend on the
-// value, so the file keeps 5 (`newPerDay` is 30 since H2, DESIGN §10 #79).
+// value, so the file keeps 5 (`newPerDay` is 30 since H2, DESIGN §10 #79), and a backlog of 8
+// for Keep going (30 in production, §10 #102).
 vi.mock("../config", async (importOriginal) => {
   const m = await importOriginal<typeof import("../config")>();
-  return { ...m, config: { ...m.config, session: { ...m.config.session, newPerDay: 5 } } };
+  return {
+    ...m,
+    config: { ...m.config, session: { ...m.config.session, newPerDay: 5, keepGoingMinQueue: 8 } },
+  };
 });
 
 const T0 = new Date("2026-06-02T03:00:00Z").getTime(); // 20:00 PDT
@@ -249,14 +253,14 @@ describe("rounds", () => {
       english: "baking powder",
     });
     expect(c.intervals[1]).toBe("1m");
-    expect(c.intervals[3]).toBe("10m");
+    expect(c.intervals[3]).toMatch(/^\d+d$/); // Good graduates a new card (§10 #102)
 
     const graded = (await gradeCard(
       db,
       { roundId, cardId: c.cardId, grade: 3, source: "session", durationMs: 4200 },
       clock(T0 + MIN),
     ))!;
-    expect(graded.dueInMs).toBe(10 * MIN);
+    expect(graded.dueInMs).toBeGreaterThanOrEqual(7 * 24 * 60 * MIN);
 
     const p = (await getPhrase(db, id))!;
     expect(p.status).toBe("active");
@@ -272,8 +276,10 @@ describe("rounds", () => {
     expect((await getRound(db, roundId, clock(T0 + MIN)))!.cards).toEqual([]);
 
     const after = (await finishRound(db, roundId, clock(T0 + 2 * MIN)))!;
-    // The learning step (10 m) is within learn-ahead, so another round is on offer.
-    expect(after.status).toMatchObject({ kind: "done", another: { due: 1 } });
+    // Graduated, and nothing else is waiting: done for today, no other round on offer.
+    expect(after.status).toEqual({ kind: "done", another: null });
+    expect(after.newToday).toEqual({ introduced: 1, target: 5 });
+    expect(after.keepGoing).toBe(false);
     const r = (await db.select().from(round))[0]!;
     expect(r).toMatchObject({ finishedAt: T0 + 2 * MIN, cards: 1 });
     // Idempotent.
@@ -423,6 +429,54 @@ describe("rounds", () => {
     // A new day: back to the normal cap, no Learn more while it has room.
     const tomorrow = await getToday(db, clock(T0 + 24 * 60 * MIN));
     expect(tomorrow.learnMore).toBe(0);
+  });
+
+  it("Keep going: with a backlog, the next round leads with new cards until the target", async () => {
+    // 10 queued phrases (backlog ≥ 8), and one review card due today.
+    for (let i = 0; i < 10; i++) await add({ hanzi: HANZI[i] });
+    const first = (await startRound(db, clock()))!;
+    const firstCards = (await getRound(db, first, clock()))!.cards;
+    // Rate the first new card Again (back in a minute), the rest Good (graduated).
+    for (const [k, c] of firstCards.entries()) {
+      await gradeCard(
+        db,
+        {
+          roundId: first,
+          cardId: c.cardId,
+          grade: k === 0 ? 1 : 3,
+          source: "session",
+          durationMs: 1,
+        },
+        clock(T0 + MIN),
+      );
+    }
+    // 5 introduced, the cap is 5: no Keep going, but Another round for the Again card.
+    let today = (await finishRound(db, first, clock(T0 + 2 * MIN)))!;
+    expect(today.newToday).toEqual({ introduced: 5, target: 5 });
+    expect(today.keepGoing).toBe(false);
+    expect(today.status).toMatchObject({ kind: "done", another: { due: 1 } });
+
+    // A new day, 5 left queued (< 8): steady state, no Keep going.
+    const tomorrow = T0 + 24 * 60 * MIN;
+    today = await getToday(db, clock(tomorrow));
+    expect(today.keepGoing).toBe(false);
+    // More arrive: 10 queued, and a learning card due. Keep going leads with new cards.
+    for (let i = 10; i < 12; i++) await add({ hanzi: HANZI[i] }, tomorrow);
+    for (let i = 0; i < 3; i++) await add({ hanzi: `${HANZI[i]}${HANZI[i]}` }, tomorrow);
+    today = await getToday(db, clock(tomorrow));
+    expect(today.keepGoing).toBe(true);
+    expect(today.newToday).toEqual({ introduced: 0, target: 5 });
+    const kg = (await startRound(db, clock(tomorrow), { keepGoing: true }))!;
+    const kgCards = (await getRound(db, kg, clock(tomorrow)))!.cards;
+    expect(kgCards.slice(0, 5).every((c) => c.firstSight)).toBe(true);
+    expect(kgCards.slice(5).every((c) => !c.firstSight)).toBe(true);
+  });
+
+  it("Keep going is refused without a backlog: an ordinary round", async () => {
+    for (let i = 0; i < 3; i++) await add({ hanzi: HANZI[i] });
+    expect((await getToday(db, clock())).keepGoing).toBe(false);
+    const id = (await startRound(db, clock(), { keepGoing: true }))!;
+    expect((await getRound(db, id, clock()))!.cards).toHaveLength(3);
   });
 
   it("returns null when grading an unknown card", async () => {

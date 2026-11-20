@@ -1,5 +1,5 @@
-// Will's report: with only a few cards, several rounds in one evening, everything rated Good, one
-// card (a decode phrase with a "heard as") kept coming first. This replays that evening against
+// Will's report: with only a few cards, several rounds in one evening, one card (a decode phrase
+// with a "heard as") kept coming first. Learning cards come from Again since §10 #102. This replays that evening against
 // the real scheduler and records what happens (DESIGN §4.4, §10 #57).
 import { card, createTestDb, phrase, type Db } from "@bamboo/db";
 import { eq } from "drizzle-orm";
@@ -40,15 +40,15 @@ async function queued(hanzi: string, english: string, baseScore: number, decode 
     .where(eq(phrase.id, r.id));
 }
 
-/** One round started at `now`, every card rated Good ~10 s apart. Its order, by English. */
-async function roundAllGood(now: number): Promise<string[] | null> {
+/** One round started at `now`, every card given `grade` ~10 s apart. Its order, by English. */
+async function roundAll(now: number, grade: 1 | 3): Promise<string[] | null> {
   const id = await startRound(db, clock(now));
   if (!id) return null;
   const cards = (await getRound(db, id, clock(now)))!.cards;
   for (const [k, c] of cards.entries()) {
     await gradeCard(
       db,
-      { roundId: id, cardId: c.cardId, grade: 3, source: "session", durationMs: 5000 },
+      { roundId: id, cardId: c.cardId, grade, source: "session", durationMs: 5000 },
       clock(now + (k + 1) * 10_000),
     );
   }
@@ -56,20 +56,20 @@ async function roundAllGood(now: number): Promise<string[] | null> {
   return cards.map((c) => c.english);
 }
 
-it("replays an evening of all-Good rounds a few minutes apart", async () => {
+it("replays an evening of rounds a few minutes apart", async () => {
   // Decode + heard-as ranks highest (term 1 + decode 3 + heard-as 2).
   await queued("泡打粉", "decode", 6, true);
   await queued("喝水", "water", 4);
   await queued("吃饭", "eat", 3);
 
-  // Round 1: three new cards (newPerDay), in queue order, so the decode phrase leads.
-  expect(await roundAllGood(T0)).toEqual(["decode", "water", "eat"]);
-  // Good on a new card is the 10-minute learning step, not "done for tonight".
+  // Round 1: three new cards (newPerDay), in queue order, so the decode phrase leads. All Again
+  // (the server sees the grades; the in-round re-insert is the client's): the 1-minute step.
+  expect(await roundAll(T0, 1)).toEqual(["decode", "water", "eat"]);
   for (const c of await db.select().from(card)) {
     expect(c.state).toBe(State.Learning);
-    expect(c.due - T0).toBeLessThan(11 * MIN);
+    expect(c.due - T0).toBeLessThan(2 * MIN);
   }
-  // Today offers another round right away: 10 m is inside the 20 m learn-ahead.
+  // Today offers another round right away: 1 m is inside the 20 m learn-ahead.
   expect((await getToday(db, clock(T0 + 2 * MIN))).status).toMatchObject({
     kind: "done",
     another: { due: 3 },
@@ -77,20 +77,29 @@ it("replays an evening of all-Good rounds a few minutes apart", async () => {
 
   // Round 2, minutes later: the same three cards, now learning cards. Ordered by due alone, the
   // decode card (graded first in round 1) would lead again; the per-round order mixes them.
-  const second = await roundAllGood(T0 + 5 * MIN);
+  const second = await roundAll(T0 + 5 * MIN, 3);
   expect([...second!].sort()).toEqual(["decode", "eat", "water"]);
   // (At this start time the seeded order happens to put another card first.)
   expect(second![0]).not.toBe("decode");
 
-  // Good on the last learning step graduates: next due in weeks (FSRS-7, 0.85 retention).
+  // Good on the learning step graduates: next due in days (FSRS-7, 0.85 retention).
   for (const c of await db.select().from(card)) {
     expect(c.state).toBe(State.Review);
-    expect(c.due - T0).toBeGreaterThan(7 * DAY);
+    expect(c.due - T0).toBeGreaterThan(DAY);
   }
   // Nothing more tonight: no third round, so no card can lead it.
-  expect(await roundAllGood(T0 + 15 * MIN)).toBeNull();
+  expect(await roundAll(T0 + 15 * MIN, 3)).toBeNull();
   expect((await getToday(db, clock(T0 + 15 * MIN))).status).toEqual({
     kind: "done",
     another: null,
   });
+});
+
+it("a new card rated Good is done for the evening (one showing, §10 #102)", async () => {
+  await queued("喝水", "water", 4);
+  expect(await roundAll(T0, 3)).toEqual(["water"]);
+  const [c] = await db.select().from(card);
+  expect(c!.state).toBe(State.Review);
+  expect(c!.due - T0).toBeGreaterThan(7 * DAY);
+  expect(await roundAll(T0 + 2 * MIN, 3)).toBeNull();
 });
