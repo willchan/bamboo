@@ -132,13 +132,21 @@ Lessons from live runs (November 2026). Ask before anything that changes product
   skill. If it changed an extraction schema or prompt, run the Gemini probe there too
   (`gemini-probe`, above): Google rejects some schemas only on a real request ("too many states
   for serving", H7), which CI can't see.
-- **Cloud sessions can't reach the Mac.** When you merge a PR that touches the Mac side
-  (`worker/`, `agent/`, `shared/`, `ops/`, a prompt), end your report by giving Will this line to
-  run from his own account (a login shell, so `pnpm` is on the PATH):
+- **Cloud sessions can't reach the Mac.** Whenever something has to run there, end your report
+  with the exact line(s) for Will to paste from his own account (`willchan`) on the Mac mini,
+  never a list of steps. Wrap each command in `ssh agent` and a login shell, so `pnpm` is on the
+  PATH:
 
   ```
-  ssh agent 'zsh -lc "cd ~/Code/bamboo && make mac-update"'
+  ssh agent 'zsh -lc "cd ~/Code/bamboo && <command>"'
   ```
+
+  Chain with `&&` when one should stop on failure. After merging a PR that touches the Mac side
+  (`worker/`, `agent/`, `shared/`, `ops/`, a prompt), the command is `make mac-update`; add
+  `pnpm --filter @bamboo/worker gemini-probe` after it when an extraction schema or prompt
+  changed. A line that touches the shared OpenClaw gateway or Ollama (a restart, a config
+  change) affects PandaBase too: mark it as the host's and say so beside it. Ask Will to
+  paste back output you need, counts and pass/fail only.
 - **Shared with PandaBase:** the OpenClaw gateway and Ollama. Ollama's settings, models and memory
   budget belong to the host's runbook, not to Bamboo: don't change them from here. New
   automations need `--agent` (the installer passes the agent the host binds `#bamboo` to, on
