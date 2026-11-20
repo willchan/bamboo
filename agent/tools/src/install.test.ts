@@ -362,7 +362,7 @@ describe(
     const ws = () => join(oc(), "workspace-willchan");
     const skill = () => readFileSync(join(repo, "agent/skills/bamboo/SKILL.md"), "utf8");
     const tutor = () =>
-      readFileSync(join(repo, "worker/prompts/tutor.v1.md"), "utf8").replace(
+      readFileSync(join(repo, "worker/prompts/tutor.v2.md"), "utf8").replace(
         /^<!--[\s\S]*?-->/u,
         "",
       );
@@ -530,7 +530,7 @@ describe(
         const agentsMd = readFileSync(join(dws(), "AGENTS.md"), "utf8");
         expect(agentsMd.startsWith(repoFile("AGENTS.header.md").trimEnd())).toBe(true);
         expect(agentsMd).toContain("bamboo-tools import --url");
-        expect(agentsMd).toContain("## Tutor (tutor.v1)");
+        expect(agentsMd).toContain("## Tutor (tutor.v2)");
         expect(agentsMd).not.toContain("<!--");
         expect(agentsMd.indexOf("## Tutor")).toBeLessThan(agentsMd.indexOf("bamboo-tools import"));
         for (const f of ["SOUL.md", "IDENTITY.md", "USER.md"])

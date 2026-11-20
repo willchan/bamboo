@@ -88,7 +88,7 @@ export const sharedConfig = {
      * The tutor prompt the #bamboo agent answers with (H5): `worker/prompts/<this>.md`, written
      * into the agent's AGENTS.md by `make agent-install`; `bamboo-tools turn` records it.
      */
-    tutorPrompt: "tutor.v1",
+    tutorPrompt: "tutor.v2",
     /**
      * `replies` and `nudge` under OpenClaw's command automations (DESIGN §5.1 *Automation
      * errors*). Transient engine errors (network, timeout, 5xx, 429) post nothing until the
