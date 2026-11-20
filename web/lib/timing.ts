@@ -82,6 +82,8 @@ export interface TimingLine {
   db_ms: number;
   db_queries: number;
   db_serial: number;
+  /** On a 500: the error's class and code (`LibsqlError:SQLITE_BUSY`), never its message. */
+  error?: string;
 }
 
 export function timingLine(t: Timing, status: number, totalMs: number): TimingLine {
@@ -94,6 +96,19 @@ export function timingLine(t: Timing, status: number, totalMs: number): TimingLi
     db_queries: t.dbQueries,
     db_serial: t.dbSerial,
   };
+}
+
+const LABEL = /^[A-Za-z0-9_.-]{1,64}$/u;
+
+/**
+ * What failed, safe to log: the error's class name and, if it has one, its code (libSQL's
+ * `SQLITE_BUSY`, Node's `ECONNRESET`). Never the message, which can quote data.
+ */
+export function errorLabel(err: unknown): string {
+  const e = err as { name?: unknown; code?: unknown } | null;
+  const name = typeof e?.name === "string" && LABEL.test(e.name) ? e.name : "unknown";
+  const code = typeof e?.code === "string" && LABEL.test(e.code) ? e.code : null;
+  return code ? `${name}:${code}` : name;
 }
 
 /** Where timing lines go; tests replace it. */
@@ -128,7 +143,11 @@ export async function timed<T>(route: string, fn: () => Promise<T>): Promise<T> 
     return out;
   } catch (err) {
     const status = statusOfError(err);
-    if (status !== undefined) timingSink.log(timingLine(t, status, now() - t.startedAt));
+    if (status !== undefined) {
+      const line = timingLine(t, status, now() - t.startedAt);
+      if (status === 500) line.error = errorLabel(err);
+      timingSink.log(line);
+    }
     throw err;
   }
 }
@@ -144,7 +163,7 @@ export function timedRoute<A extends unknown[]>(
     try {
       res = await store.run(t, () => handler(...args));
     } catch (err) {
-      timingSink.log(timingLine(t, 500, now() - t.startedAt));
+      timingSink.log({ ...timingLine(t, 500, now() - t.startedAt), error: errorLabel(err) });
       throw err;
     }
     const total = now() - t.startedAt;

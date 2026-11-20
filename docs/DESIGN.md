@@ -233,6 +233,8 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
 | `GET /api/cron/daily` | cron | give say turns stored before the sentence rule their sentence (§4.7), re-score the queue (§4.7; nothing expires since H2b), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
+| `GET /api/version` | none | `{build}`: the deploy this server runs (`NEXT_PUBLIC_BUILD_ID`), `Cache-Control: no-store`. The PWA compares it with its own to reload into a new deploy (§6 *Saving*). Says nothing but a deployment id |
+| `POST /api/client-log` | session | `ClientLogEntry` (fixed fields only, `.strict()`) → 204: one failure on the phone, written as a `client_error` log line (§8.5). Signed out → 401; anything else in the body → 400; past `client.logPerMinute` (30) per instance → 429 |
 
 Errors from every machine route are `{error, message?, issues?}` with `error` one of
 `invalid_body` and `invalid_query` (400), `unauthorized` (401), `not_found` (404), `stale_attempt`,
@@ -1453,10 +1455,33 @@ full-screen.
     times with backoff from `saveRetryMs` (1 s). Each grade carries a client `reviewId`, stored as
     the review log's id, so a retry whose first attempt did land isn't graded twice. If a save
     still fails, the screen says "Couldn't save N answers" with **Retry**, and later saves wait
-    behind it. Finishing the round (and ✕ to leave) waits until every save has landed. A repeated
+    behind it (but see *Saving* for a page from an older deploy). Finishing the round (and ✕ to
+    leave) waits until every save has landed. A repeated
     card's grade buttons wait for its own save (they need its new state). A tap within
     `config.review.revealGuardMs` (400 ms) of a grade doesn't reveal the next card, so a double
     tap can't show the next answer.
+  - **Saving across deploys and reloads** (*Saving*, Nov 2026). Each server action has an id
+    that changes with every build, so a page loaded before a deploy calls actions the new build
+    doesn't have: Next 16 throws `UnrecognizedActionError` and no retry can succeed. That froze a
+    round with "Couldn't save 3 answers" and a Retry that never worked. Vercel's Skew Protection
+    would keep the page on its own deploy, but needs a paid plan, so the page handles it (§10 #101):
+    - Every build inlines its id (`NEXT_PUBLIC_BUILD_ID`: the Vercel deployment, else the commit,
+      else `dev`; `next.config.ts`). `components/app-health.tsx`, in the root layout, asks
+      `GET /api/version` on load and whenever the app comes back to the foreground; a different
+      build reloads the page (`lib/client/build.ts`), at most once per `client.reloadGuardMs`
+      (60 s) per tab, remembered in sessionStorage. Without sessionStorage it doesn't reload, so a
+      mismatch can't loop.
+    - Every grade and Not useful is written to localStorage (`lib/client/pending-saves.ts`) when
+      tapped and removed once the server confirms it. The review page reads what's left before it
+      renders (`useSyncExternalStore`, so it renders on the client only), drops those cards from
+      the round, and sends the kept saves first, in order. A resent grade carries its `reviewId`,
+      so one that had landed isn't counted twice. Off the review page, `AppHealth` sends them and
+      refreshes the page.
+    - The save queue doesn't retry an `UnrecognizedActionError` (`isFatal`). When a save gives up,
+      the page reports it (§8.5) and, if it's stale (by that error, or because `/api/version`
+      names another build), reloads into the new deploy; the kept saves go out after the reload.
+      If it can't reload, the banner says "Bamboo was updated. Reload to save N answers" with
+      **Reload** instead of Retry.
   - The whole front is a button (`aria-label` "Show answer") and there's a **Show** button below;
     the front carries no "Tap to show" label (it duplicated Show).
   - *Say*: the front shows the English intent (no addressee chip, §10 #63). Tap to reveal the
@@ -1733,6 +1758,23 @@ send `Server-Timing: total;dur=…, db;dur=…;desc="N queries"`. Pages and serv
 set response headers in Next.js, so they have the log line only. Redirects and `notFound()` log
 their status; Next's own render bailouts aren't logged.
 
+A 500 line also names what failed, as `error`: the error's class and code
+(`"LibsqlError:SQLITE_BUSY"`), never its message, which can quote data.
+
+**Client errors.** The phone reports failures to `POST /api/client-log` (`lib/client/client-log.ts`,
+by `sendBeacon`, so a report survives the reload that often follows): a save that gave up, a resend
+that failed, a newer deploy found, an uncaught error or rejection (at most 5 per page load), and
+`app/global-error.tsx`'s render failures. Each is one line:
+
+```
+{"msg":"client_error","where":"save","kind":"stale","name":"UnrecognizedActionError","attempts":1,"build":"dpl_…","page":"/review","online":true}
+```
+
+`kind` is `stale` (older deploy), `offline` (no answer: a `TypeError`, or the phone is offline),
+`server` (the server threw; `digest` is Next's digest, to find the server's own error line) or
+`other`. Only fixed fields go out, and the Zod contract (`ClientLogEntry`) refuses anything else:
+no error messages, no ids, and `page` is the first path segment only.
+
 Reads that don't depend on each other go in one libSQL `batch` (one round trip).
 `web/lib/repo/query-count.test.ts` pins the calls per request in the review flow:
 
@@ -1951,6 +1993,7 @@ bamboo/
 | 98 | A term's example that spells a word in romanization is dropped at extraction and hidden on the review card (§4.6 step 3) | The tutor often answers a "what did she mean by qinxiangcai?" question with a clarifying question that quotes the romanization, or glosses the word in English in brackets, and names candidate words. It is verbatim and contains the term, so it passed, but it's a question *about* the word, not a use of it, and its ruby pinyin breaks around the Latin. Requiring a lowercase letter keeps real letter words (A菜, B超, AA制, KTV). Filtering at read time too fixes stored phrases without a migration; the stored example stays visible on the phrase's edit page |
 | 99 | `tutor.v2`: each example sentence is everyday Chinese only, using the word, with pinyin and English after it; a clarifying question for 阿姨 or 月嫂 is extra, never the example (§5.5.1) | Cards kept getting the tutor's clarifying questions, bracketed English glosses or English lines as examples, which #98 now drops, often leaving a card with none. Asking the tutor for a clean sentence keeps every example verbatim from an answer Will has read (no generated Chinese goes on a card unseen), rather than adding a step that writes examples. Shared Gemini-app conversations can't be steered this way; generating examples for those stays a later, separate decision |
 | 100 | extract_turn.v6: an example's `english` is the reply's, or else Gemini's short translation, never null; a merge or re-run fills a stored example's missing English, never replacing English (§5.5.4) | Shared Gemini-app answers often use a word in a sentence of the explanation with no English after it, so the card showed a Chinese sentence Will had to decode himself. The no-generated-Chinese rule is about Chinese; the reply's English is Gemini's too, so a translation by the extraction call is no less trusted and isn't marked. Same schema, so no new Gemini serving risk. Older cards get English through a backfill re-run |
+| 101 | A page from an older deploy reloads into the new one: the app compares its build with `GET /api/version` on load and on returning to the foreground, and a save that fails as stale reloads too. Unconfirmed saves wait in localStorage and are resent after the reload (idempotent by `reviewId`). Failures on the phone are reported to `POST /api/client-log` as fixed-field log lines (§6 *Saving*, §8.5) | A round froze on "Couldn't save 3 answers" after a deploy: the page's server actions no longer existed, every retry failed the same way, reloading would have lost the grades, and nothing logged why. Vercel's Skew Protection fixes the first part but isn't on the free plan. localStorage, not IndexedDB: a handful of small records written once per grade and read only by the page; iOS keeps both while the app is on the home screen, and IndexedDB would add a wrapper for nothing at this size |
 
 ## Appendix A — Synthetic fixtures
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   currentTiming,
+  errorLabel,
   instrumentClient,
   serverTimingHeader,
   statusOfError,
@@ -137,10 +138,26 @@ describe("timedRoute", () => {
   it("logs a 500 when the handler throws", async () => {
     await expect(timedRoute("GET /x", () => Promise.reject(new Error("boom")))()).rejects.toThrow();
     expect(lines[0]!.status).toBe(500);
+    expect(lines[0]!.error).toBe("Error");
   });
 
   it("formats the header", () => {
     const t = { route: "r", startedAt: 0, dbMs: 3.14159, dbQueries: 2, dbSerial: 1, inFlight: 0 };
     expect(serverTimingHeader(t, 12.345)).toBe('total;dur=12.3, db;dur=3.1;desc="2 queries"');
+  });
+});
+
+describe("errorLabel", () => {
+  it("names a 500's error by class and code, never its message", async () => {
+    const busy = Object.assign(new Error("database is locked: 辅食"), {
+      name: "LibsqlError",
+      code: "SQLITE_BUSY",
+    });
+    await expect(timed("action grade", () => Promise.reject(busy))).rejects.toThrow();
+    expect(lines.at(-1)).toMatchObject({ status: 500, error: "LibsqlError:SQLITE_BUSY" });
+    expect(JSON.stringify(lines.at(-1))).not.toContain("辅食");
+    expect(errorLabel(null)).toBe("unknown");
+    expect(errorLabel({ name: "has space", code: 5 })).toBe("unknown");
+    expect(errorLabel(new TypeError("x"))).toBe("TypeError");
   });
 });

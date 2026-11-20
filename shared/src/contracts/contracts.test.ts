@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sharedConfig } from "../config";
 import {
   ClaimedJob,
+  ClientLogEntry,
   CompleteRequest,
   ExtractTurnResult,
   ImportRequest,
@@ -82,5 +83,23 @@ describe("contracts", () => {
       }).success,
     ).toBe(true);
     expect(NotificationsResponse.parse({ notifications: [] })).toEqual({ notifications: [] });
+  });
+
+  it("take a client log entry of fixed fields only", () => {
+    const ok = {
+      where: "save",
+      kind: "stale",
+      name: "UnrecognizedActionError",
+      build: "dpl_abc123",
+      page: "/review",
+      attempts: 1,
+      online: true,
+    };
+    expect(ClientLogEntry.parse(ok)).toEqual(ok);
+    // No free text: a message, a path with an id, or text in a token field is refused.
+    expect(ClientLogEntry.safeParse({ ...ok, message: "高压锅" }).success).toBe(false);
+    expect(ClientLogEntry.safeParse({ ...ok, page: "/review/abc123" }).success).toBe(false);
+    expect(ClientLogEntry.safeParse({ ...ok, name: "a b" }).success).toBe(false);
+    expect(ClientLogEntry.safeParse({ ...ok, kind: "boom" }).success).toBe(false);
   });
 });

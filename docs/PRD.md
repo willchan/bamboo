@@ -138,7 +138,10 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   Move to top and Remove.
 - Grades: Again / Hard / Good / Easy (FSRS). Big buttons, one hand. The next card appears as
   soon as he taps a grade; saving happens in the background, and if it can't save (no signal) the
-  screen says so with a Retry button instead of losing the answer.
+  screen says so with a Retry button instead of losing the answer. Answers not yet saved survive
+  a reload. When Bamboo has been updated since the page opened, the app reloads itself into the
+  new version (on opening, or when a save fails because of it) and sends those answers then,
+  instead of offering a Retry that can't work.
 - A new card he gets right comes back once more later that evening (a ~10-minute learning step),
   then not for weeks. Cards on a learning step come in a different order each round.
 - The **first time** a new card appears, two more buttons:

@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { AppHealth } from "@/components/app-health";
 import { APP_NAME, APP_TAGLINE, THEME } from "@/lib/app";
 import "./globals.css";
 
@@ -22,7 +23,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className="h-full antialiased">
-      <body className="flex min-h-full flex-col font-sans">{children}</body>
+      <body className="flex min-h-full flex-col font-sans">
+        <AppHealth />
+        {children}
+      </body>
     </html>
   );
 }
