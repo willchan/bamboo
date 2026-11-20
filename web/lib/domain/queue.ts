@@ -359,7 +359,11 @@ function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): Vali
 
 // --- Dedupe into an existing phrase (§4.6 step 4) -----------------------------------------------
 
-/** Append examples unless one with the same key is there; keep at most `max` (oldest win). */
+/**
+ * Append examples unless one with the same key is there; keep at most `max` (oldest win). A kept
+ * example without English takes a matching one's English (extract_turn.v6 translates examples the
+ * reply left bare, §10 #100); English already there, Will's edits included, is never replaced.
+ */
 export function mergeExamples(
   existing: readonly PhraseExample[],
   incoming: PhraseExample | readonly PhraseExample[] | null,
@@ -368,7 +372,9 @@ export function mergeExamples(
   const out = [...existing];
   const list = incoming === null ? [] : Array.isArray(incoming) ? incoming : [incoming];
   for (const ex of list as readonly PhraseExample[]) {
-    if (!out.some((e) => hanziKey(e.hanzi) === hanziKey(ex.hanzi))) out.push(ex);
+    const i = out.findIndex((e) => hanziKey(e.hanzi) === hanziKey(ex.hanzi));
+    if (i < 0) out.push(ex);
+    else if (!out[i]!.english && ex.english) out[i] = { ...out[i]!, english: ex.english };
   }
   return out.slice(0, max);
 }
