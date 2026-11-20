@@ -125,9 +125,10 @@ const LATIN_RUN = /\p{Script=Latin}+/gu;
 const LOWER = /\p{Ll}/u;
 
 /**
- * False when the sentence spells a word in Latin romanization (a quoted mishearing like “qincai”,
- * or pinyin): a run of `romanizedMinLetters` Latin letters with a lowercase one. Such a sentence
- * is usually a question about the word, not a use of it. Letter words in caps (A菜, B超) pass.
+ * False when the sentence spells a word in Latin letters (a quoted mishearing like “qincai”,
+ * pinyin, or an English gloss in brackets): a run of `romanizedMinLetters` Latin letters with a
+ * lowercase one. Such a sentence is usually a question about the word, not a use of it, and its
+ * ruby breaks around the Latin. Letter words in caps (A菜, B超) pass.
  */
 export function isLearnableExample(
   hanzi: string,

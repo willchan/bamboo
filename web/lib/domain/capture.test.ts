@@ -317,7 +317,7 @@ describe("validateExtraction", () => {
 });
 
 describe("isLearnableExample", () => {
-  it("tells romanization from letter words", () => {
+  it("tells romanization and English glosses from letter words", () => {
     expect(isLearnableExample("豆角要炒熟。")).toBe(true);
     expect(isLearnableExample("B超看了。")).toBe(true);
     expect(isLearnableExample("我们AA制吧。")).toBe(true);
@@ -325,6 +325,7 @@ describe("isLearnableExample", () => {
     expect(isLearnableExample("您说的“doujiao”是豆角吗？")).toBe(false);
     expect(isLearnableExample("这个叫 dòujiǎo。")).toBe(false);
     expect(isLearnableExample("Doujiao 是豆角。")).toBe(false);
+    expect(isLearnableExample("阿姨，您是说豆角（green beans）吗？")).toBe(false);
   });
 });
 
