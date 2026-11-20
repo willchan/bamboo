@@ -150,7 +150,7 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `id` | |
 | `kind` | `'link' \| 'pdf' \| 'text' \| 'tutor'` (`tutor` since H5: a question asked in `#bamboo` and the agent's answer, §5.1; SQLite text, so no migration) |
 | `origin` | `'discord' \| 'web'` |
-| `source_ref` | share URL or file name; the tutor prompt's version (`tutor.v1`) for a tutor turn; null for text |
+| `source_ref` | share URL or file name; the tutor prompt's version (`tutor.v2`; `tutor.v1` before §10 #99) for a tutor turn; null for text |
 | `conversation_title` | from the page or PDF title; null for text |
 | `discord_channel_id`, `discord_message_id` | null for web; the reply target |
 | `idempotency_key` | **unique** null; the `Idempotency-Key` header of the call that created it |
@@ -644,7 +644,7 @@ so the model never has to:
 A pasted answer is imported as `import --text-file` would (`kind: 'text'`); `ask` prints the
 same JSON plus `"route":"paste"`, and the skill posts its `reply`. A question prints
 `{"route":"question"}` and sends nothing. The agent then answers it as the **tutor** (the rules
-of `worker/prompts/tutor.v1.md`, which are in its `AGENTS.md`), writes its answer to a file, runs
+of `worker/prompts/tutor.v2.md`, which are in its `AGENTS.md`), writes its answer to a file, runs
 `bamboo-tools turn --question-file <file> --answer-file <file> --channel-id … --message-id …`
 (`POST /api/turns`, §3.2), and posts only the answer. `turn` prints `{import_id, turn_new}`; on a
 failure (`not_saved`, after `Api`'s retries) the agent adds its `reply` line under the answer:
@@ -694,7 +694,7 @@ Bamboo never adds an agent or changes `bindings`. What Bamboo needs from that ag
 - **the instructions inline** in its workspace `AGENTS.md` (a ⚠ otherwise): with thinking off,
   the model doesn't open `SKILL.md` on its own and guessed wrong flags; with the skill's body in
   `AGENTS.md` it picked the right command for a link, a PDF, pasted text and chit-chat every
-  time. Since H5 the tutor prompt (`worker/prompts/tutor.v1.md`, without its leading note) is
+  time. Since H5 the tutor prompt (`worker/prompts/tutor.v2.md` since §10 #99, without its leading note) is
   inline too, between the header and the skill's instructions, and checked the same way. The host's `AGENTS.md` has its own `#bamboo` section heading and scope; the check is that
   every non-blank line of `SKILL.md` after its title and `Scope:` paragraph is in that file
   (`missingInstructions`, `agent/tools/src/openclaw/agent.ts`), so a `SKILL.md` change shows up
@@ -1175,6 +1175,12 @@ written into the agent's `AGENTS.md` by `make agent-install`; `bamboo-tools ask`
 a pasted-answer import or to the tutor, and `bamboo-tools turn` stores the answered question
 through `POST /api/turns` as a `tutor` import (§5.1, §3.2, §10 #89–#91). The host's model and
 key change is in PandaDen's runbook (§5.5.7).
+
+*Since `tutor.v2` (§10 #99):* the prompt is `worker/prompts/tutor.v2.md`. It adds one rule: every
+example sentence is a short everyday sentence in Chinese only, using the word, with pinyin and
+English after it and nothing in Latin letters between the characters; a clarifying question for
+阿姨 or 月嫂 comes in addition to it. Extraction can then copy a usable example verbatim, and
+§4.6 step 3's romanization check stays as the backstop (§10 #98).
 
 #### 5.5.2 Extraction: `extract_turn.v4` (H4; §10 #74, #76, #77)
 
@@ -1671,7 +1677,7 @@ the nudge, an alert, an import with no post): `bamboo-replies`
   agent or changes `bindings` or the system agent. With no matching binding it warns.
 - **A dedicated agent's workspace files** (§10 #73): when the serving agent's `skills` allowlist
   is exactly `["bamboo"]`, `make agent-install` writes its `AGENTS.md`
-  (`agent/workspace/AGENTS.header.md` + the tutor prompt `worker/prompts/tutor.v1.md` without
+  (`agent/workspace/AGENTS.header.md` + the tutor prompt `worker/prompts/tutor.v2.md` without
   its note (H5) + `SKILL.md` after its title and `Scope:` paragraph, `agentsMd`), `SOUL.md` and `IDENTITY.md`, keeping a replaced file in `<workspace>/.orig/`,
   and writes `USER.md` only over OpenClaw's placeholder (the agent records preferences there).
   A shared agent's workspace (e.g. a personal agent that also serves `#bamboo`) is the host's,
@@ -1939,6 +1945,7 @@ bamboo/
 | 96 | `#bamboo` is a Discord forum, not a text channel: one post per question or conversation, so each gets its own OpenClaw session; follow-ups are replies in the post. `bamboo-tools` checks a post's forum through `openclaw message channel info` (cached in `posts.json`), and `replies` posts each summary inside its post with `openclaw message send`; the automations still announce to the forum, which opens a new post (the nudge, alerts) (§5.1) | In a text channel every message joined one session that never reset, so each question carried all the earlier ones. A forum post is a session of its own (OpenClaw routes posts through their parent, so the binding and channel pin carry over). The agent sees only a post's id, and an announce can't target a post chosen at run time, so both lookups go through OpenClaw's CLI, which uses the gateway's Discord connection: Bamboo still holds no Discord token |
 | 97 | extract_turn.v5: the breakdown `summary` must tell Will something the parts don't (figurative sense, nuance, register, when it's said, the reusable pattern); never grammar labels like "verb + object" or a restatement of the glosses. Schema unchanged (§5.5.4) | v4's summaries often described the parts in grammar labels (terms: "verb combined with its object"; sentences: "subject, then the verb phrase and a completion particle"), which a heritage speaker doesn't need and the glosses already show. Keeping the field required (rather than nullable) avoids a contract change across worker, engine and stored JSON; for a transparent word the prompt asks for when it's used instead |
 | 98 | A term's example that spells a word in romanization is dropped at extraction and hidden on the review card (§4.6 step 3) | The tutor often answers a "what did she mean by qinxiangcai?" question with a clarifying question that quotes the romanization, or glosses the word in English in brackets, and names candidate words. It is verbatim and contains the term, so it passed, but it's a question *about* the word, not a use of it, and its ruby pinyin breaks around the Latin. Requiring a lowercase letter keeps real letter words (A菜, B超, AA制, KTV). Filtering at read time too fixes stored phrases without a migration; the stored example stays visible on the phrase's edit page |
+| 99 | `tutor.v2`: each example sentence is everyday Chinese only, using the word, with pinyin and English after it; a clarifying question for 阿姨 or 月嫂 is extra, never the example (§5.5.1) | Cards kept getting the tutor's clarifying questions, bracketed English glosses or English lines as examples, which #98 now drops, often leaving a card with none. Asking the tutor for a clean sentence keeps every example verbatim from an answer Will has read (no generated Chinese goes on a card unseen), rather than adding a step that writes examples. Shared Gemini-app conversations can't be steered this way; generating examples for those stays a later, separate decision |
 
 ## Appendix A — Synthetic fixtures
 

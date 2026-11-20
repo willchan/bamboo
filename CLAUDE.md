@@ -50,8 +50,8 @@ Read only the sections your task needs.
   and one turn (a `pinyin` job's: the prompt and one phrase with its examples). The tutor never
   writes cards: every turn goes through the worker and the engine's checks. The agent never reads
   a share link, PDF or pasted answer itself (DESIGN §5.5, §10 #74; the worker is on Gemini since
-  H4; the agent answers with `worker/prompts/tutor.v1.md` since H5, once the host has moved its
-  model to Gemini Flash).
+  H4; the agent answers with a `worker/prompts/tutor.v*.md` prompt since H5, v2 since §10 #99,
+  once the host has moved its model to Gemini Flash).
 - **Prompts are versioned files** in `worker/prompts/`. Changing a prompt means a new version file;
   jobs record `prompt_version`.
 - **Tunables live in config**: `web/lib/config.ts` (engine) and `shared/src/config.ts` (Mac side).

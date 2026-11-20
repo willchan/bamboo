@@ -21,7 +21,7 @@
 #     bindings; DESIGN §10 #69);
 #  7. if that agent is Bamboo's own (its skills allowlist is just ["bamboo"]), write its
 #     workspace files from agent/workspace/: AGENTS.md (AGENTS.header.md + the tutor prompt
-#     worker/prompts/tutor.v1.md + SKILL.md's instructions), SOUL.md and IDENTITY.md are replaced, the old copy kept in
+#     worker/prompts/tutor.v2.md + SKILL.md's instructions), SOUL.md and IDENTITY.md are replaced, the old copy kept in
 #     <workspace>/.orig/; USER.md is written only over OpenClaw's placeholder. A shared agent's
 #     workspace is the host's and is left alone (DESIGN §10 #73);
 #  8. once BAMBOO_AGENT_API_TOKEN is set: add or update the two command automations, bamboo-replies
