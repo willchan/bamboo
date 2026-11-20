@@ -1,6 +1,6 @@
 // The Ollama client (DESIGN §1.2, §5.3): the model check (`GET /api/tags`) and chat calls through
 // `POST /api/chat` with `format` set to the reply's JSON schema. Since H4 it is the fallback
-// extractor (DESIGN §5.5.2), with the same `extract_turn.v4` prompt and schema as Gemini.
+// extractor (DESIGN §5.5.2), with the same extract_turn prompt (v4 and later) and schema as Gemini.
 import { sharedConfig } from "@bamboo/shared";
 import { RESULT_SCHEMA } from "./extract";
 
