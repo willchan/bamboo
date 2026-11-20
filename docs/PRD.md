@@ -90,7 +90,8 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 
 - A **phrase** is one thing worth remembering:
   - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen"),
-    with **1–3 example sentences** taken from Gemini's answers;
+    with **1–3 example sentences** taken from Gemini's answers (not ones that spell a word in
+    pinyin or romanization, like a question about what "podafen" meant);
   - ~~a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？)~~ **removed** (2026-11):
     frames are no longer extracted, and existing ones are retired (H2: dropped, their history
     kept);
