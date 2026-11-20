@@ -1,6 +1,7 @@
 // API contracts (DESIGN §3.2, §5.3): Zod schemas imported by web, worker and tools.
 export * from "./agent";
 export * from "./breakdown";
+export * from "./client-log";
 export * from "./eval";
 export * from "./errors";
 export * from "./extract";

@@ -1,6 +1,8 @@
 // Background saves for the review screen (DESIGN §6 *Review*): grades are sent one at a time, in
 // order, while the next card is already showing. A failed save is retried with backoff; if it
-// still fails the queue pauses (nothing later is sent out of order) until `retry()`.
+// still fails the queue pauses (nothing later is sent out of order) until `retry()`. An error
+// `isFatal` calls hopeless (a page from an older deploy, DESIGN §6) isn't retried, and `onFail`
+// hears why a save gave up, so the screen can report it (lib/client-log.ts).
 import { config } from "./config";
 
 export interface SaveState {
@@ -15,6 +17,10 @@ export interface SaveQueueOptions {
   retryDelayMs?: number;
   onChange?: (s: SaveState) => void;
   sleep?: (ms: number) => Promise<void>;
+  /** An error no retry can fix: give up on the first attempt. */
+  isFatal?: (err: unknown) => boolean;
+  /** The head save gave up: its last error and how many attempts it made. */
+  onFail?: (err: unknown, attempts: number) => void;
 }
 
 type Job = () => Promise<void>;
@@ -76,16 +82,22 @@ export class SaveQueue {
     while (this.jobs.length > 0) {
       const job = this.jobs[0]!;
       let saved = false;
+      let lastError: unknown;
+      let attempts = 0;
       for (let attempt = 0; attempt <= this.retries && !saved; attempt++) {
         if (attempt > 0) await this.sleep(this.retryDelayMs * 2 ** (attempt - 1));
+        attempts++;
         try {
           await job();
           saved = true;
-        } catch {
-          // Network or server error: try again.
+        } catch (err) {
+          // Network or server error: try again, unless no retry can help.
+          lastError = err;
+          if (this.opts.isFatal?.(err)) break;
         }
       }
       if (!saved) {
+        this.opts.onFail?.(lastError, attempts);
         this.failed = true;
         this.running = false;
         this.emit();

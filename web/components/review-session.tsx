@@ -1,6 +1,8 @@
 "use client";
 // The review screen (DESIGN §6 *Review*): one card at a time, front → tap → back → grade. Grading
-// shows the next card at once and saves in the background (lib/save-queue.ts).
+// shows the next card at once and saves in the background (lib/save-queue.ts). Each save is kept in
+// localStorage until confirmed, so a reload resends it (lib/client/pending-saves.ts); a page from
+// an older deploy reloads into the new one instead of retrying forever (DESIGN §6 *Saving*).
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -8,6 +10,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   useTransition,
   type MouseEvent,
   type ReactNode,
@@ -18,6 +21,15 @@ import { Ruby } from "@/components/ruby";
 import { speak } from "@/lib/audio";
 import { config, type SessionConfig } from "@/lib/config";
 import { reinsertIndex } from "@/lib/domain/session";
+import { classifyError } from "@/lib/client/client-log";
+import { handleFailure } from "@/lib/client/failure";
+import {
+  addPending,
+  listPending,
+  removePending,
+  type PendingSave,
+} from "@/lib/client/pending-saves";
+import { sendPendingSave } from "@/lib/client/send-save";
 import type { Grade } from "@/lib/domain/fsrs";
 import type { ReviewCardView, Today } from "@/lib/repo/review";
 import { SaveQueue, type SaveState } from "@/lib/save-queue";
@@ -36,10 +48,60 @@ interface Props {
   session: SessionConfig;
 }
 
+interface Restored {
+  /** Saves kept from before a reload (any round), to send before new ones. */
+  resend: PendingSave[];
+  /** Cards of this round they cover: graded already, so not shown again. */
+  done: Set<string>;
+}
+
+// One snapshot per round per page load (useSyncExternalStore needs a stable value), read once and
+// kept: a later visit to the same round resends nothing new, and repeats are harmless (reviewId).
+const restoredByRound = new Map<string, Restored>();
+const noSubscribe = () => () => {};
+
+function restoredFor(roundId: string): Restored {
+  let r = restoredByRound.get(roundId);
+  if (!r) {
+    const resend = listPending();
+    const done = new Set(resend.filter((p) => p.roundId === roundId).map((p) => p.cardId));
+    r = { resend, done };
+    restoredByRound.set(roundId, r);
+  }
+  return r;
+}
+
+/**
+ * The review screen, once the browser has said which saves a reload left behind. They live in
+ * localStorage, which the server can't read, so nothing renders until the page hydrates.
+ */
+export function ReviewSession(props: Props) {
+  const { roundId } = props;
+  const restored = useSyncExternalStore(
+    noSubscribe,
+    () => restoredFor(roundId),
+    () => null,
+  );
+  if (!restored) return null;
+  return (
+    <RoundSession
+      {...props}
+      initialCards={props.initialCards.filter((c) => !restored.done.has(c.cardId))}
+      resend={restored.resend}
+    />
+  );
+}
+
 /** A card on screen; `savingAs` marks an in-round repeat waiting for its grade to be saved. */
 type ClientCard = ReviewCardView & { savingAs?: string };
 
-export function ReviewSession({ roundId, total, initialCards, session }: Props) {
+function RoundSession({
+  roundId,
+  total,
+  initialCards,
+  session,
+  resend,
+}: Props & { resend: PendingSave[] }) {
   const router = useRouter();
   const [cards, setCards] = useState<ClientCard[]>(initialCards);
   const [index, setIndex] = useState(0);
@@ -47,13 +109,39 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
   const [finished, setFinished] = useState<Today | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ pending: 0, failed: false });
-  const [saves] = useState(() => new SaveQueue({ onChange: setSaveState }));
+  // The page is from an older deploy and couldn't reload itself: offer Reload, not Retry.
+  const [stale, setStale] = useState(false);
+  const [saves] = useState(
+    () =>
+      new SaveQueue({
+        onChange: setSaveState,
+        isFatal: (err) => classifyError(err) === "stale",
+        onFail: (err, attempts) => {
+          void handleFailure({ where: "save", err, attempts }).then((outcome) => {
+            if (outcome === "stale") setStale(true);
+          });
+        },
+      }),
+  );
+  const restoring = useRef(false);
   const [, startTransition] = useTransition();
   const shownAt = useRef<number>(0);
   const advancedAt = useRef<number>(-Infinity);
   const finishing = useRef(false);
 
   const current = cards[index];
+
+  // Saves kept from before a reload go out first (their cards are already left out).
+  useEffect(() => {
+    if (restoring.current) return;
+    restoring.current = true;
+    for (const p of resend) {
+      saves.push(async () => {
+        await sendPendingSave(p);
+        removePending(p.id);
+      });
+    }
+  }, [resend, saves]);
 
   // Finish once every grade is saved; if a save is stuck, wait for Retry.
   const finish = useCallback(() => {
@@ -115,6 +203,16 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
     }
     advance(next);
     const { cardId } = current;
+    const pending: PendingSave = {
+      kind: "grade",
+      id: reviewId,
+      roundId,
+      cardId,
+      grade: g,
+      alreadyKnow,
+      durationMs,
+    };
+    addPending(pending);
     saves.push(async () => {
       const res = await gradeAction({
         roundId,
@@ -124,6 +222,7 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
         durationMs,
         reviewId,
       });
+      removePending(reviewId);
       if (!res) {
         setError("That card couldn't be saved. It was skipped.");
         setCards((cs) => cs.filter((c) => c.savingAs !== reviewId));
@@ -148,8 +247,11 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
     if (!current) return;
     const { cardId } = current;
     advance(cards);
+    const id = crypto.randomUUID();
+    addPending({ kind: "notUseful", id, roundId, cardId });
     saves.push(async () => {
       await notUsefulAction(cardId);
+      removePending(id);
     });
   };
 
@@ -170,11 +272,21 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
     });
   };
 
-  const saveAlert = saveState.failed ? (
+  const unsaved = saveState.pending === 1 ? "an answer" : `${saveState.pending} answers`;
+  const saveAlert = !saveState.failed ? null : stale ? (
     <div role="alert" className="mb-2 flex items-center justify-center gap-3 text-sm text-danger">
-      <span>
-        Couldn&apos;t save {saveState.pending === 1 ? "an answer" : `${saveState.pending} answers`}.
-      </span>
+      <span>Bamboo was updated. Reload to save {unsaved}.</span>
+      <button
+        type="button"
+        onClick={() => location.reload()}
+        className="rounded-md border border-danger/40 px-2 py-1"
+      >
+        Reload
+      </button>
+    </div>
+  ) : (
+    <div role="alert" className="mb-2 flex items-center justify-center gap-3 text-sm text-danger">
+      <span>Couldn&apos;t save {unsaved}.</span>
       <button
         type="button"
         onClick={retrySaves}
@@ -183,7 +295,7 @@ export function ReviewSession({ roundId, total, initialCards, session }: Props) 
         Retry
       </button>
     </div>
-  ) : null;
+  );
 
   if (finished || !current) {
     return <RoundDone today={finished} alert={saveAlert} />;

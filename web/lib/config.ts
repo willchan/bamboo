@@ -221,6 +221,14 @@ export const config = {
     revealGuardMs: 400,
   },
 
+  /** Stale pages and client error reports (DESIGN §6 *Saving*, §8.5). */
+  client: {
+    /** Reload at most once per this long for a newer deploy, so a mismatch can't loop. */
+    reloadGuardMs: 60_000,
+    /** `/api/client-log` lines per server instance per minute; the rest are dropped. */
+    logPerMinute: 30,
+  },
+
   /** Device TTS (DESIGN §6 *Audio*). */
   audio: {
     lang: "zh-CN",

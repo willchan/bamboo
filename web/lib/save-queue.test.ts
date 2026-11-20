@@ -67,4 +67,43 @@ describe("SaveQueue", () => {
   it("is idle at once when empty", async () => {
     expect(await new SaveQueue().idle()).toBe(true);
   });
+
+  // Regression (Nov 2026): after a deploy, the open page's saves hit actions the new build doesn't
+  // have. Every retry fails the same way, so they were retried, then Retry looped forever, and the
+  // error itself was thrown away.
+  it("doesn't retry a fatal error and reports why a save gave up", async () => {
+    let attempts = 0;
+    const failures: { err: unknown; attempts: number }[] = [];
+    const stale = Object.assign(new Error("not found"), { name: "UnrecognizedActionError" });
+    const q = new SaveQueue({
+      retries: 3,
+      sleep: noSleep,
+      isFatal: (err) => (err as Error).name === "UnrecognizedActionError",
+      onFail: (err, n) => failures.push({ err, attempts: n }),
+    });
+    q.push(async () => {
+      attempts++;
+      throw stale;
+    });
+    expect(await q.idle()).toBe(false);
+    expect(attempts).toBe(1);
+    expect(failures).toEqual([{ err: stale, attempts: 1 }]);
+  });
+
+  it("reports the last error after every retry failed", async () => {
+    const failures: { err: unknown; attempts: number }[] = [];
+    let n = 0;
+    const q = new SaveQueue({
+      retries: 2,
+      sleep: noSleep,
+      onFail: (err, attempts) => failures.push({ err, attempts }),
+    });
+    q.push(async () => {
+      throw new Error(`fail ${++n}`);
+    });
+    expect(await q.idle()).toBe(false);
+    expect(failures).toHaveLength(1);
+    expect((failures[0]!.err as Error).message).toBe("fail 3");
+    expect(failures[0]!.attempts).toBe(3);
+  });
 });

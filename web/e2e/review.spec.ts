@@ -177,3 +177,74 @@ test("Learn more adds new cards past the cap; a Listen card's hint is on the bac
   // Nothing new left to learn.
   await expect(page.getByRole("button", { name: /^Learn \d+ more/ })).toHaveCount(0);
 });
+
+// Regression (Nov 2026, DESIGN §6 *Saving*): after a deploy, an open page's saves call server
+// actions the new build doesn't have; every retry failed and Retry looped forever. Now the page
+// reports it, reloads into the new build, resends the kept grade, and doesn't show its card again.
+test("a save from an older deploy reloads and resends instead of looping", async ({ page }) => {
+  for (const [hanzi, english] of [
+    ["开窗。", "Open the window."],
+    ["吃水果。", "Eat some fruit."],
+  ] as const) {
+    await page.goto("/phrases/new");
+    await page.getByRole("radio", { name: "sentence" }).check({ force: true });
+    await page.getByLabel("Chinese", { exact: true }).fill(hanzi);
+    await page.getByLabel("English intent", { exact: true }).fill(english);
+    await page.getByRole("button", { name: "Add phrase" }).click();
+    await expect(page.getByTestId("saved")).toBeVisible();
+  }
+
+  // The first grade reaches a server that doesn't know its action (what Next answers then).
+  let stale = 0;
+  await page.route("**/review/**", async (route) => {
+    const req = route.request();
+    if (req.method() === "POST" && req.headers()["next-action"] && stale === 0) {
+      stale++;
+      return route.fulfill({ status: 404, headers: { "x-nextjs-action-not-found": "1" } });
+    }
+    return route.continue();
+  });
+  const reports: unknown[] = [];
+  page.on("request", (req) => {
+    if (req.url().endsWith("/api/client-log")) reports.push(req.postDataJSON());
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Learn 2 more" }).click();
+  await expect(page.getByTestId("progress")).toHaveText(/^1 \/ \d+$/);
+  const first = await page.getByTestId("card-front").textContent();
+  await expect(async () => {
+    await page.getByRole("button", { name: "Show", exact: true }).click();
+    await expect(page.getByRole("button", { name: /^Good/ })).toBeVisible({ timeout: 300 });
+  }).toPass();
+  await page.getByRole("button", { name: /^Good/ }).click();
+
+  // Reloaded: the graded card isn't shown again, and no Retry loop.
+  await page.waitForEvent("load");
+  await expect(page.getByTestId("card-front")).toBeVisible();
+  await expect(page.getByTestId("card-front")).not.toHaveText(first!);
+  await expect(page.getByText(/Couldn.t save|Bamboo was updated/)).toHaveCount(0);
+  expect(stale).toBe(1);
+  await expect
+    .poll(() => reports)
+    .toContainEqual(expect.objectContaining({ where: "save", kind: "stale", page: "/review" }));
+
+  // The rest of the round, then it finishes (it waits for every save, the resent one first).
+  while (!(await page.getByTestId("done-for-today").isVisible())) {
+    await expect(async () => {
+      await page.getByRole("button", { name: "Show", exact: true }).click();
+      await expect(page.getByRole("button", { name: /^Good/ })).toBeVisible({ timeout: 300 });
+    }).toPass();
+    await page.getByRole("button", { name: /^Good/ }).click();
+    await expect(
+      page
+        .getByTestId("done-for-today")
+        .or(page.getByRole("button", { name: "Show", exact: true })),
+    ).toBeVisible();
+  }
+
+  // Both grades landed (the kept one resent): nothing is waiting, and nothing new is left.
+  expect(await page.evaluate(() => localStorage.getItem("bamboo.pendingSaves.v1"))).toBeNull();
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /^Learn \d+ more/ })).toHaveCount(0);
+});
