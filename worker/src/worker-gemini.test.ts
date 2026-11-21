@@ -277,10 +277,24 @@ describe("name filter (synthetic deny file)", () => {
   it("loads the file: names, comments and blanks", () => {
     const d = loadDenyList(denyFile());
     expect(d).toMatchObject({ loaded: true, count: 2, tooOpen: false });
-    expect(d.matches("ask zorblat")).toBe(true);
+    expect(d.matches("ask Zorblat")).toBe(true);
+    expect(d.matches("ask ZORBLAT")).toBe(true);
     expect(d.matches("Zorblatty")).toBe(false); // Latin names match whole words
     expect(d.matches("给测名洗澡")).toBe(true);
     expect(loadDenyList("/nonexistent/names.deny")).toMatchObject({ loaded: false, count: 0 });
+  });
+
+  it("regression: a Latin name that is also an English word matches only as a name", () => {
+    // A listed name that is also a word rewrote the ordinary word to "someone" ("I someone do it
+    // later"): Latin names now match only capitalized, as a name is written (§10 #104).
+    const d = parseDenyList("Plum\nzorblat\n");
+    expect(d.matches("We plum go out after dinner.")).toBe(false);
+    expect(d.rewrite("I plum vacuum first.", "someone")).toBe("I plum vacuum first.");
+    expect(d.matches("Ask Plum to help.")).toBe(true);
+    expect(d.rewrite("Ask Plum to help.", "someone")).toBe("Ask someone to help.");
+    // The file's own case doesn't matter, only the text's.
+    expect(d.matches("ask Zorblat")).toBe(true);
+    expect(d.matches("ask zorblat")).toBe(false);
   });
 
   it("drops items and examples with a name, rewrites English, counts only", async () => {

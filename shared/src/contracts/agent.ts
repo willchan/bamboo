@@ -28,13 +28,19 @@ export type NudgeResponse = z.infer<typeof NudgeResponse>;
 /**
  * `POST /api/agent/reextract` (H6, DESIGN §3.2, §5.5.6): queue re-runs (§4.6.1) from the Mac, for
  * H7's backfill. `all` also takes turns already on the newest prompt that no re-run has read with
- * it; `limit` takes at most that many, oldest first. Each turn is one job, claimed after ordinary
+ * it; `limit` takes at most that many, oldest first; `named` takes only turns the name filter
+ * acted on. Each turn is one job, claimed after ordinary
  * jobs. Running it again while they're open queues nothing more.
  */
 export const ReextractRequest = z
   .object({
     all: z.boolean().default(false),
     limit: z.number().int().min(1).max(sharedConfig.reextract.maxLimit).optional(),
+    /**
+     * Only turns whose latest extraction had the name filter drop or rewrite something, on any
+     * prompt: re-read them after a name-filter fix (§10 #104). Ignores `all`.
+     */
+    named: z.boolean().default(false),
   })
   .strict();
 export type ReextractRequest = z.infer<typeof ReextractRequest>;

@@ -43,8 +43,13 @@ describe("parseBackfillArgs", () => {
 
   it("maps modes to the re-run request", () => {
     expect(reextractBody({ kind: "count" })).toBeNull();
-    expect(reextractBody({ kind: "all" })).toEqual({ all: true });
-    expect(reextractBody({ kind: "limit", limit: 10 })).toEqual({ all: true, limit: 10 });
+    expect(reextractBody({ kind: "all" })).toEqual({ all: true, named: false });
+    expect(reextractBody({ kind: "named" })).toEqual({ all: false, named: true });
+    expect(reextractBody({ kind: "limit", limit: 10 })).toEqual({
+      all: true,
+      named: false,
+      limit: 10,
+    });
   });
 });
 
@@ -118,7 +123,10 @@ describe("AgentClient", () => {
     };
     const a = new AgentClient("https://bamboo.test", "fake-agent", fetchFn);
     expect(await a.report(5)).toEqual(report);
-    expect(await a.reextract({ all: true, limit: 10 })).toEqual({ queued: 2, open: 2 });
+    expect(await a.reextract({ all: true, named: false, limit: 10 })).toEqual({
+      queued: 2,
+      open: 2,
+    });
     expect(calls).toEqual([
       {
         url: "https://bamboo.test/api/agent/backfill?since=5",
@@ -130,7 +138,7 @@ describe("AgentClient", () => {
         url: "https://bamboo.test/api/agent/reextract",
         method: "POST",
         auth: "Bearer fake-agent",
-        body: { all: true, limit: 10 },
+        body: { all: true, named: false, limit: 10 },
       },
     ]);
   });

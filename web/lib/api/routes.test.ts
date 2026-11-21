@@ -1106,6 +1106,47 @@ describe("re-extraction", () => {
     ]);
   });
 
+  it("re-runs only the turns the name filter acted on, on any prompt (§10 #104)", async () => {
+    await postImport({});
+    // Turn 0's extraction had the name filter rewrite something; the others had none.
+    for (let i = 0; i < 3; i++) {
+      const c = (await claim())!;
+      await complete({
+        job_id: c.job_id,
+        attempt: c.attempt,
+        status: "done",
+        result: { turn_kind: "other", items: [] },
+        model: GEMINI,
+        prompt_version: "extract_turn.v7",
+        dropped_name: c.input.user_text === TURNS[0]!.user_text ? 2 : 0,
+      });
+    }
+    // Everything is on the newest prompt, so a plain or full run takes nothing new...
+    expect(await queueReextraction(db, T0)).toBe(0);
+    // ...but `named` takes the one turn.
+    const r = await reextractPOST(req("/api/agent/reextract", AGENT, { named: true }));
+    expect(await json(r)).toEqual({ queued: 1, open: 1 });
+    const job1 = (await claim())!;
+    expect(job1.input.user_text).toBe(TURNS[0]!.user_text);
+    // Re-read with the fixed filter (nothing rewritten): no longer taken.
+    await complete({
+      job_id: job1.job_id,
+      attempt: job1.attempt,
+      status: "done",
+      result: { turn_kind: "other", items: [] },
+      model: GEMINI,
+      prompt_version: "extract_turn.v7",
+      dropped_name: 0,
+    });
+    expect(
+      await json(await reextractPOST(req("/api/agent/reextract", AGENT, { named: true }))),
+    ).toEqual({ queued: 0, open: 0 });
+    const queuedEvents = await db.select().from(event).where(eq(event.type, "reextract_queued"));
+    expect(queuedEvents.map((e) => e.data)).toEqual([
+      { turns: 1, all: false, limit: null, named: true },
+    ]);
+  });
+
   it("H6: the re-run route needs the agent token and a valid body", async () => {
     expect((await reextractPOST(req("/api/agent/reextract", WORKER, {}))).status).toBe(401);
     expect((await reextractPOST(req("/api/agent/reextract", AGENT, { limit: 0 }))).status).toBe(

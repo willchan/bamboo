@@ -4,7 +4,9 @@
 // only a count (`dropped_name`) leaves the worker. Tests use a synthetic deny file.
 //
 // File format: UTF-8, one name per line (hanzi or a Latin spelling), blank lines and `#` comments
-// ignored. Latin names match case-insensitively as whole words; hanzi names match anywhere.
+// ignored. Latin names match as whole words, and only capitalized as a name is written ("Plum",
+// "PLUM", not "plum"), so a name that is also an English word doesn't rewrite that word (§10 #104);
+// hanzi names match anywhere.
 import { readFileSync, statSync } from "node:fs";
 import type { ExtractItem, ExtractTurnResult } from "@bamboo/shared";
 
@@ -24,6 +26,21 @@ export interface DenyList {
 const LATIN = /^[\p{Script=Latin}\s'.-]+$/u;
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
+/**
+ * A Latin name as a pattern: its first letter upper case only, the rest in either case. "will"
+ * in the file matches "Will" and "WILL" but not the word "will" (§10 #104).
+ */
+function capitalized(name: string): string {
+  return Array.from(name)
+    .map((ch, i) => {
+      const lo = ch.toLowerCase();
+      const up = ch.toUpperCase();
+      if (lo === up) return escape(ch);
+      return i === 0 ? escape(up) : `[${escape(lo)}${escape(up)}]`;
+    })
+    .join("");
+}
+
 /** Build a deny list from the file's text. */
 export function parseDenyList(text: string, path = "(inline)", tooOpen = false): DenyList {
   const names = [
@@ -36,15 +53,16 @@ export function parseDenyList(text: string, path = "(inline)", tooOpen = false):
   ];
   const parts = names.map((n) =>
     // Latin: whole words, so a short name doesn't match inside another word.
-    LATIN.test(n) ? `(?<![\\p{L}\\p{N}])${escape(n)}(?![\\p{L}\\p{N}])` : escape(n),
+    LATIN.test(n) ? `(?<![\\p{L}\\p{N}])${capitalized(n)}(?![\\p{L}\\p{N}])` : escape(n),
   );
-  const re = parts.length ? new RegExp(parts.join("|"), "giu") : null;
+  // No `i` flag: Latin case is handled per letter by `capitalized`, and hanzi have none.
+  const re = parts.length ? new RegExp(parts.join("|"), "gu") : null;
   return {
     path,
     loaded: true,
     count: names.length,
     tooOpen,
-    matches: (t) => (re ? new RegExp(re.source, "iu").test(t) : false),
+    matches: (t) => (re ? new RegExp(re.source, "u").test(t) : false),
     rewrite: (t, replacement) => (re ? t.replace(re, replacement) : t),
   };
 }

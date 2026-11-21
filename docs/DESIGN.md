@@ -1079,8 +1079,8 @@ each result for the `extraction` event.
   which model ran.
 - **Name filter** (`worker/src/names.ts`, §5.5.8): after a valid result and before posting. The
   deny-list is read at startup from `BAMBOO_NAMES_DENY` (default `~/.config/bamboo/names.deny`);
-  a missing file is a startup warning. Latin names match case-insensitively as whole words, hanzi
-  anywhere. An item whose hanzi or breakdown part contains a name is dropped, as is such an
+  a missing file is a startup warning. Latin names match as whole words and only capitalized as
+  a name is written ("Plum", "PLUM", never "plum"; §10 #104), hanzi anywhere. An item whose hanzi or breakdown part contains a name is dropped, as is such an
   example; English fields (english, note, glosses, meaning or note, example English) are
   rewritten with `someone`; a `heard_as` naming someone is cleared. Only the count goes out, as
   `dropped_name` on `complete` (and in the job's log line).
@@ -1380,7 +1380,9 @@ extended first (H6):
 
 H7 runs 10 turns as a dry run (counts only), then, after Will approves, the rest. Both go through
 one command on the Mac, as `openclaw-agent` with the launchd worker stopped (§10 #93):
-`pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count | --limit N | --all`. It
+`pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count | --limit N | --all | --named`
+(`--named`, §10 #104: only turns whose latest extraction had the name filter drop or rewrite
+something, on any prompt, to re-read them after a name-filter fix). It
 prints `GET /api/agent/backfill`'s counts (`--count` stops there: no writes, no Gemini), queues
 the re-runs with `POST /api/agent/reextract`, runs an in-process worker on the paid key that
 claims with `reextract_only` (re-runs and pinyin jobs, never a new import's job) and stops when
@@ -1474,7 +1476,7 @@ These apply to every milestone and to every prompt it writes.
   measurements) out of cards. Ordinary words like 胀气 are fine.
 - **Name deny-list**: `~/.config/bamboo/names.deny` in the `openclaw-agent` account (mode 600),
   kept on the Mac only and filled in by Will himself: UTF-8, one name per line (hanzi or a Latin
-  spelling), blank lines and `#` comments ignored, Latin matched case-insensitively. Anything
+  spelling), blank lines and `#` comments ignored, Latin matched only capitalized (§10 #104). Anything
   extracted that contains a listed name is dropped (an English field may instead be rewritten to
   a role word). The file is never read into a chat, committed, logged or used in tests; logs and
   events carry only a count. Fixtures use synthetic placeholder names.
@@ -2048,6 +2050,7 @@ bamboo/
 | 101 | A page from an older deploy reloads into the new one: the app compares its build with `GET /api/version` on load and on returning to the foreground, and a save that fails as stale reloads too. Unconfirmed saves wait in localStorage and are resent after the reload (idempotent by `reviewId`). Failures on the phone are reported to `POST /api/client-log` as fixed-field log lines (§6 *Saving*, §8.5) | A round froze on "Couldn't save 3 answers" after a deploy: the page's server actions no longer existed, every retry failed the same way, reloading would have lost the grades, and nothing logged why. Vercel's Skew Protection fixes the first part but isn't on the free plan. localStorage, not IndexedDB: a handful of small records written once per grade and read only by the page; iOS keeps both while the app is on the home screen, and IndexedDB would add a wrapper for nothing at this size |
 | 102 | Good on a new card graduates it (`learningSteps: ['1m']`), and during a backlog the round's end goes straight on with new cards first (**Keep going**, `keepGoingMinQueue` 30) until today's `newPerDay` is reached; "N of 30 new today" on Today and the round's end | Measured on a read-only prod copy (counts only) on an evening of five rounds: 19 new cards took 43 showings, and 2–6 of each round's 10 cards were the previous round's, because the 10-minute step sat inside the 20-minute learn-ahead and due cards fill a round before new ones; 30 a day needed about 12 rounds behind a "Done for today" that said one was enough. A synthetic FSRS run (343 queued, 11 new a day, 0.85 recall) at 30 a day: two steps ~101 cards (~25 min) a day in the burst, ~80 after; one step ~52 (~13 min) and ~51, the burst ~18 days either way. Will chose one step. Keep going only during a backlog: in steady state "Another round" (one more short round) suits an evening better, and a threshold in config switches by itself. Rounds stay 10 cards so the daily minimum stays small; Keep going removes the end screens instead |
 | 103 | extract_turn.v7: Gemini writes a term's examples (short, everyday, containing the term; one for a concrete noun or set phrase, up to three for a verb or grammar word, each teaching something new); the engine keeps them only from a Gemini job, at most 18 key characters, never promoted to a sentence; examples that reword one another collapse to the shortest at extraction, merge and on the card; a re-run replaces examples (§4.6 step 3, §5.5.4). Supersedes #99's choice to keep examples copied | Will's call (2026-11), after a card showed three rewordings of his own errand question as its examples, which taught nothing and made him scroll. Copying was a guard against the local 9B model writing Chinese (#6, #7); since #74 extraction runs on Gemini, the same model family that wrote the reply, so a sentence it writes is no less trustworthy than one it wrote in the answer, and the reply is written for that day's question, not for a flashcard. The verbatim rule stays for items: it keeps cards to what Will actually looked up. The Ollama fallback runs the same prompt, so its examples must still be copied. A promoted sentence must be one the reply offered. Rewordings share about 40% of their character pairs once the term is left out; short examples aren't compared by pairs, so different uses that share a 了吗 stay |
+| 104 | The name filter matches a listed Latin name only capitalized, as a name is written; `backfill --named` (`POST /api/agent/reextract {named: true}`) re-reads the turns whose latest extraction the filter acted on (§5.5.2, §5.5.6, §5.5.8) | Checking the v7 backfill (prod copy, counts only): about 10 card translations read "someone" where the English modal verb belonged ("I someone do it later", synthetic), on 11 turns the filter had acted on. A listed name that is also an English word matched case-insensitively and rewrote the word. Names in English are written capitalized; a sentence starting with that word is still rewritten, which fails safe. A re-run scope by the filter's own count fixes the stored cards without re-reading every turn, and keeps working for any later filter fix |
 
 ## Appendix A — Synthetic fixtures
 
