@@ -38,7 +38,8 @@ pnpm --filter web test:e2e      # Playwright at a phone viewport (own server and
 
 ## Deploy (one-time setup)
 
-Vercel deploys `main` to production and every PR to a preview (DESIGN §8.2). The build runs
+Vercel deploys `main` to production; other branches are skipped (DESIGN §8.2, previews are
+off to save Function Storage). The build runs
 `pnpm db:migrate` first, against that environment's Turso database.
 
 1. **Turso**: create two databases, `bamboo` (production) and `bamboo-preview`. For each, save
