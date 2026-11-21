@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["pdx1"],
+  "ignoreCommand": "[ \"$VERCEL_ENV\" != production ]",
   "buildCommand": "pnpm --dir .. db:migrate && pnpm repinyin && pnpm build",
   "schedules": {
     "daily": {
