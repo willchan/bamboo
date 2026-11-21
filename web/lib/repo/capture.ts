@@ -866,6 +866,12 @@ export interface ReextractScope {
   all?: boolean;
   /** H6: at most this many turns, oldest first (H7's dry run). Default: every one. */
   limit?: number;
+  /**
+   * Only turns whose latest finished extraction had the worker's name filter drop or rewrite
+   * something (`dropped_name` > 0), on any prompt, for a re-read after a name-filter fix
+   * (§10 #104). `all` is ignored.
+   */
+  named?: boolean;
 }
 
 /**
@@ -884,7 +890,7 @@ export async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<
       order by finished_at desc, id desc limit 1
     ),
     last as (
-      select json_extract(input, '$.turn_id') tid, prompt_version v, reextract, model,
+      select id jid, json_extract(input, '$.turn_id') tid, prompt_version v, reextract, model,
         row_number() over (
           partition by json_extract(input, '$.turn_id') order by finished_at desc, id desc
         ) rn
@@ -896,15 +902,28 @@ export async function staleTurnIds(db: Db, scope: ReextractScope = {}): Promise<
     where last.rn = 1
       and exists (select 1 from latest)
       and (
-        last.v is not (select v from latest)
-        or (? = 1 and (last.reextract = 0 or coalesce(last.model, '') not like ? || '%'))
+        case when ? = 1 then exists (
+          select 1 from event
+          where event.type = 'extraction'
+            and json_extract(event.data, '$.job_id') = last.jid
+            and coalesce(json_extract(event.data, '$.dropped_name'), 0) > 0
+        )
+        else (
+          last.v is not (select v from latest)
+          or (? = 1 and (last.reextract = 0 or coalesce(last.model, '') not like ? || '%'))
+        ) end
       )
       and last.tid not in (
         select json_extract(input, '$.turn_id') from job where status in ('queued', 'leased')
       )
     order by turn.created_at, turn.position
     limit ?`,
-    args: [scope.all ? 1 : 0, sharedConfig.reextract.geminiModelPrefix, scope.limit ?? -1],
+    args: [
+      scope.named ? 1 : 0,
+      scope.all ? 1 : 0,
+      sharedConfig.reextract.geminiModelPrefix,
+      scope.limit ?? -1,
+    ],
   });
   return res.rows.map((r) => String(r.tid));
 }
@@ -953,15 +972,18 @@ export async function queueReextraction(
     );
   }
   writes.push(
-    db
-      .insert(event)
-      .values(
-        eventRow(
-          "reextract_queued",
-          { turns: ids.length, all: !!scope.all, limit: scope.limit ?? null },
-          now,
-        ),
+    db.insert(event).values(
+      eventRow(
+        "reextract_queued",
+        {
+          turns: ids.length,
+          all: !!scope.all,
+          limit: scope.limit ?? null,
+          ...(scope.named ? { named: true } : {}),
+        },
+        now,
       ),
+    ),
   );
   await runBatch(db, writes);
   return ids.length;

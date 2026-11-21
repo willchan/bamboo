@@ -16,7 +16,12 @@ import {
 import { agentEnvPath, ConfigError, geminiKeyChoice, type GeminiKeyChoice } from "./config";
 import type { JobReport } from "./worker";
 
-export type BackfillMode = { kind: "count" } | { kind: "limit"; limit: number } | { kind: "all" };
+export type BackfillMode =
+  | { kind: "count" }
+  | { kind: "limit"; limit: number }
+  | { kind: "all" }
+  /** Only turns the name filter acted on, re-read after a name-filter fix (§10 #104). */
+  | { kind: "named" };
 
 export interface BackfillArgs {
   mode: BackfillMode;
@@ -24,7 +29,7 @@ export interface BackfillArgs {
 }
 
 /**
- * `--count | --limit N | --all`, plus `--gemini-key=paid`, which is required: the backfill never
+ * `--count | --limit N | --all | --named`, plus `--gemini-key=paid`, which is required: the backfill never
  * runs on the free key (DESIGN §5.5.7, §10 #88). Exactly one mode.
  */
 export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
@@ -34,6 +39,7 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
     const a = argv[i]!;
     if (a === "--count") modes.push({ kind: "count" });
     else if (a === "--all") modes.push({ kind: "all" });
+    else if (a === "--named") modes.push({ kind: "named" });
     else if (a === "--limit" || a.startsWith("--limit=")) {
       const raw = a === "--limit" ? argv[++i] : a.slice("--limit=".length);
       const limit = Number(raw);
@@ -44,7 +50,8 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
       modes.push({ kind: "limit", limit });
     } else rest.push(a);
   }
-  if (modes.length !== 1) throw new ConfigError("give exactly one of --count, --limit N, --all");
+  if (modes.length !== 1)
+    throw new ConfigError("give exactly one of --count, --limit N, --all, --named");
   const key = geminiKeyChoice(rest);
   if (key !== "paid") throw new ConfigError("the backfill runs on the paid key: --gemini-key=paid");
   return { mode: modes[0]!, key };
@@ -54,8 +61,10 @@ export const reextractBody = (mode: BackfillMode): ReextractRequest | null =>
   mode.kind === "count"
     ? null
     : mode.kind === "all"
-      ? { all: true }
-      : { all: true, limit: mode.limit };
+      ? { all: true, named: false }
+      : mode.kind === "named"
+        ? { all: false, named: true }
+        : { all: true, named: false, limit: mode.limit };
 
 /** `BAMBOO_AGENT_API_TOKEN` from the environment, else agent.env. Never logged. */
 export function readAgentToken(
