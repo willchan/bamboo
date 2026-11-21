@@ -41,6 +41,7 @@ import {
   planReextract,
   rescored,
   validateExtraction,
+  writesExamples,
   type ReextractPhrase,
   type ValidItem,
 } from "../domain/queue";
@@ -518,9 +519,11 @@ export async function completeJob(
   const input = j.input as ExtractTurnInput;
   const t = await db.query.turn.findFirst({ where: eq(turn.id, input.turn_id) });
   if (!t) return { ok: false, error: "not_found" };
+  // extract_turn.v7 writes examples on Gemini; the Ollama fallback's must still be copied (§10 #103).
+  const opts = { writtenExamples: writesExamples(meta.model) };
   const applied = j.reextract
-    ? await applyReextraction(db, t, parsed.data, now)
-    : await applyExtraction(db, { turn: t, importId: j.importId }, parsed.data, now);
+    ? await applyReextraction(db, t, parsed.data, now, opts)
+    : await applyExtraction(db, { turn: t, importId: j.importId }, parsed.data, now, opts);
 
   const writes: BatchItem<"sqlite">[] = [
     ...applied.writes,
@@ -603,10 +606,13 @@ async function applyExtraction(
   ctx: { turn: typeof turn.$inferSelect; importId: string },
   result: ExtractTurnResult,
   now: number,
+  opts: { writtenExamples: boolean },
 ) {
   const validation = validateExtraction(
     { userText: ctx.turn.userText, replyText: ctx.turn.replyText },
     result,
+    config.extraction,
+    opts,
   );
   const writes: BatchItem<"sqlite">[] = [];
   let phrasesNew = 0;
@@ -740,8 +746,14 @@ async function applyReextraction(
   t: typeof turn.$inferSelect,
   result: ExtractTurnResult,
   now: number,
+  opts: { writtenExamples: boolean },
 ) {
-  const validation = validateExtraction({ userText: t.userText, replyText: t.replyText }, result);
+  const validation = validateExtraction(
+    { userText: t.userText, replyText: t.replyText },
+    result,
+    config.extraction,
+    opts,
+  );
   const keys = validation.items.map((i) => i.hanziKey);
   const [byKey, fromTurn] = await Promise.all([
     keys.length ? db.select().from(phrase).where(inArray(phrase.hanziKey, keys)) : [],

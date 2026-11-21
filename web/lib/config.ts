@@ -225,6 +225,22 @@ export const config = {
      * (A菜, B超, AA制, KTV) stay (§4.6 step 3).
      */
     romanizedMinLetters: 2,
+    /**
+     * Two examples are near-duplicates (one rewords the other) when one contains the other, or,
+     * leaving out the term, this share of the shorter one's character pairs is also in the longer
+     * one; the shorter is kept (§4.6 step 3, §10 #103). Rewordings of one question share about
+     * 40% of their pairs; examples that use the word differently share few.
+     */
+    exampleOverlapMax: 0.35,
+    /** ... compared that way only with at least this many pairs besides the term. */
+    exampleOverlapMinPairs: 4,
+    /**
+     * extract_turn.v7 writes a term's examples (§10 #103). One not found in the turn is kept only
+     * from a model whose name starts with this (Gemini, not the Ollama fallback) ...
+     */
+    writtenExamplesModelPrefix: "gemini",
+    /** ... and only up to this many key characters: a short, everyday sentence. */
+    writtenExampleMaxChars: 18,
   },
 
   /** The review screen (DESIGN §6 *Review*). */

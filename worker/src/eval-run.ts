@@ -98,7 +98,7 @@ export async function runEval(
   console.log(
     `eval ${label} ${prompt.version}: ${c.valid}/${c.turns} valid (${c.repaired} repaired, ` +
       `${c.failed} failed); turn kind agrees ${c.kindAgrees}/${c.valid}; items verbatim ` +
-      `${c.verbatim}/${c.items} (${(verbatimRate * 100).toFixed(0)}%); examples verbatim ` +
+      `${c.verbatim}/${c.items} (${(verbatimRate * 100).toFixed(0)}%); examples copied from the reply ` +
       `${c.examplesVerbatim}/${c.examples}; pinyin aligned ${c.pinyinAligned}/${c.items}; ` +
       `breakdowns ${c.breakdowns}/${c.items}; Cantonese-only kept ${c.cantoneseKept}; ` +
       `model time ${(c.totalMs / 1000).toFixed(0)}s`,

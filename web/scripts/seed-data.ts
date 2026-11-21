@@ -86,6 +86,11 @@ export const SEEDS: Seed[] = [
     examples: [
       { hanzi: "宝宝今天的辅食吃完了吗？", english: "Did the baby finish today's solids?" },
       { hanzi: "辅食要做得软一点。", english: "Make the solids a bit softer." },
+      // A rewording of the first, as older copied examples often were: the card shows one (§10 #103).
+      {
+        hanzi: "宝宝今天的辅食都吃完了没有？",
+        english: "Has the baby eaten all of today's solids?",
+      },
     ],
     breakdown: {
       parts: [

@@ -148,7 +148,7 @@ describe("worker on Gemini", () => {
     expect(engine.completes[0]).toMatchObject({
       status: "done",
       model: "gemini-test",
-      prompt_version: "extract_turn.v6",
+      prompt_version: "extract_turn.v7",
       dropped_name: 0,
     });
     const result = (engine.completes[0] as { result: { items: { pinyin: unknown }[] } }).result;
@@ -424,8 +424,8 @@ describe("H7 backfill worker (reextract only, until idle)", () => {
     expect(engine.jobs.find((j) => j.job_id === "new-import")?.status).toBe("queued");
     expect(engine.claimReextractOnly.every(Boolean)).toBe(true);
     expect(worker.reports.map((r) => r.promptVersion)).toEqual([
-      "extract_turn.v6",
-      "extract_turn.v6",
+      "extract_turn.v7",
+      "extract_turn.v7",
     ]);
     expect(lines).toContain("until-idle: nothing left to claim; stopping");
   });
