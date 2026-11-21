@@ -42,8 +42,11 @@ Read only the sections your task needs.
   Gemini's: a reading that isn't valid for the character loses to the computed one, a real
   dispute goes to a referee call limited to valid readings plus the neutral tone, and Will's
   override wins (DESIGN §5.5.3). No context-rule heuristics (H1 removed the 得/长 rules; H4 added
-  the merge, `shared/src/pinyin-merge.ts`). Extracted hanzi, including example sentences, must appear verbatim in the source
-  turn, or they are dropped; a card-back breakdown must match its phrase's hanzi exactly.
+  the merge, `shared/src/pinyin-merge.ts`). Extracted items' hanzi must appear verbatim in the source
+  turn, or they are dropped; a card-back breakdown must match its phrase's hanzi exactly. A
+  term's example sentences are the exception: since `extract_turn.v7` Gemini writes them (short,
+  containing the term, accepted only from a Gemini job, never promoted to a sentence card;
+  DESIGN §10 #103).
 - **Gemini at runtime, nothing else.** The `#bamboo` agent (tutor, Gemini Flash) and the
   worker's extraction (Gemini, free-tier key) are the only LLM calls; Ollama is only the worker's
   fallback, and the engine on Vercel calls no LLM. An extraction request carries only the prompt

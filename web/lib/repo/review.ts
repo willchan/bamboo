@@ -37,7 +37,7 @@ import {
   type Workload,
 } from "../domain/session";
 import { eventRow, newId, runBatch } from "./db";
-import { isLearnableExample, orderQueue } from "../domain/queue";
+import { distinctExamples, isLearnableExample, orderQueue } from "../domain/queue";
 import { dropPhrase, listQueue, queuedPhrasesQuery } from "./phrases";
 
 export interface Clock {
@@ -237,14 +237,16 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
     heardAs: p.heardAs,
     hanzi: p.hanzi,
     pinyin,
-    // Older phrases may hold a romanized example from before the extraction check (§4.6 step 3).
-    examples: p.examples
-      .filter((e) => isLearnableExample(e.hanzi))
-      .map((e) => ({
-        hanzi: e.hanzi,
-        english: e.english,
-        pinyin: computePinyin(e.hanzi),
-      })),
+    // Older phrases may hold a romanized example, or several rewording one another, from before
+    // the extraction checks (§4.6 step 3, §10 #103).
+    examples: distinctExamples(
+      p.examples.filter((e) => isLearnableExample(e.hanzi)),
+      p.hanzi,
+    ).map((e) => ({
+      hanzi: e.hanzi,
+      english: e.english,
+      pinyin: computePinyin(e.hanzi),
+    })),
     note: p.note,
     breakdown: breakdownView(p.breakdown, pinyin),
     ...(await intervalPreview(c, now)),

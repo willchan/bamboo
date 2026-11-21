@@ -714,20 +714,51 @@ describe("extract results", () => {
     expect(row.summary).toContain("🔁 1 phrase you'd asked about before is back in rotation.");
   });
 
+  it("keeps a written example only from a Gemini job (extract_turn.v7, §10 #103)", async () => {
+    const run = async (t: FakeTurn, msg: string, hanzi: string, example: string, model: string) => {
+      const { finish } = await oneTurn(t, msg);
+      expect(finish).toBeDefined();
+      const c = await db.select().from(job);
+      const j = c.find((x) => x.status === "leased")!;
+      await done(
+        j.id,
+        j.attempt,
+        {
+          turn_kind: "errand",
+          items: [term(hanzi, "a word", { examples: [{ hanzi: example, english: "Written." }] })],
+        },
+        "extract_turn.v7",
+        model,
+      );
+      return (await db.select().from(phrase).where(eq(phrase.hanzi, hanzi)))[0]!;
+    };
+    const gemini = await run(TURNS[0]!, "g1", "高压锅", "高压锅要放多少水？", "gemini-3.8-flash");
+    expect(gemini.examples).toEqual([
+      { hanzi: "高压锅要放多少水？", english: "Written.", turn_id: expect.any(String) },
+    ]);
+    const ollama = await run(TURNS[2]!, "o1", "泡打粉", "泡打粉用完了。", "qwen3.8:27b");
+    expect(ollama.examples).toEqual([]);
+    expect(ollama.flags).toContain("example_dropped");
+  });
+
   it("merges into a queued phrase and re-scores it; examples stay capped at 3", async () => {
-    const reply = (n: number) => `泡打粉：例句${n}放一勺泡打粉。`;
+    // Distinct uses: rewordings of one sentence would collapse to one (§10 #103).
+    const sentences = [
+      "放一勺泡打粉。",
+      "泡打粉用完了。",
+      "超市有泡打粉吗？",
+      "泡打粉放冰箱里。",
+      "别放太多泡打粉。",
+    ];
     for (let n = 1; n <= 5; n++) {
+      const ex = sentences[n - 1]!;
       const { finish } = await oneTurn(
-        { user_text: `baking question ${n}`, reply_text: reply(n), position: 0 },
+        { user_text: `baking question ${n}`, reply_text: `泡打粉：${ex}`, position: 0 },
         `m${n}`,
       );
       await finish({
         turn_kind: "say",
-        items: [
-          term("泡打粉", "baking powder", {
-            example: { hanzi: `例句${n}放一勺泡打粉。`, english: null },
-          }),
-        ],
+        items: [term("泡打粉", "baking powder", { example: { hanzi: ex, english: null } })],
       });
     }
     const [p] = await db.select().from(phrase);
@@ -736,11 +767,7 @@ describe("extract results", () => {
     expect(p!.baseScore).toBeCloseTo(
       14 + frequencyPoints({ kind: "term", tags: [], hanziKey: "泡打粉" }),
     );
-    expect(p!.examples.map((e) => e.hanzi)).toEqual([
-      "例句1放一勺泡打粉。",
-      "例句2放一勺泡打粉。",
-      "例句3放一勺泡打粉。",
-    ]);
+    expect(p!.examples.map((e) => e.hanzi)).toEqual(sentences.slice(0, 3));
     expect(await db.select().from(card)).toHaveLength(1);
   });
 

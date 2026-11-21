@@ -97,7 +97,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `english` | text | meaning (term) or intent (frame/sentence) |
 | `addressee` | text null | **unused** since §10 #63: not written or shown; to be dropped in a later PR |
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
-| `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; hanzi verbatim from Gemini (§4.6); English from the reply or, since v6, translated (§10 #100) |
+| `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; no two that reword each other; hanzi verbatim from the turn up to v6, written by Gemini since v7 (§4.6, §10 #103); English from the reply or, since v6, translated (§10 #100) |
 | `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `breakdown` | json null | the card back's breakdown (§5.5.4, H3): terms `{parts: [{hanzi, gloss}] (per character), meaning}`, sentences `{parts: [{hanzi, gloss}] (per word), note}`; contract `PhraseBreakdown` (`shared/src/contracts/breakdown.ts`). No pinyin stored: each part's is sliced from the displayed pinyin. Null when there's none or it failed the checks |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
@@ -439,13 +439,26 @@ On `extract_turn` completion, for each raw item:
 2. Keep `heard_as` only if it occurs (case-insensitive, spaces ignored) in `user_text`;
    otherwise null it and flag `heard_as_dropped`.
 3. Keep each example (terms only; v4 sends up to 3 as `examples`, older prompts one `example`)
-   only if it occurs verbatim in the turn **and** contains the term's `hanzi_key` **and** spells
+   only if it is **sourced**, **and** contains the term's `hanzi_key` **and** spells
    no word in romanization (`isLearnableExample`: no run of `config.phrase.romanizedMinLetters`
    (2) Latin letters with a lowercase one, so a quoted mishearing like “qincai”, pinyin or an
    English gloss in brackets fails
    while A菜, B超 and KTV pass); otherwise drop it, flag `example_dropped` and count it. The
    review card applies the same romanization check to stored examples, so older phrases stop
    showing them without a data change (§10 #98).
+   - **Sourced** (§10 #103): it occurs verbatim in the turn, or the job ran on Gemini
+     (`writesExamples`: the model name starts with `config.phrase.writtenExamplesModelPrefix`)
+     and it has at most `config.phrase.writtenExampleMaxChars` (18) key characters. Since
+     `extract_turn.v7`, Gemini writes a term's examples; the Ollama fallback runs the same prompt,
+     but its examples must still be copied.
+   - **No rewordings** (`distinctExamples`, §10 #103): of two examples where one contains the
+     other, or, with the term itself left out, at least `config.phrase.exampleOverlapMax` (0.35)
+     of the shorter one's character pairs are in the longer one, only the shorter is kept, and the
+     other counts as dropped. Only sentences with `exampleOverlapMinPairs` (4) pairs besides the
+     term are compared by pairs, so short examples that share a 了吗 both stay. The same rule
+     applies when a merge adds examples (`mergeExamples`: a shorter rewording can replace a
+     stored one), and on the review card, so older phrases holding three rewordings of one
+     question show one without a data change.
    - **Caps per turn** (`config.extraction`, applied after the checks above, in the model's
      order): an `errand` turn keeps its first `errandMaxItems` (3; 1 before H4) items; a `say` turn
      keeps its first `sayMaxTerms` (5; 2 before H4) terms (its sentence is kept). Drops are counted as
@@ -1213,6 +1226,7 @@ There is **one extraction path**, whatever the turn's source. The worker sends e
 - **Kinds**: terms and sentences. **No frames** (§10 #77).
 - **Fields**: as v3 (§5.3), plus Gemini's pinyin for each item (§5.5.3) and the breakdown or
   gloss (§5.5.4). Examples are copied verbatim from the turn; more than one per term is allowed.
+  (Since v7, §10 #103: Gemini writes them.)
 - **Caps**: the per-turn caps of §4.6 (errand 1 item, say 2 terms) are loosened, with evidence: a
   comparison with decks Gemini made from the same conversations showed Bamboo missing real words.
   H4 records the new values.
@@ -1235,7 +1249,7 @@ summary}`, which the worker turns into `ExtractItem` (`summary` → a term's `me
 sentence's `note`; `example` = the first example). The engine drops frame items an older
 worker might still send (H2b, §4.6 step 1).
 
-Every engine check stays (§4.6): hanzi, examples included, must appear verbatim in the turn;
+Every engine check stays (§4.6): hanzi, examples included (until v7, §10 #103), must appear verbatim in the turn;
 pinyin is merged (§5.5.3); dedupe; and asking again counts as forgetting. Frame items, if a model
 returns one, are dropped and counted. Existing frame phrases are **retired**: set to `dropped`
 (rows, cards and `review_log` kept), with no frame ranking weight. The `kind` enum keeps `frame`
@@ -1318,6 +1332,22 @@ schema; a backfill re-run (`--all`, §5.5.6) refreshes older cards' breakdowns. 
 translation (never null). Only English is written; the example's hanzi is still verbatim. A
 merge or re-run fills a stored example's missing English from the same example
 (`mergeExamples`), never replacing English already there.
+
+**v7 (§10 #103):** Gemini **writes** a term's examples instead of copying them. The reply answers
+Will's question that day (what to buy, what the yuesao meant), so the sentences it holds are about
+that errand, and a term's copied examples were often rewordings of his own question. v7 asks for
+short (under 15 characters), everyday family sentences that contain the term exactly, each
+teaching something the others don't, and as many as the kind of word needs: **one** for a
+concrete noun (showing its verb, measure word or compound: 煮红豆, 一包尿布) or a set phrase,
+**up to three** for a verb, adverb or grammar word (a different object, done or not yet, split
+apart, a question). A sentence from the reply is fine when it already fits. Items (`hanzi`,
+`heard_as`, breakdown parts) are still copied exactly. The engine keeps a written example only
+from a Gemini job, short, containing the term, without romanization and not rewording another
+(§4.6 step 3); a written example is never promoted to a say turn's sentence (§10 #67 uses only
+examples found in the turn). Pinyin for examples is computed as before (§5.5.3). A re-run
+**replaces** a term's examples with the new ones (keeping stored English for the same sentence;
+none keeps the old), so `backfill --all` (§5.5.6) gives older cards written examples. Same
+schema; the Gemini probe checks it after deploy.
 
 #### 5.5.5 New cards: learned while fresh (H2; §10 #79)
 
@@ -1514,7 +1544,8 @@ full-screen.
   - **Breakdown** (§5.5.4, both card types): when the phrase has one, the back shows it under the
     hanzi in a card: each character (terms) or word (sentences) with its pinyin, sliced from the
     card's own displayed pinyin (`breakdownView`), and its gloss below; then the term's meaning or
-    the sentence's note. A term with a breakdown shows all its examples (up to 3), each with pinyin
+    the sentence's note. A term with a breakdown shows all its examples (up to 3, rewordings of one
+    another collapsed to the shortest, §10 #103), each with pinyin
     and English; without a breakdown the back is as before (the first example only). If the
     pinyin no longer lines up with the parts, no breakdown is shown.
   - The back has 4 grade buttons (with their next interval shown) and slow-replay. A new card's
@@ -1920,7 +1951,7 @@ bamboo/
 | 4 | Read pages and PDFs on the Mac; upload only new turns as text | The Mac can reach Gemini and has `pdftotext`; no file storage or presigned uploads; small payloads |
 | 5 | Turn identity = hash of Will's prompt text | Stable across re-shares, formats and multiple conversations |
 | 6 | **Superseded by #74, #76** (Gemini extracts; the verbatim rule stays). Local LLM extracts and rates; it never writes Chinese for study | 9B models copy and classify Chinese well; the verbatim check enforces it, examples included |
-| 7 | Terms carry example sentences copied from Gemini | Will needs usage, not just the word; copying keeps Chinese generation out of the local model |
+| 7 | **Superseded by #103** (Gemini writes them since v7). Terms carry example sentences copied from Gemini | Will needs usage, not just the word; copying keeps Chinese generation out of the local model |
 | 8 | **Daily cap superseded by #79.** Automatic selection: ranked queue → ≤ 3 new/day (5 since #64); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
 | 9 | **Refined by #80** (computed, then merged with Gemini's among valid readings). Pinyin computed (pinyin-pro) with overrides | Gemini's pinyin is inconsistent even within a single reply |
 | 10 | "Asked again" = Again on active phrases, revives dropped/expired ones | Re-asking is the clearest forgetting (and usefulness) signal available |
@@ -2012,10 +2043,11 @@ bamboo/
 | 96 | `#bamboo` is a Discord forum, not a text channel: one post per question or conversation, so each gets its own OpenClaw session; follow-ups are replies in the post. `bamboo-tools` checks a post's forum through `openclaw message channel info` (cached in `posts.json`), and `replies` posts each summary inside its post with `openclaw message send`; the automations still announce to the forum, which opens a new post (the nudge, alerts) (§5.1) | In a text channel every message joined one session that never reset, so each question carried all the earlier ones. A forum post is a session of its own (OpenClaw routes posts through their parent, so the binding and channel pin carry over). The agent sees only a post's id, and an announce can't target a post chosen at run time, so both lookups go through OpenClaw's CLI, which uses the gateway's Discord connection: Bamboo still holds no Discord token |
 | 97 | extract_turn.v5: the breakdown `summary` must tell Will something the parts don't (figurative sense, nuance, register, when it's said, the reusable pattern); never grammar labels like "verb + object" or a restatement of the glosses. Schema unchanged (§5.5.4) | v4's summaries often described the parts in grammar labels (terms: "verb combined with its object"; sentences: "subject, then the verb phrase and a completion particle"), which a heritage speaker doesn't need and the glosses already show. Keeping the field required (rather than nullable) avoids a contract change across worker, engine and stored JSON; for a transparent word the prompt asks for when it's used instead |
 | 98 | A term's example that spells a word in romanization is dropped at extraction and hidden on the review card (§4.6 step 3) | The tutor often answers a "what did she mean by qinxiangcai?" question with a clarifying question that quotes the romanization, or glosses the word in English in brackets, and names candidate words. It is verbatim and contains the term, so it passed, but it's a question *about* the word, not a use of it, and its ruby pinyin breaks around the Latin. Requiring a lowercase letter keeps real letter words (A菜, B超, AA制, KTV). Filtering at read time too fixes stored phrases without a migration; the stored example stays visible on the phrase's edit page |
-| 99 | `tutor.v2`: each example sentence is everyday Chinese only, using the word, with pinyin and English after it; a clarifying question for 阿姨 or 月嫂 is extra, never the example (§5.5.1) | Cards kept getting the tutor's clarifying questions, bracketed English glosses or English lines as examples, which #98 now drops, often leaving a card with none. Asking the tutor for a clean sentence keeps every example verbatim from an answer Will has read (no generated Chinese goes on a card unseen), rather than adding a step that writes examples. Shared Gemini-app conversations can't be steered this way; generating examples for those stays a later, separate decision |
+| 99 | **Its "keep examples copied" reasoning is superseded by #103; tutor.v2 itself stays.** `tutor.v2`: each example sentence is everyday Chinese only, using the word, with pinyin and English after it; a clarifying question for 阿姨 or 月嫂 is extra, never the example (§5.5.1) | Cards kept getting the tutor's clarifying questions, bracketed English glosses or English lines as examples, which #98 now drops, often leaving a card with none. Asking the tutor for a clean sentence keeps every example verbatim from an answer Will has read (no generated Chinese goes on a card unseen), rather than adding a step that writes examples. Shared Gemini-app conversations can't be steered this way; generating examples for those stays a later, separate decision |
 | 100 | extract_turn.v6: an example's `english` is the reply's, or else Gemini's short translation, never null; a merge or re-run fills a stored example's missing English, never replacing English (§5.5.4) | Shared Gemini-app answers often use a word in a sentence of the explanation with no English after it, so the card showed a Chinese sentence Will had to decode himself. The no-generated-Chinese rule is about Chinese; the reply's English is Gemini's too, so a translation by the extraction call is no less trusted and isn't marked. Same schema, so no new Gemini serving risk. Older cards get English through a backfill re-run |
 | 101 | A page from an older deploy reloads into the new one: the app compares its build with `GET /api/version` on load and on returning to the foreground, and a save that fails as stale reloads too. Unconfirmed saves wait in localStorage and are resent after the reload (idempotent by `reviewId`). Failures on the phone are reported to `POST /api/client-log` as fixed-field log lines (§6 *Saving*, §8.5) | A round froze on "Couldn't save 3 answers" after a deploy: the page's server actions no longer existed, every retry failed the same way, reloading would have lost the grades, and nothing logged why. Vercel's Skew Protection fixes the first part but isn't on the free plan. localStorage, not IndexedDB: a handful of small records written once per grade and read only by the page; iOS keeps both while the app is on the home screen, and IndexedDB would add a wrapper for nothing at this size |
 | 102 | Good on a new card graduates it (`learningSteps: ['1m']`), and during a backlog the round's end goes straight on with new cards first (**Keep going**, `keepGoingMinQueue` 30) until today's `newPerDay` is reached; "N of 30 new today" on Today and the round's end | Measured on a read-only prod copy (counts only) on an evening of five rounds: 19 new cards took 43 showings, and 2–6 of each round's 10 cards were the previous round's, because the 10-minute step sat inside the 20-minute learn-ahead and due cards fill a round before new ones; 30 a day needed about 12 rounds behind a "Done for today" that said one was enough. A synthetic FSRS run (343 queued, 11 new a day, 0.85 recall) at 30 a day: two steps ~101 cards (~25 min) a day in the burst, ~80 after; one step ~52 (~13 min) and ~51, the burst ~18 days either way. Will chose one step. Keep going only during a backlog: in steady state "Another round" (one more short round) suits an evening better, and a threshold in config switches by itself. Rounds stay 10 cards so the daily minimum stays small; Keep going removes the end screens instead |
+| 103 | extract_turn.v7: Gemini writes a term's examples (short, everyday, containing the term; one for a concrete noun or set phrase, up to three for a verb or grammar word, each teaching something new); the engine keeps them only from a Gemini job, at most 18 key characters, never promoted to a sentence; examples that reword one another collapse to the shortest at extraction, merge and on the card; a re-run replaces examples (§4.6 step 3, §5.5.4). Supersedes #99's choice to keep examples copied | Will's call (2026-11), after a card showed three rewordings of his own errand question as its examples, which taught nothing and made him scroll. Copying was a guard against the local 9B model writing Chinese (#6, #7); since #74 extraction runs on Gemini, the same model family that wrote the reply, so a sentence it writes is no less trustworthy than one it wrote in the answer, and the reply is written for that day's question, not for a flashcard. The verbatim rule stays for items: it keeps cards to what Will actually looked up. The Ollama fallback runs the same prompt, so its examples must still be copied. A promoted sentence must be one the reply offered. Rewordings share about 40% of their character pairs once the term is left out; short examples aren't compared by pairs, so different uses that share a 了吗 stay |
 
 ## Appendix A — Synthetic fixtures
 

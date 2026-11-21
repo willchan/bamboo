@@ -139,6 +139,74 @@ export function isLearnableExample(
   return true;
 }
 
+/**
+ * True when one example rewords the other: one key contains the other, or, leaving out the term
+ * itself, at least `exampleOverlapMax` of the shorter one's character pairs are also in the
+ * longer one. Only sentences with `exampleOverlapMinPairs` pairs besides the term are compared
+ * that way: short examples that share a 了吗 use the word differently. Several ways of asking the
+ * same question make one example, not three (§4.6 step 3, §10 #103).
+ */
+export function isNearDuplicate(
+  a: string,
+  b: string,
+  term = "",
+  cfg: { exampleOverlapMax: number; exampleOverlapMinPairs: number } = config.phrase,
+): boolean {
+  const [ka, kb] = [hanziKey(a), hanziKey(b)];
+  const [short, long] = Array.from(ka).length <= Array.from(kb).length ? [ka, kb] : [kb, ka];
+  if (long.includes(short)) return true;
+  const t = hanziKey(term);
+  const pairs = (k: string) => {
+    const set = new Set<string>();
+    for (const part of t ? k.split(t) : [k]) {
+      const c = Array.from(part);
+      for (let i = 1; i < c.length; i++) set.add(c[i - 1]! + c[i]!);
+    }
+    return set;
+  };
+  const s = pairs(short);
+  if (s.size < cfg.exampleOverlapMinPairs) return false;
+  const l = pairs(long);
+  let shared = 0;
+  for (const x of s) if (l.has(x)) shared += 1;
+  return shared / s.size >= cfg.exampleOverlapMax;
+}
+
+/**
+ * Examples in order without near-duplicates (`isNearDuplicate` for the phrase `term`), at most
+ * `max`. Of two that reword each other the shorter keeps the earlier one's place; the same
+ * sentence twice keeps the first, taking the other's English if it has none (English already
+ * there, Will's edits included, is never replaced).
+ */
+export function distinctExamples<T extends { hanzi: string; english: string | null }>(
+  list: readonly T[],
+  term = "",
+  max: number = config.phrase.maxExamples,
+): T[] {
+  const out: T[] = [];
+  const len = (e: T) => Array.from(hanziKey(e.hanzi)).length;
+  for (const ex of list) {
+    const i = out.findIndex((e) => isNearDuplicate(e.hanzi, ex.hanzi, term));
+    if (i < 0) {
+      out.push(ex);
+      continue;
+    }
+    const kept = out[i]!;
+    if (hanziKey(kept.hanzi) === hanziKey(ex.hanzi)) {
+      if (!kept.english && ex.english) out[i] = { ...kept, english: ex.english };
+    } else if (len(ex) < len(kept)) out[i] = ex;
+  }
+  return out.slice(0, max);
+}
+
+/** Whether this model's examples may be written rather than copied (extract_turn.v7, §10 #103). */
+export function writesExamples(
+  model: string | null | undefined,
+  prefix: string = config.phrase.writtenExamplesModelPrefix,
+): boolean {
+  return !!model && model.toLowerCase().startsWith(prefix);
+}
+
 /** A validated item, ready to become (or merge into) a phrase. */
 export interface ValidItem {
   kind: PhraseKind;
@@ -148,7 +216,10 @@ export interface ValidItem {
   /** Who the wording is for, only when that changes it (extract_turn.v2). English only. */
   note: string | null;
   heardAs: string | null;
-  /** Terms only: verbatim examples that contain the term (v4 may send several). */
+  /**
+   * Terms only: examples that contain the term, without near-duplicates. Copied from the turn, or
+   * since extract_turn.v7 written by Gemini (`writtenExamples`, §10 #103).
+   */
   examples: { hanzi: string; english: string | null }[];
   usefulness: number;
   /** Gemini's reading, one syllable per hanzi (v4 on Gemini); null for Ollama and older prompts. */
@@ -206,8 +277,9 @@ export function englishNote(note: string | null | undefined): string | null {
 
 /**
  * §4.6 steps 1–3 on one `extract_turn` result: drop frame items (retired, §10 #77) and items not
- * copied from the turn, keep `heard_as` only if Will typed it, keep a term's example only if it is
- * verbatim, contains the term and spells no word in romanization. Items for the same key collapse
+ * copied from the turn, keep `heard_as` only if Will typed it, keep a term's example only if it
+ * contains the term, spells no word in romanization and isn't a near-duplicate of a kept one, and
+ * is verbatim, or (with `opts.writtenExamples`, Gemini's v7) short. Items for the same key collapse
  * to the first. Then the per-turn caps: an errand turn keeps
  * its first `errandMaxItems` items, a say turn its first `sayMaxTerms` terms. Tags are limited to
  * the fixed list.
@@ -216,6 +288,7 @@ export function validateExtraction(
   t: { userText: string; replyText: string },
   result: ExtractTurnResult,
   caps: ExtractionConfig = config.extraction,
+  opts: { writtenExamples?: boolean } = {},
 ): Validation {
   const key = turnTextKey(t);
   const user = squash(t.userText);
@@ -267,24 +340,27 @@ export function validateExtraction(
       out.heardAsDropped += 1;
     }
 
-    const examples: ValidItem["examples"] = [];
+    let examples: ValidItem["examples"] = [];
     const rawExamples = raw.examples?.length ? raw.examples : raw.example ? [raw.example] : [];
     if (raw.kind === "term") {
       for (const ex of rawExamples) {
         const exHanzi = cleanHanzi(ex.hanzi);
         const exKey = hanziKey(exHanzi);
         if (examples.some((e) => hanziKey(e.hanzi) === exKey)) continue;
-        if (
-          occursVerbatim(exHanzi, "sentence", key) &&
-          exKey.includes(k) &&
-          isLearnableExample(exHanzi)
-        ) {
+        const sourced =
+          occursVerbatim(exHanzi, "sentence", key) ||
+          (opts.writtenExamples === true &&
+            Array.from(exKey).length <= config.phrase.writtenExampleMaxChars);
+        if (sourced && exKey.includes(k) && isLearnableExample(exHanzi)) {
           examples.push({ hanzi: exHanzi, english: ex.english?.trim() || null });
         } else {
           if (!flags.includes("example_dropped")) flags.push("example_dropped");
           out.examplesDropped += 1;
         }
       }
+      const distinct = distinctExamples(examples, k, Infinity);
+      out.examplesDropped += examples.length - distinct.length;
+      examples = distinct;
     }
 
     const bd = checkBreakdown(raw.kind, hanzi, raw.breakdown);
@@ -311,7 +387,7 @@ export function validateExtraction(
     });
   }
   const promoted = caps.promoteExampleSentence
-    ? promotedSentence(result.turn_kind, out.items)
+    ? promotedSentence(result.turn_kind, out.items, key)
     : null;
   if (promoted && !seen.has(promoted.hanziKey)) {
     out.items.push(promoted);
@@ -324,9 +400,14 @@ export function validateExtraction(
  * A say turn is a question about what to say, so its sentence is the thing to learn; the local
  * model often leaves it out and returns only terms. Then the shortest example of a kept term
  * becomes the sentence: it is already copied from the turn and contains the term (step 3), and
- * its English came with it. An example that is just the term, or has no English, doesn't count.
+ * its English came with it. An example that is just the term, has no English, or isn't in the turn
+ * (written by v7, §10 #103: a card's sentence is always one the reply offered) doesn't count.
  */
-function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): ValidItem | null {
+function promotedSentence(
+  turnKind: TurnKind,
+  items: readonly ValidItem[],
+  turnKey: string,
+): ValidItem | null {
   if (turnKind !== "say" || items.some((i) => i.kind === "sentence")) return null;
   const candidates = items
     .flatMap((i) =>
@@ -336,7 +417,7 @@ function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): Vali
             .map((e) => ({ term: i, ex: e, hanzi: e.hanzi, key: hanziKey(e.hanzi) }))
         : [],
     )
-    .filter((c) => c.key !== c.term.hanziKey)
+    .filter((c) => c.key !== c.term.hanziKey && occursVerbatim(c.hanzi, "sentence", turnKey))
     .sort((a, b) => Array.from(a.key).length - Array.from(b.key).length);
   const best = candidates[0];
   if (!best) return null;
@@ -360,23 +441,41 @@ function promotedSentence(turnKind: TurnKind, items: readonly ValidItem[]): Vali
 // --- Dedupe into an existing phrase (§4.6 step 4) -----------------------------------------------
 
 /**
- * Append examples unless one with the same key is there; keep at most `max` (oldest win). A kept
- * example without English takes a matching one's English (extract_turn.v6 translates examples the
- * reply left bare, §10 #100); English already there, Will's edits included, is never replaced.
+ * Append examples unless one rewords a kept one (`distinctExamples`: the shorter wins); keep at
+ * most `max` (oldest win). A kept example without English takes the same sentence's English
+ * (extract_turn.v6 translates examples the reply left bare, §10 #100); English already there,
+ * Will's edits included, is never replaced.
  */
 export function mergeExamples(
   existing: readonly PhraseExample[],
   incoming: PhraseExample | readonly PhraseExample[] | null,
+  term = "",
   max: number = config.phrase.maxExamples,
 ): PhraseExample[] {
-  const out = [...existing];
   const list = incoming === null ? [] : Array.isArray(incoming) ? incoming : [incoming];
-  for (const ex of list as readonly PhraseExample[]) {
-    const i = out.findIndex((e) => hanziKey(e.hanzi) === hanziKey(ex.hanzi));
-    if (i < 0) out.push(ex);
-    else if (!out[i]!.english && ex.english) out[i] = { ...out[i]!, english: ex.english };
-  }
-  return out.slice(0, max);
+  return distinctExamples([...existing, ...(list as readonly PhraseExample[])], term, max);
+}
+
+/**
+ * A re-run's examples (§4.6.1, §10 #103): the new ones replace the stored ones, which an older
+ * prompt copied from the turn, keeping a stored English for the same sentence. None keeps the
+ * stored ones.
+ */
+export function rerunExamples(
+  stored: readonly PhraseExample[],
+  incoming: readonly PhraseExample[],
+  term = "",
+  max: number = config.phrase.maxExamples,
+): PhraseExample[] {
+  if (incoming.length === 0) return [...stored];
+  const english = new Map(
+    stored.filter((e) => e.english).map((e) => [hanziKey(e.hanzi), e.english]),
+  );
+  return distinctExamples(
+    incoming.map((e) => ({ ...e, english: english.get(hanziKey(e.hanzi)) ?? e.english })),
+    term,
+    max,
+  );
 }
 
 export interface ExistingPhrase {
@@ -448,6 +547,7 @@ export function planMerge(
       ? mergeExamples(
           p.examples,
           item.examples.map((e) => ({ ...e, turn_id: ctx.turnId })),
+          p.hanziKey,
         )
       : p.examples;
   const flags = [...new Set([...p.flags, ...item.flags])].filter((f) => f !== "long");
@@ -544,8 +644,9 @@ export interface ReextractPlan {
  * turn, without counting as Will asking again: no `asked_count` bump, no *asked again*,
  * `last_asked_*` untouched.
  *
- * Every existing phrase it picks, **in any status**, takes the new English, note and breakdown
- * (a breakdown only if it matches the phrase's own hanzi; none keeps the old one) and Gemini's
+ * Every existing phrase it picks, **in any status**, takes the new English, note, examples (none
+ * keeps the old ones, §10 #103) and breakdown (a breakdown only if it matches the phrase's own
+ * hanzi; none keeps the old one) and Gemini's
  * reading for the pinyin merge; its hanzi, cards and FSRS state are never touched. An expired one
  * comes back (to `queued`, or `active` if it was introduced); a dropped one stays dropped (Will's
  * call). A queued phrase first made from this turn also takes the new usefulness, turn kind and
@@ -581,9 +682,10 @@ export function planReextract(
     const heardAs = p.heardAs ?? item.heardAs;
     const examples =
       p.kind === "term"
-        ? mergeExamples(
+        ? rerunExamples(
             p.examples,
             item.examples.map((e) => ({ ...e, turn_id: turnId })),
+            p.hanziKey,
           )
         : p.examples;
     // The phrase keeps its own hanzi and kind, so the new breakdown must fit those.

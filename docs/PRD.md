@@ -90,14 +90,19 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 
 - A **phrase** is one thing worth remembering:
   - a **term**: a word or short compound (泡打粉), possibly with what he *heard* ("podafen"),
-    with **1–3 example sentences** taken from Gemini's answers (not ones with a word spelled in
-    pinyin, romanization or English, like a question about what "podafen" meant), each with
-    its English: the answer's, or a short translation when the answer gives none;
+    with **1–3 example sentences** (not ones with a word spelled in pinyin, romanization or
+    English, like a question about what "podafen" meant), each with its English. Since 2026-11
+    Gemini writes them for the card: short, everyday sentences showing how the word is used, one
+    for a noun (what it goes with), up to three for a verb or grammar word (each a different
+    pattern), never several that reword the same sentence. Before that they were copied from
+    the answer, which is about that day's question, so a word's examples were often rewordings
+    of Will's own question;
   - ~~a **frame**: a reusable pattern with a slot (阿姨，您是说…吗？)~~ **removed** (2026-11):
     frames are no longer extracted, and existing ones are retired (H2: dropped, their history
     kept);
   - a **sentence**: a full thing to say, kept short. Every "how do I say" question yields one:
-    if the model leaves it out, the shortest of Gemini's example sentences for its words is used.
+    if the model leaves it out, the shortest example sentence for its words that the answer
+    itself offered is used.
 - Each phrase carries: hanzi, English meaning or intent, computed pinyin (tone marks), examples,
   an optional note, and tags (domain: feeding, baby care, food, groceries, household,
   toddler, units, …). There's no fixed "who it's for" field: who Will is talking to rarely changes
@@ -200,7 +205,7 @@ The behavior:
 - Each new question is classified (**decode / say / errand / other**) and mined for terms (with
   examples) and short sentences (no frames since 2026-11). Since H4 Gemini does this, with
   Bamboo's checks on everything it returns: a "how do I say" question gives its sentence and up to
-  5 key words (each with up to 3 example sentences from the answer); an errand question up to 3
+  5 key words (each with up to 3 example sentences); an errand question up to 3
   nouns, often none. The earlier caps (2 words, 1 noun) were set for the local model; a comparison
   with decks Gemini made showed Bamboo missing real words. Nothing that names a person reaches a
   card.
