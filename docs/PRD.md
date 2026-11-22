@@ -103,8 +103,9 @@ words; characters still help. He already talks to his household's **OpenClaw** a
   - a **sentence**: a full thing to say, kept short. Every "how do I say" question yields one:
     if the model leaves it out, the shortest example sentence for its words that the answer
     itself offered is used.
-- Each phrase carries: hanzi, English meaning or intent, computed pinyin (tone marks), examples,
-  an optional note, and tags (domain: feeding, baby care, food, groceries, household,
+- Each phrase carries: hanzi, English meaning or intent, pinyin (tone marks; computed, with
+  Gemini choosing among the dictionary's readings and his corrections on top, principle 6),
+  examples, an optional note, and tags (domain: feeding, baby care, food, groceries, household,
   toddler, units, …). There's no fixed "who it's for" field: who Will is talking to rarely changes
   the Chinese. When it does (baby talk to the toddler, 您 to an adult), the extractor says so in
   the note ("polite, to an adult"), shown on the back of the card.
