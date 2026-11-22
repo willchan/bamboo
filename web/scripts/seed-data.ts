@@ -25,6 +25,7 @@ import { count, eq } from "drizzle-orm";
 import { checkBreakdown } from "../lib/domain/breakdown";
 import { reviewCard, type FsrsColumns, type Grade } from "../lib/domain/fsrs";
 import { initialCardTypes } from "../lib/domain/phrase";
+import { mergedPinyin } from "../lib/domain/pinyin";
 import { eventRow, newId } from "../lib/repo/db";
 import { findByKey, phraseRows } from "../lib/repo/phrases";
 
@@ -49,6 +50,8 @@ export interface Seed {
   retired?: boolean;
   /** H6: a re-run no longer picks it (`unpicked_at`), for Phrases › No longer picked. */
   unpicked?: boolean;
+  /** Gemini's reading and the referee's answers (§5.5.3b), merged into the stored pinyin. */
+  merge?: { gemini: string[]; referee: Record<number, string> };
 }
 
 export const SEEDS: Seed[] = [
@@ -103,6 +106,18 @@ export const SEEDS: Seed[] = [
     turnKind: "say",
     usefulness: 5,
     activeDaysAgo: 12,
+  },
+  {
+    kind: "term",
+    hanzi: "倒过来",
+    english: "turn upside down",
+    // The dictionary reads 倒 dǎo; the referee settles on dào, and the example follows (§10 #106).
+    merge: { gemini: ["dào", "guò", "lái"], referee: { 0: "dào" } },
+    examples: [{ hanzi: "别把杯子倒过来。", english: "Don't turn the cup upside down." }],
+    tags: ["household"],
+    turnKind: "say",
+    usefulness: 4,
+    activeDaysAgo: 9,
   },
   {
     kind: "term",
@@ -306,6 +321,12 @@ const IMPORTS = [
   },
 ];
 
+function mergedFields(hanzi: string, m: NonNullable<Seed["merge"]>) {
+  const referee = new Map(Object.entries(m.referee).map(([i, r]) => [Number(i), r]));
+  const { pinyin, pinyinSources } = mergedPinyin(hanzi, m.gemini, referee, { final: true });
+  return { pinyin, pinyinSources };
+}
+
 async function seedPhrases(db: Db, now: number): Promise<number> {
   let added = 0;
   const roundDays = new Map<number, string>();
@@ -326,6 +347,7 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
         heardAs: s.heardAs,
         examples: (s.examples ?? []).map((e) => ({ ...e, turn_id: null })),
         breakdown: s.breakdown ? checkBreakdown(s.kind, s.hanzi, s.breakdown).breakdown : null,
+        ...(s.merge ? mergedFields(s.hanzi, s.merge) : {}),
         tags: s.tags,
         usefulness: s.usefulness,
         turnKind: s.turnKind,

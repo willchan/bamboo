@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   computePinyin,
   displayPinyin,
+  examplePinyin,
   normalizeSyllable,
   overrideFromEdits,
   pinyinText,
   replyPinyin,
   repinyin,
 } from "./pinyin";
+import type { PinyinPairs } from "./pinyin";
 
 const py = (s: string) => pinyinText(computePinyin(s));
 const at = (s: string, char: string, nth = 0) =>
@@ -128,5 +130,44 @@ describe("replyPinyin", () => {
     expect(replyPinyin(computePinyin("您是说...吗"))).toBe("nín shì shuō … ma");
     expect(replyPinyin(computePinyin("…⋯是什么"))).toBe("… shì shén me");
     expect(replyPinyin([])).toBe("");
+  });
+});
+
+describe("examplePinyin", () => {
+  // Synthetic: the dictionary reads 倒 dǎo; the merge settled the phrase 倒过来 on dào.
+  const phrase = "倒过来";
+  const merged: PinyinPairs = [
+    ["倒", "dào"],
+    ["过", "guò"],
+    ["来", "lái"],
+  ];
+
+  it("gives the phrase's settled reading to every occurrence of its hanzi", () => {
+    expect(pinyinText(examplePinyin("别把杯子倒过来。", phrase, merged))).toBe(
+      "bié bǎ bēi zi dào guò lái",
+    );
+    expect(pinyinText(examplePinyin("倒过来再倒过来", phrase, merged))).toBe(
+      "dào guò lái zài dào guò lái",
+    );
+  });
+
+  it("carries Will's override through to the examples", () => {
+    const computed = computePinyin("我得走");
+    const shown = displayPinyin(computed, overrideFromEdits(computed, ["", "děi", ""]));
+    expect(pinyinText(examplePinyin("我得走了。", "我得走", shown))).toBe("wǒ děi zǒu le");
+  });
+
+  it("keeps the sentence's own reading where nothing settled the phrase's", () => {
+    // 不 alone is bù, but before a fourth tone the sentence reads bú: context wins there.
+    expect(pinyinText(examplePinyin("不对", "不", computePinyin("不")))).toBe("bú duì");
+  });
+
+  it("stays fully computed when the example doesn't contain the hanzi", () => {
+    expect(examplePinyin("别动", phrase, merged)).toEqual(computePinyin("别动"));
+    expect(examplePinyin("别动", "", [])).toEqual(computePinyin("别动"));
+  });
+
+  it("ignores a phrase reading that doesn't line up with its hanzi", () => {
+    expect(examplePinyin("倒过来", phrase, [["倒", "dào"]])).toEqual(computePinyin("倒过来"));
   });
 });

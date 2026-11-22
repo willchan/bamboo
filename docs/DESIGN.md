@@ -295,6 +295,7 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
   the library), the build's `repinyin` step (§8.2) rewrites stored phrase pinyin that now
   differs. Overrides are kept, since the hanzi didn't change.
 - Computed for the phrase (stored) **and** each example (computed at read time, not stored).
+  An example inherits its phrase's settled reading (`examplePinyin`, §5.5.3, §10 #106).
   Recomputed whenever hanzi changes. If an override exists and the new hanzi differs, the
   override is dropped and the UI says so. Overrides store only the changed syllables (`null`
   elsewhere); the editor accepts tone marks or numbers (`dei3` → `děi`, `de5` → `de`).
@@ -1306,6 +1307,15 @@ computed reading and valid readings (`pinyinSlots` in `web/lib/domain/pinyin.ts`
   referee runs), a new phrase with no usable reading (Ollama fallback, a promoted sentence, a
   misaligned reading), a hand-added phrase, and an edit that changes the hanzi. Existing phrases
   an extraction merges into keep their pinyin (H6's re-run refreshes it).
+- **Examples inherit the phrase's reading** (§10 #106). Examples store no pinyin; the card
+  computes it at read time (`examplePinyin`). Wherever the phrase's hanzi appears in an example
+  (every occurrence), each syllable the merge or Will's override settled for the phrase (its
+  displayed reading differs from its computed one) replaces the example's computed syllable, so
+  the card never shows 倒过来 as dào guò lái and its example as dǎo. Syllables nothing settled keep
+  the example's in-context reading (不 → bú in 不对), and the rest of the sentence, or an example
+  without the hanzi, stays computed. A follow-up (`extract_turn.v8`) will have Gemini return
+  example pinyin, in extraction and in the `pinyin` job, merged per syllable like the phrase's;
+  this inheritance stays on top.
 
 #### 5.5.4 Card back (H3, H4; §10 #78)
 
@@ -1344,7 +1354,7 @@ apart, a question). A sentence from the reply is fine when it already fits. Item
 `heard_as`, breakdown parts) are still copied exactly. The engine keeps a written example only
 from a Gemini job, short, containing the term, without romanization and not rewording another
 (§4.6 step 3); a written example is never promoted to a say turn's sentence (§10 #67 uses only
-examples found in the turn). Pinyin for examples is computed as before (§5.5.3). A re-run
+examples found in the turn). Pinyin for examples is computed, with the phrase's settled reading for its own characters (§5.5.3, §10 #106). A re-run
 **replaces** a term's examples with the new ones (keeping stored English for the same sentence;
 none keeps the old), so `backfill --all` (§5.5.6) gives older cards written examples. Same
 schema; the Gemini probe checks it after deploy.
@@ -2061,6 +2071,7 @@ bamboo/
 | 103 | extract_turn.v7: Gemini writes a term's examples (short, everyday, containing the term; one for a concrete noun or set phrase, up to three for a verb or grammar word, each teaching something new); the engine keeps them only from a Gemini job, at most 18 key characters, never promoted to a sentence; examples that reword one another collapse to the shortest at extraction, merge and on the card; a re-run replaces examples (§4.6 step 3, §5.5.4). Supersedes #99's choice to keep examples copied | Will's call (2026-11), after a card showed three rewordings of his own errand question as its examples, which taught nothing and made him scroll. Copying was a guard against the local 9B model writing Chinese (#6, #7); since #74 extraction runs on Gemini, the same model family that wrote the reply, so a sentence it writes is no less trustworthy than one it wrote in the answer, and the reply is written for that day's question, not for a flashcard. The verbatim rule stays for items: it keeps cards to what Will actually looked up. The Ollama fallback runs the same prompt, so its examples must still be copied. A promoted sentence must be one the reply offered. Rewordings share about 40% of their character pairs once the term is left out; short examples aren't compared by pairs, so different uses that share a 了吗 stay |
 | 104 | The name filter matches a listed Latin name only capitalized, as a name is written; `backfill --named` (`POST /api/agent/reextract {named: true}`) re-reads the turns whose latest extraction the filter acted on (§5.5.2, §5.5.6, §5.5.8) | Checking the v7 backfill (prod copy, counts only): about 10 card translations read "someone" where the English modal verb belonged ("I someone do it later", synthetic), on 11 turns the filter had acted on. A listed name that is also an English word matched case-insensitively and rewrote the word. Names in English are written capitalized; a sentence starting with that word is still rewritten, which fails safe. A re-run scope by the filter's own count fixes the stored cards without re-reading every turn, and keeps working for any later filter fix |
 | 105 | Vercel builds `main` only (`ignoreCommand` skips previews), and server functions leave out sharp (§8.2) | Function Storage on the free team reached 75% of its 10 GB (2026-11), bamboo 5.3 GB of it: every preview and production deploy is kept with its functions, about 38 MB each, half of it sharp, which nothing here uses. Nothing used bamboo's previews (CI runs on GitHub, verification runs locally; previews can't sign in, #19). The team's retention policy now deletes old deployments; these two changes slow the growth |
+| 106 | A term's example shows the phrase's settled reading for the phrase's own characters: every occurrence of the hanzi in the example takes each syllable the merge or Will's override settled (where it differs from the computed one); the rest stays computed in context (`examplePinyin`, §4.2, §5.5.3). Engine-only, no schema change. A follow-up, `extract_turn.v8`, will have Gemini return example pinyin (extraction and the `pinyin` job), merged per syllable, with this inheritance kept on top | A prod-copy check (counts only) found 8 of 517 examples, on 5 phrases, reading one of the phrase's characters differently from the phrase card, all where the merge had changed the phrase's reading: examples were computed from the dictionary alone, so the merge and overrides never reached them. Only settled syllables are inherited, since an unsettled one is just the dictionary's and the sentence's own context (一/不 sandhi, 不对 bú) reads it better |
 
 ## Appendix A — Synthetic fixtures
 

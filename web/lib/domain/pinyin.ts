@@ -44,6 +44,28 @@ export function displayPinyin(computed: PinyinPairs, override: PinyinPairs | nul
   return computed.map(([c, s], i) => [c, override[i]?.[1] ?? s]);
 }
 
+/**
+ * An example sentence's pinyin (DESIGN §5.5.3, §10 #106): computed, except that wherever the
+ * phrase's hanzi appears in it, the syllables the merge or Will's override settled for the phrase
+ * (`shown`, its displayed pinyin) replace the computed ones. A syllable nothing settled keeps the
+ * sentence's in-context reading (一/不 sandhi). Examples without the hanzi stay fully computed.
+ */
+export function examplePinyin(example: string, hanzi: string, shown: PinyinPairs): PinyinPairs {
+  const out = computePinyin(example);
+  const own = computePinyin(hanzi);
+  if (own.length === 0 || !sameChars(own, shown)) return out;
+  const settled = shown.map(([, s], i) => (s !== own[i]?.[1] ? s : undefined));
+  const chars = out.map(([c]) => c);
+  for (let i = 0; i + own.length <= chars.length; i++) {
+    if (!own.every(([c], j) => chars[i + j] === c)) continue;
+    settled.forEach((s, j) => {
+      if (s !== undefined) out[i + j] = [own[j]![0], s];
+    });
+    i += own.length - 1;
+  }
+  return out;
+}
+
 function sameChars(a: PinyinPairs, b: PinyinPairs): boolean {
   return a.length === b.length && a.every(([c], i) => b[i]?.[0] === c);
 }
