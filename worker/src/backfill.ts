@@ -5,12 +5,15 @@
 //   pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count      # counts, no writes, no Gemini
 //   pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --limit 10   # the dry run
 //   pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --all        # the full run
+//   pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --examples-pinyin[=N]  # §10 #107
 import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 import {
   BackfillReport,
+  ExamplePinyinResponse,
   ReextractResponse,
   sharedConfig,
+  type ExamplePinyinRequest,
   type ReextractRequest,
 } from "@bamboo/shared";
 import { agentEnvPath, ConfigError, geminiKeyChoice, type GeminiKeyChoice } from "./config";
@@ -21,7 +24,12 @@ export type BackfillMode =
   | { kind: "limit"; limit: number }
   | { kind: "all" }
   /** Only turns the name filter acted on, re-read after a name-filter fix (§10 #104). */
-  | { kind: "named" };
+  | { kind: "named" }
+  /**
+   * §10 #107: no re-runs; pinyin jobs for terms whose examples have no stored pinyin (at most
+   * `limit`), read under the paid key's rate limits.
+   */
+  | { kind: "examples_pinyin"; limit?: number };
 
 export interface BackfillArgs {
   mode: BackfillMode;
@@ -40,7 +48,15 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
     if (a === "--count") modes.push({ kind: "count" });
     else if (a === "--all") modes.push({ kind: "all" });
     else if (a === "--named") modes.push({ kind: "named" });
-    else if (a === "--limit" || a.startsWith("--limit=")) {
+    else if (a === "--examples-pinyin") modes.push({ kind: "examples_pinyin" });
+    else if (a.startsWith("--examples-pinyin=")) {
+      const limit = Number(a.slice("--examples-pinyin=".length));
+      if (!Number.isInteger(limit) || limit < 1 || limit > sharedConfig.reextract.maxLimit)
+        throw new ConfigError(
+          `--examples-pinyin=N must be a whole number from 1 to ${sharedConfig.reextract.maxLimit}`,
+        );
+      modes.push({ kind: "examples_pinyin", limit });
+    } else if (a === "--limit" || a.startsWith("--limit=")) {
       const raw = a === "--limit" ? argv[++i] : a.slice("--limit=".length);
       const limit = Number(raw);
       if (!Number.isInteger(limit) || limit < 1 || limit > sharedConfig.reextract.maxLimit)
@@ -51,20 +67,27 @@ export function parseBackfillArgs(argv: readonly string[]): BackfillArgs {
     } else rest.push(a);
   }
   if (modes.length !== 1)
-    throw new ConfigError("give exactly one of --count, --limit N, --all, --named");
+    throw new ConfigError(
+      "give exactly one of --count, --limit N, --all, --named, --examples-pinyin[=N]",
+    );
   const key = geminiKeyChoice(rest);
   if (key !== "paid") throw new ConfigError("the backfill runs on the paid key: --gemini-key=paid");
   return { mode: modes[0]!, key };
 }
 
+/** The re-runs to queue (`POST /api/agent/reextract`); null for no re-runs. */
 export const reextractBody = (mode: BackfillMode): ReextractRequest | null =>
-  mode.kind === "count"
+  mode.kind === "count" || mode.kind === "examples_pinyin"
     ? null
     : mode.kind === "all"
       ? { all: true, named: false }
       : mode.kind === "named"
         ? { all: false, named: true }
         : { all: true, named: false, limit: mode.limit };
+
+/** The example-pinyin jobs to queue (`POST /api/agent/example-pinyin`, §10 #107), or null. */
+export const examplePinyinBody = (mode: BackfillMode): ExamplePinyinRequest | null =>
+  mode.kind !== "examples_pinyin" ? null : mode.limit ? { limit: mode.limit } : {};
 
 /** `BAMBOO_AGENT_API_TOKEN` from the environment, else agent.env. Never logged. */
 export function readAgentToken(
@@ -113,6 +136,10 @@ export class AgentClient {
 
   async reextract(body: ReextractRequest): Promise<ReextractResponse> {
     return ReextractResponse.parse(await this.call("/api/agent/reextract", body));
+  }
+
+  async examplePinyin(body: ExamplePinyinRequest): Promise<ExamplePinyinResponse> {
+    return ExamplePinyinResponse.parse(await this.call("/api/agent/example-pinyin", body));
   }
 }
 

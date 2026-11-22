@@ -87,7 +87,7 @@ describe("OllamaClient", () => {
   });
 });
 
-describe("checkReply (v4 → the API's contract)", () => {
+describe("checkReply (v8 → the API's contract)", () => {
   it("maps examples, the breakdown's summary, and keeps or drops pinyin", () => {
     const r = checkReply(VALID);
     if (!r.ok) throw new Error(r.errors);
@@ -97,8 +97,11 @@ describe("checkReply (v4 → the API's contract)", () => {
       pinyin: ["gāo", "yā", "guō"],
       breakdown: { meaning: "A high-pressure pot." },
     });
+    // v8 (§10 #107): each example carries Gemini's reading.
+    expect(r.result.items[0]!.examples![0]!.pinyin).toHaveLength(13);
     const fallback = checkReply(VALID, { keepPinyin: false });
     expect(fallback.ok && fallback.result.items[0]!.pinyin).toBeNull();
+    expect(fallback.ok && fallback.result.items[0]!.examples![0]!.pinyin).toBeNull();
   });
 
   it("accepts a valid result and explains an invalid one by path", () => {

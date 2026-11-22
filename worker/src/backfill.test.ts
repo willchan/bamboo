@@ -9,6 +9,7 @@ import {
   parseBackfillArgs,
   readAgentToken,
   reextractBody,
+  examplePinyinBody,
   workerSums,
 } from "./backfill";
 import { ConfigError } from "./config";
@@ -26,6 +27,13 @@ describe("parseBackfillArgs", () => {
     });
     expect(parseBackfillArgs(["--all", "--gemini-key=paid"]).mode).toEqual({ kind: "all" });
     expect(parseBackfillArgs(["--count", "--gemini-key=paid"]).mode).toEqual({ kind: "count" });
+    expect(parseBackfillArgs(["--examples-pinyin", "--gemini-key=paid"]).mode).toEqual({
+      kind: "examples_pinyin",
+    });
+    expect(parseBackfillArgs(["--examples-pinyin=25", "--gemini-key=paid"]).mode).toEqual({
+      kind: "examples_pinyin",
+      limit: 25,
+    });
   });
 
   it.each([
@@ -37,12 +45,20 @@ describe("parseBackfillArgs", () => {
     [["--limit", "x", "--gemini-key=paid"]],
     [["--limit", "1001", "--gemini-key=paid"]],
     [["--all", "--nope", "--gemini-key=paid"]],
+    [["--examples-pinyin"]],
+    [["--examples-pinyin=0", "--gemini-key=paid"]],
+    [["--examples-pinyin", "--all", "--gemini-key=paid"]],
   ])("refuses %j", (argv) => {
     expect(() => parseBackfillArgs(argv)).toThrow(ConfigError);
   });
 
   it("maps modes to the re-run request", () => {
     expect(reextractBody({ kind: "count" })).toBeNull();
+    // §10 #107: the example-pinyin backfill queues no re-runs, only pinyin jobs.
+    expect(reextractBody({ kind: "examples_pinyin" })).toBeNull();
+    expect(examplePinyinBody({ kind: "examples_pinyin" })).toEqual({});
+    expect(examplePinyinBody({ kind: "examples_pinyin", limit: 5 })).toEqual({ limit: 5 });
+    expect(examplePinyinBody({ kind: "all" })).toBeNull();
     expect(reextractBody({ kind: "all" })).toEqual({ all: true, named: false });
     expect(reextractBody({ kind: "named" })).toEqual({ all: false, named: true });
     expect(reextractBody({ kind: "limit", limit: 10 })).toEqual({

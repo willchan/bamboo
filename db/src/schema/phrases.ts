@@ -23,6 +23,14 @@ export interface PhraseExample {
   hanzi: string;
   english: string | null;
   turn_id: string | null;
+  /**
+   * Since extract_turn.v8 (DESIGN §5.5.3b, §10 #107): the example's reading, computed and merged
+   * per syllable with Gemini's, like `phrase.pinyin`. Absent on older examples and before a
+   * Gemini reading has been merged: the card computes it then.
+   */
+  pinyin?: PinyinPairs | null;
+  /** Like `phrase.pinyin_sources`: the disputed syllables and who won (`[]`: none). */
+  pinyin_sources?: PinyinSourceJson[] | null;
 }
 
 /**

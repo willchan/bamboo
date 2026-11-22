@@ -5,12 +5,13 @@
 // (梯子, 肚子, 舒服, 里脊, 芝麻). No context rules: polyphones are settled by H4's per-syllable merge,
 // and Will's overrides win.
 import { addDict, convert, pinyin } from "pinyin-pro";
-import type { PinyinPairs } from "@bamboo/db";
+import type { PhraseExample, PinyinPairs } from "@bamboo/db";
 import {
   applySources,
   mergeReading,
   sharedConfig,
   type PinyinJobInput,
+  type PinyinJobResult,
   type PinyinSlot,
   type PinyinSource,
 } from "@bamboo/shared";
@@ -45,13 +46,24 @@ export function displayPinyin(computed: PinyinPairs, override: PinyinPairs | nul
 }
 
 /**
- * An example sentence's pinyin (DESIGN §5.5.3, §10 #106): computed, except that wherever the
+ * An example sentence's pinyin (DESIGN §5.5.3, §10 #106, #107): its stored, merged reading when it
+ * has one that lines up with its hanzi (since extract_turn.v8), else computed; then, wherever the
  * phrase's hanzi appears in it, the syllables the merge or Will's override settled for the phrase
- * (`shown`, its displayed pinyin) replace the computed ones. A syllable nothing settled keeps the
- * sentence's in-context reading (一/不 sandhi). Examples without the hanzi stay fully computed.
+ * (`shown`, its displayed pinyin) replace the example's. A syllable nothing settled for the phrase
+ * keeps the sentence's own reading (一/不 sandhi, or its own merge). Examples without the hanzi
+ * keep theirs.
  */
-export function examplePinyin(example: string, hanzi: string, shown: PinyinPairs): PinyinPairs {
-  const out = computePinyin(example);
+export function examplePinyin(
+  example: string | Pick<PhraseExample, "hanzi" | "pinyin">,
+  hanzi: string,
+  shown: PinyinPairs,
+): PinyinPairs {
+  const ex = typeof example === "string" ? { hanzi: example, pinyin: null } : example;
+  const computed = computePinyin(ex.hanzi);
+  const out: PinyinPairs =
+    ex.pinyin && sameChars(computed, ex.pinyin)
+      ? computed.map(([c, s], i) => [c, s === null ? null : (ex.pinyin![i]![1] ?? s)])
+      : computed;
   const own = computePinyin(hanzi);
   if (own.length === 0 || !sameChars(own, shown)) return out;
   const settled = shown.map(([, s], i) => (s !== own[i]?.[1] ? s : undefined));
@@ -204,22 +216,107 @@ export function storedPinyin(hanzi: string, sources: readonly PinyinSource[] | n
   return toPairs(slots, applySources(slots, sources));
 }
 
+// --- Examples (DESIGN §5.5.3b, §10 #107) -------------------------------------------------------
+
+/** An example whose pinyin isn't settled: none merged yet, or a dispute waiting for the referee. */
+export function exampleNeedsPinyin(e: Pick<PhraseExample, "pinyin" | "pinyin_sources">): boolean {
+  return !e.pinyin || !e.pinyin_sources || e.pinyin_sources.some((s) => s.rule === "pending");
+}
+
+/**
+ * An example with Gemini's reading merged in, like a phrase's (`mergedPinyin`): the stored
+ * reading and its disputes. Without a reading that lines up (none sent, the Ollama fallback, a
+ * misaligned one) nothing is stored, and the card computes it until a pinyin job has run.
+ */
+export function settleExample<E extends { hanzi: string }>(
+  e: E,
+  gemini: readonly string[] | null | undefined,
+  referee?: ReadonlyMap<number, string>,
+  opts: { final?: boolean } = {},
+): Omit<E, "pinyin" | "pinyin_sources"> & Pick<PhraseExample, "pinyin" | "pinyin_sources"> {
+  const rest = { ...e } as E & Partial<PhraseExample>;
+  delete rest.pinyin;
+  delete rest.pinyin_sources;
+  const m = mergedPinyin(e.hanzi, gemini, referee, opts);
+  if (!m.pinyinSources) return rest;
+  return { ...rest, pinyin: m.pinyin, pinyin_sources: m.pinyinSources };
+}
+
 /**
  * A `pinyin` job for the worker: Gemini's reading of the phrase (when `gemini` is null), then
- * the referee. Its context is the phrase's own examples.
+ * the referee. Its context is the phrase's own examples, and since §10 #107 it settles those whose
+ * pinyin isn't settled (`exampleNeedsPinyin`): `exampleGemini` holds the extraction's readings
+ * by example hanzi, for the ones with a pending dispute (only the referee runs for those). With
+ * `phraseSettled`, only the examples are merged.
  */
 export function pinyinJobInput(
-  p: { id: string; hanzi: string; examples: readonly { hanzi: string }[] },
+  p: {
+    id: string;
+    hanzi: string;
+    examples: readonly Pick<PhraseExample, "hanzi" | "pinyin" | "pinyin_sources">[];
+  },
   gemini: readonly string[] | null,
-  max: number = sharedConfig.pinyin.maxContextExamples,
+  opts: {
+    max?: number;
+    phraseSettled?: boolean;
+    backfill?: boolean;
+    exampleGemini?: ReadonlyMap<string, readonly string[] | null | undefined>;
+  } = {},
 ): PinyinJobInput {
+  const max = opts.max ?? sharedConfig.pinyin.maxContextExamples;
+  const context = p.examples.slice(0, max);
+  const examples = context.flatMap((e, index) => {
+    if (!exampleNeedsPinyin(e)) return [];
+    const g = e.pinyin_sources ? opts.exampleGemini?.get(e.hanzi) : null;
+    return [{ index, hanzi: e.hanzi, slots: pinyinSlots(e.hanzi), gemini: g ? [...g] : null }];
+  });
   return {
     phrase_id: p.id,
     hanzi: p.hanzi,
-    context: p.examples.map((e) => e.hanzi).slice(0, max),
+    context: context.map((e) => e.hanzi),
     slots: pinyinSlots(p.hanzi),
     gemini: gemini ? [...gemini] : null,
+    examples,
+    ...(opts.phraseSettled ? { phrase_settled: true } : {}),
+    ...(opts.backfill ? { backfill: true } : {}),
   };
+}
+
+/**
+ * A finished pinyin job's example readings applied to the phrase's current examples (§10 #107):
+ * each job example still there (same place, same hanzi) is merged with Gemini's reading (the
+ * worker's, else the extraction's) and the referee's answers, finally (an unanswered dispute is
+ * `rejected`). A reading that doesn't line up still counts as checked (`pinyin_sources: []`), so
+ * it isn't asked again. Returns the examples and, per settled example, its disputes.
+ */
+export function applyExampleResults(
+  current: readonly PhraseExample[],
+  input: Pick<PinyinJobInput, "examples">,
+  result: Pick<PinyinJobResult, "examples">,
+): {
+  examples: PhraseExample[];
+  changed: boolean;
+  settled: { index: number; sources: PinyinSource[] }[];
+} {
+  const examples = [...current];
+  const settled: { index: number; sources: PinyinSource[] }[] = [];
+  for (const je of input.examples ?? []) {
+    const e = examples[je.index];
+    if (!e || e.hanzi !== je.hanzi) continue;
+    const r = result.examples?.find((x) => x.index === je.index);
+    const referee = new Map((r?.referee ?? []).map((c) => [c.index, c.reading]));
+    const m = mergedPinyin(e.hanzi, r?.gemini ?? je.gemini, referee, { final: true });
+    const sources = m.pinyinSources ?? [];
+    examples[je.index] = { ...e, pinyin: m.pinyin, pinyin_sources: sources };
+    settled.push({ index: je.index, sources });
+  }
+  return { examples, changed: settled.length > 0, settled };
+}
+
+/** The stored example reading recomputed from its hanzi, keeping the referee's choices (§4.2). */
+export function storedExample(e: PhraseExample): PhraseExample {
+  if (!e.pinyin || !e.pinyin_sources) return e;
+  return { ...e, pinyin: storedPinyin(e.hanzi, e.pinyin_sources) };
 }
 
 /** Settled disputes (not pending) for the `pinyin_disagreement` event, or null if none. */

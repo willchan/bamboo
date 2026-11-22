@@ -10,7 +10,7 @@ import { z } from "zod";
 import { RESULT_SCHEMA } from "./extract";
 import type { ChatModel } from "./extract";
 import { GeminiError } from "./gemini";
-import { ReadingReply, RefereeReply } from "./pinyin-job";
+import { contextText, ReadingReply, RefereeReply } from "./pinyin-job";
 import { PROMPTS_DIR, fill, userMessage, type Prompt } from "./prompt";
 
 /** The first synthetic fixture turn. */
@@ -53,7 +53,7 @@ export async function runProbe(model: ChatModel, prompts: ProbePrompts): Promise
     { role: "system" as const, content: prompts.extract.system },
     { role: "user" as const, content: userMessage(prompts.extract, turn) },
   ];
-  const values = { hanzi: "我得走了。", context: "我得走了，明天见。" };
+  const values = { hanzi: "我得走了。", context: contextText({ context: ["我得走了，明天见。"] }) };
   const requests: { name: string; messages: typeof extractMessages; schema: unknown }[] = [
     {
       name: "minimal",
@@ -74,7 +74,10 @@ export async function runProbe(model: ChatModel, prompts: ProbePrompts): Promise
         { role: "system", content: prompts.referee.system },
         {
           role: "user",
-          content: fill(prompts.referee.user, { ...values, disputes: "1: 得 → dé | děi | de" }),
+          content: fill(prompts.referee.user, {
+            ...values,
+            disputes: "0, 1: 得 → dé | děi | de\n1, 1: 得 → dé | děi | de",
+          }),
         },
       ],
       schema: z.toJSONSchema(RefereeReply),

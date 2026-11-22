@@ -1,12 +1,13 @@
 // H7's backfill run (PLAN H7, DESIGN §5.5.6): `pnpm --filter @bamboo/worker backfill --
-// --gemini-key=paid --count | --limit N | --all`, as openclaw-agent, with the launchd worker
-// stopped. Prints counts only (CLAUDE.md › Privacy): never turn text, phrases or names.
+// --gemini-key=paid --count | --limit N | --all | --named | --examples-pinyin[=N]`, as
+// openclaw-agent, with the launchd worker stopped. Prints counts only (CLAUDE.md › Privacy): never turn text, phrases or names.
 // Exits 78 on a config error, 1 if the engine can't be reached, 2 if Gemini refused a request
 // (a 4xx other than 429: the run stops instead of falling back to Ollama).
 import { sharedConfig } from "@bamboo/shared";
 import {
   AgentClient,
   estimate,
+  examplePinyinBody,
   parseBackfillArgs,
   readAgentToken,
   reextractBody,
@@ -70,11 +71,13 @@ print("BEFORE", {
   newest_prompt: before.newest_prompt,
   turns: before.turns,
   phrases_reported_open: before.phrases_reported_open,
+  example_pinyin: before.example_pinyin ?? null,
   review: before.review,
 });
 
 const body = reextractBody(args.mode);
-if (!body) process.exit(0); // --count: no writes, no Gemini
+const pinyinBody = examplePinyinBody(args.mode);
+if (!body && !pinyinBody) process.exit(0); // --count: no writes, no Gemini
 
 for (const line of geminiKeyLog(keys, selection, keyPath)) log(line);
 const gemini = new GeminiClient(
@@ -86,8 +89,17 @@ const gemini = new GeminiClient(
 log(`gemini model: ${gemini.model}`);
 
 const started = Date.now();
-const queued = await agent.reextract(body);
-log(`re-runs queued: ${queued.queued} (open: ${queued.open})`);
+let queued: { queued: number };
+if (body) {
+  const r = await agent.reextract(body);
+  log(`re-runs queued: ${r.queued} (open: ${r.open})`);
+  queued = r;
+} else {
+  // §10 #107: pinyin jobs for examples without stored pinyin; this run reads them one at a time.
+  const r = await agent.examplePinyin(pinyinBody!);
+  log(`example-pinyin jobs queued: ${r.queued} (still to queue: ${r.remaining})`);
+  queued = r;
+}
 
 const worker = new Worker({
   engine: new EngineClient(config.apiUrl, config.token),
@@ -118,6 +130,7 @@ print("RESULT", {
   engine: after.run,
   turns: after.turns,
   phrases_reported_open: after.phrases_reported_open,
+  example_pinyin: after.example_pinyin ?? null,
   review_before: before.review,
   review_after: after.review,
   estimate_full_run: estimate(sums, after.turns.remaining, selection.limits),

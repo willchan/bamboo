@@ -97,7 +97,7 @@ candidate table. A phrase waits in the queue (`queued`) until it's introduced.
 | `english` | text | meaning (term) or intent (frame/sentence) |
 | `addressee` | text null | **unused** since §10 #63: not written or shown; to be dropped in a later PR |
 | `heard_as` | text null | what Will typed when decoding ("podafen") |
-| `examples` | json `{hanzi, english \| null, turn_id \| null}[]` | ≤ `config.phrase.maxExamples` (3); terms only; no two that reword each other; hanzi verbatim from the turn up to v6, written by Gemini since v7 (§4.6, §10 #103); English from the reply or, since v6, translated (§10 #100) |
+| `examples` | json `{hanzi, english \| null, turn_id \| null, pinyin?, pinyin_sources?}[]` | ≤ `config.phrase.maxExamples` (3); terms only; no two that reword each other; hanzi verbatim from the turn up to v6, written by Gemini since v7 (§4.6, §10 #103); English from the reply or, since v6, translated (§10 #100); since v8 (§10 #107) `pinyin` and `pinyin_sources` (shapes as the phrase's columns) hold the example's merged reading, absent on older examples and until a Gemini reading has been merged (then the card computes it) |
 | `note` | text null | short usage note; from extraction, who the wording is for when that changes it (§5.3) |
 | `breakdown` | json null | the card back's breakdown (§5.5.4, H3): terms `{parts: [{hanzi, gloss}] (per character), meaning}`, sentences `{parts: [{hanzi, gloss}] (per word), note}`; contract `PhraseBreakdown` (`shared/src/contracts/breakdown.ts`). No pinyin stored: each part's is sliced from the displayed pinyin. Null when there's none or it failed the checks |
 | `tags` | json `string[]` | domains: `feeding`, `baby`, `food`, `groceries`, `household`, `toddler`, `units`, … |
@@ -227,7 +227,8 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/imports/{id}/notified` | agent | sets `notified_at` → 204 (idempotent; 404 if unknown) |
 | `GET /api/agent/nudge` | agent | `NudgeResponse` `{text}` or `{text: null}` (§4.9); a non-null answer records that today's reminder was sent (a conditional upsert of `nudge_last_sent_day`, so of two overlapping polls only one gets the text) and logs `nudge_sent` |
 | `POST /api/agent/reextract` | agent | H6: `ReextractRequest` `{all?: boolean, limit?: 1–1000}` → `ReextractResponse` `{queued, open}`: queue re-runs (§4.6.1) of stale turns, or with `all` also turns on the newest prompt that no re-run has read with it, at most `limit`, oldest first; `open` counts all queued or leased re-runs. Running it again while they're open queues nothing more. Unknown keys → 400 `invalid_body`. For H7's backfill (§5.5.6) |
-| `GET /api/agent/backfill?since=<ms>` | agent | H7: `BackfillReport`, counts only (no text): every stored turn now (`stored`, `on_newest_prompt`, `reread_on_newest_prompt`, `remaining` for `{all: true}`, `no_finished_job`, `open_reextract`, `reply_at_cap` at `replyMaxChars`); the re-run `extraction` events since `since` summed (items per turn, kept, drops by reason, phrases created/refreshed/dropped/reported, pinyin jobs queued, misaligned), `pinyin_disagreement` events, finished `pinyin` jobs and referee calls; open reported phrases; `review_log` rows and reviewed cards. Bad `since` → 400 `invalid_query`. Read by `pnpm --filter @bamboo/worker backfill` (§5.5.6) |
+| `POST /api/agent/example-pinyin` | agent | §10 #107: `ExamplePinyinRequest` `{limit?: 1–1000}` → `ExamplePinyinResponse` `{queued, remaining}`: queue a `pinyin` job marked `backfill` for each current (queued or active) term with an example whose pinyin isn't settled and no open pinyin job, oldest first, at most `limit`. Only a `reextract_only` claim (the backfill run on the paid key) takes them. Unknown keys → 400 `invalid_body`. For `backfill --examples-pinyin` (§5.5.6) |
+| `GET /api/agent/backfill?since=<ms>` | agent | H7: `BackfillReport`, counts only (no text): every stored turn now (`stored`, `on_newest_prompt`, `reread_on_newest_prompt`, `remaining` for `{all: true}`, `no_finished_job`, `open_reextract`, `reply_at_cap` at `replyMaxChars`); the re-run `extraction` events since `since` summed (items per turn, kept, drops by reason, phrases created/refreshed/dropped/reported, pinyin jobs queued, misaligned), `pinyin_disagreement` events, finished `pinyin` jobs and referee calls; open reported phrases; since §10 #107 `example_pinyin {phrases_missing, queueable, open_backfill_jobs}`; `review_log` rows and reviewed cards. Bad `since` → 400 `invalid_query`. Read by `pnpm --filter @bamboo/worker backfill` (§5.5.6) |
 | `GET /api/agent/eval/turns?limit=&seed=` | agent | `EvalTurnsResponse` `{turns: [{turn_id, import_id, user_text, reply_text}], pool: {turns, imports}}`: a seeded sample of past questions with Gemini's answers for the tutor evaluation (§5.4). `limit` 1–50 (default 20), `seed` ≤ 100 chars (default `bamboo`); otherwise 400 `invalid_query`. Image-only turns (empty `user_text`) are skipped; imports are visited round-robin in a seeded order (`web/lib/domain/tutor-eval.ts`). Read-only |
 | `POST /api/jobs/claim` | worker | Optional body `{types: ('extract_turn' \| 'pinyin')[]}` (H4; none = extract_turn only, for an older worker) → `{job_id, type, attempt, lease_expires_at, input}` (`ExtractTurnInput`, or `PinyinJobInput` for `pinyin`) or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary extract jobs, then pinyin jobs, then re-runs (§4.6.1), each oldest first; a re-run looks the same to the worker. `reextract_only: true` (H7's backfill worker) skips ordinary extract jobs: only pinyin jobs and re-runs |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
@@ -294,8 +295,11 @@ digits removed, letters lowercased. `阿姨，您是说…吗？` → `阿姨您
 - **Stored pinyin follows the code.** Whenever `computePinyin` changes (a rule, a dictionary or
   the library), the build's `repinyin` step (§8.2) rewrites stored phrase pinyin that now
   differs. Overrides are kept, since the hanzi didn't change.
-- Computed for the phrase (stored) **and** each example (computed at read time, not stored).
-  An example inherits its phrase's settled reading (`examplePinyin`, §5.5.3, §10 #106).
+- Computed for the phrase (stored) **and** each example: since `extract_turn.v8` an example
+  stores its own merged reading (§5.5.3b, §10 #107); one without (older, hand-typed, not yet
+  read by Gemini) is computed at read time. Either way it inherits its phrase's settled reading
+  (`examplePinyin`, §5.5.3, §10 #106). `repinyin` refreshes stored example readings as it does
+  the phrase's, keeping the referee's still-valid choices (`storedExample`).
   Recomputed whenever hanzi changes. If an override exists and the new hanzi differs, the
   override is dropped and the UI says so. Overrides store only the changed syllables (`null`
   elsewhere); the editor accepts tone marks or numbers (`dei3` → `děi`, `de5` → `de`).
@@ -1227,7 +1231,9 @@ There is **one extraction path**, whatever the turn's source. The worker sends e
 - **Kinds**: terms and sentences. **No frames** (§10 #77).
 - **Fields**: as v3 (§5.3), plus Gemini's pinyin for each item (§5.5.3) and the breakdown or
   gloss (§5.5.4). Examples are copied verbatim from the turn; more than one per term is allowed.
-  (Since v7, §10 #103: Gemini writes them.)
+  (Since v7, §10 #103: Gemini writes them. Since v8, §10 #107: each with Gemini's `pinyin`,
+  merged like the item's; schema `ModelExtractTurnResultV8`, the Ollama fallback's readings
+  dropped.)
 - **Caps**: the per-turn caps of §4.6 (errand 1 item, say 2 terms) are loosened, with evidence: a
   comparison with decks Gemini made from the same conversations showed Bamboo missing real words.
   H4 records the new values.
@@ -1307,15 +1313,33 @@ computed reading and valid readings (`pinyinSlots` in `web/lib/domain/pinyin.ts`
   referee runs), a new phrase with no usable reading (Ollama fallback, a promoted sentence, a
   misaligned reading), a hand-added phrase, and an edit that changes the hanzi. Existing phrases
   an extraction merges into keep their pinyin (H6's re-run refreshes it).
-- **Examples inherit the phrase's reading** (§10 #106). Examples store no pinyin; the card
-  computes it at read time (`examplePinyin`). Wherever the phrase's hanzi appears in an example
-  (every occurrence), each syllable the merge or Will's override settled for the phrase (its
-  displayed reading differs from its computed one) replaces the example's computed syllable, so
-  the card never shows 倒过来 as dào guò lái and its example as dǎo. Syllables nothing settled keep
-  the example's in-context reading (不 → bú in 不对), and the rest of the sentence, or an example
-  without the hanzi, stays computed. A follow-up (`extract_turn.v8`) will have Gemini return
-  example pinyin, in extraction and in the `pinyin` job, merged per syllable like the phrase's;
-  this inheritance stays on top.
+- **Examples inherit the phrase's reading** (§10 #106). Wherever the phrase's hanzi appears in
+  an example (every occurrence), each syllable the merge or Will's override settled for the
+  phrase (its displayed reading differs from its computed one) replaces the example's syllable,
+  so the card never shows 倒过来 as dào guò lái and its example as dǎo. Syllables nothing settled
+  keep the example's own reading (不 → bú in 不对), and so does the rest of the sentence.
+- **Examples are merged too** (`extract_turn.v8`, §10 #107). Gemini returns each example's
+  reading with its hanzi, and the engine merges it per syllable exactly like the phrase's
+  (`settleExample`, the same shared rules): agree → accept; not a valid reading → computed;
+  both valid → the referee. The example stores the result (`pinyin`, `pinyin_sources`, §2.1);
+  without a reading that lines up nothing is stored and the card computes it. The card uses
+  the stored reading when it lines up with the example's hanzi, else the computed one, then the
+  inheritance above on top (`examplePinyin`). Example disputes are logged as
+  `example_pinyin_disagreement` (the phrase event's fields plus `example`), not counted in Stats.
+- **Example pinyin jobs.** A phrase's `pinyin` job now also carries its examples whose pinyin
+  isn't settled (`PinyinJobInput.examples`: index into `context`, slots, and Gemini's reading
+  when the extraction left a dispute), and `phrase_settled` when only the examples need it (the
+  phrase's reading is then left alone). The worker reads the phrase and its numbered examples
+  in one call (`pinyin_reading.v2`, only when something has no reading) and referees every
+  dispute, phrase (sentence 0) and examples, in one call (`pinyin_referee.v2`): still at most two
+  requests per job, and only the prompt, the phrase and its own examples go to Gemini. The
+  result's `examples` carry the readings and choices; the engine merges each example still in
+  its place with the same hanzi (`applyExampleResults`, final: an unanswered dispute is
+  `rejected`; a misaligned reading counts as checked). Jobs are queued for: a new phrase whose
+  example has a dispute or no reading; a merge that adds such an example to an existing phrase;
+  a re-run's examples; Will's edit adding or changing an example (an unchanged one keeps its
+  reading). Jobs queued before this have no `examples` and run as before. Older examples are
+  filled by the paced backfill (§5.5.6, `--examples-pinyin`).
 
 #### 5.5.4 Card back (H3, H4; §10 #78)
 
@@ -1354,7 +1378,7 @@ apart, a question). A sentence from the reply is fine when it already fits. Item
 `heard_as`, breakdown parts) are still copied exactly. The engine keeps a written example only
 from a Gemini job, short, containing the term, without romanization and not rewording another
 (§4.6 step 3); a written example is never promoted to a say turn's sentence (§10 #67 uses only
-examples found in the turn). Pinyin for examples is computed, with the phrase's settled reading for its own characters (§5.5.3, §10 #106). A re-run
+examples found in the turn). Pinyin for examples is computed, with the phrase's settled reading for its own characters (§5.5.3, §10 #106); since v8 merged with Gemini's (§10 #107). A re-run
 **replaces** a term's examples with the new ones (keeping stored English for the same sentence;
 none keeps the old), so `backfill --all` (§5.5.6) gives older cards written examples. Same
 schema; the Gemini probe checks it after deploy.
@@ -1390,9 +1414,11 @@ extended first (H6):
 
 H7 runs 10 turns as a dry run (counts only), then, after Will approves, the rest. Both go through
 one command on the Mac, as `openclaw-agent` with the launchd worker stopped (§10 #93):
-`pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count | --limit N | --all | --named`
+`pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count | --limit N | --all | --named | --examples-pinyin[=N]`
 (`--named`, §10 #104: only turns whose latest extraction had the name filter drop or rewrite
-something, on any prompt, to re-read them after a name-filter fix). It
+something, on any prompt, to re-read them after a name-filter fix; `--examples-pinyin`, §10
+#107: no re-runs, only `pinyin` jobs for current terms whose examples have no stored pinyin,
+at most N, queued with `POST /api/agent/example-pinyin`). It
 prints `GET /api/agent/backfill`'s counts (`--count` stops there: no writes, no Gemini), queues
 the re-runs with `POST /api/agent/reextract`, runs an in-process worker on the paid key that
 claims with `reextract_only` (re-runs and pinyin jobs, never a new import's job) and stops when
@@ -1419,6 +1445,19 @@ found the cause of the dry run's 400: the referee and extraction schemas produce
 states for serving" (§10 #95). CI checks that no sent schema carries an unservable keyword. But
 Google's limit can only be seen on a real request, so run the probe on the Mac after every
 `make mac-update` that changes a schema or a prompt.
+
+**Example-pinyin backfill pacing (§10 #107).** Nothing is queued on deploy: the engine calls no
+LLM and the build only runs `repinyin`. Will starts it with `backfill --examples-pinyin[=N]`,
+which queues at most one job per phrase (a phrase with an open pinyin job is skipped, so a
+repeat queues nothing twice) marked `backfill`. Only a `reextract_only` claim takes those jobs,
+so the everyday worker's free key (5 RPM, 20 RPD by default) is never spent on them, and new
+imports keep their priority. The backfill run's in-process worker takes one job at a time
+(concurrency 1, at most two Gemini requests each: reading, then referee only on a dispute)
+through the paid key's `RateLimiter` (60 RPM, 2000 RPD by default), waits while Gemini rests
+after a failure (`geminiOnly`), and stops when idle or when the daily quota is used up; leftover
+jobs wait for the next run. A dry run is `--examples-pinyin=10`. The prod copy (2026-11, counts
+only) had 301 phrases to queue, holding 362 examples (517 examples in all, none with stored
+pinyin): at most ~600 requests, about 10 minutes at 60 RPM.
 
 #### 5.5.7 Keys (H4, H5; §10 #82)
 
@@ -1612,6 +1651,8 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
 - `pinyin_disagreement {phrase_id, syllables: [{i, computed, gemini, chosen, rule, winner}], outcome: computed|gemini|other|mixed}`
   (H4, §5.5.3b): logged once a phrase's disputes are settled (at once for invalid readings, after
   the referee otherwise)
+- `example_pinyin_disagreement` (§10 #107): the same fields plus `example` (its index), once an
+  example's disputes are settled; not in Stats
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind, status_before, via}`
@@ -2071,7 +2112,8 @@ bamboo/
 | 103 | extract_turn.v7: Gemini writes a term's examples (short, everyday, containing the term; one for a concrete noun or set phrase, up to three for a verb or grammar word, each teaching something new); the engine keeps them only from a Gemini job, at most 18 key characters, never promoted to a sentence; examples that reword one another collapse to the shortest at extraction, merge and on the card; a re-run replaces examples (§4.6 step 3, §5.5.4). Supersedes #99's choice to keep examples copied | Will's call (2026-11), after a card showed three rewordings of his own errand question as its examples, which taught nothing and made him scroll. Copying was a guard against the local 9B model writing Chinese (#6, #7); since #74 extraction runs on Gemini, the same model family that wrote the reply, so a sentence it writes is no less trustworthy than one it wrote in the answer, and the reply is written for that day's question, not for a flashcard. The verbatim rule stays for items: it keeps cards to what Will actually looked up. The Ollama fallback runs the same prompt, so its examples must still be copied. A promoted sentence must be one the reply offered. Rewordings share about 40% of their character pairs once the term is left out; short examples aren't compared by pairs, so different uses that share a 了吗 stay |
 | 104 | The name filter matches a listed Latin name only capitalized, as a name is written; `backfill --named` (`POST /api/agent/reextract {named: true}`) re-reads the turns whose latest extraction the filter acted on (§5.5.2, §5.5.6, §5.5.8) | Checking the v7 backfill (prod copy, counts only): about 10 card translations read "someone" where the English modal verb belonged ("I someone do it later", synthetic), on 11 turns the filter had acted on. A listed name that is also an English word matched case-insensitively and rewrote the word. Names in English are written capitalized; a sentence starting with that word is still rewritten, which fails safe. A re-run scope by the filter's own count fixes the stored cards without re-reading every turn, and keeps working for any later filter fix |
 | 105 | Vercel builds `main` only (`ignoreCommand` skips previews), and server functions leave out sharp (§8.2) | Function Storage on the free team reached 75% of its 10 GB (2026-11), bamboo 5.3 GB of it: every preview and production deploy is kept with its functions, about 38 MB each, half of it sharp, which nothing here uses. Nothing used bamboo's previews (CI runs on GitHub, verification runs locally; previews can't sign in, #19). The team's retention policy now deletes old deployments; these two changes slow the growth |
-| 106 | A term's example shows the phrase's settled reading for the phrase's own characters: every occurrence of the hanzi in the example takes each syllable the merge or Will's override settled (where it differs from the computed one); the rest stays computed in context (`examplePinyin`, §4.2, §5.5.3). Engine-only, no schema change. A follow-up, `extract_turn.v8`, will have Gemini return example pinyin (extraction and the `pinyin` job), merged per syllable, with this inheritance kept on top | A prod-copy check (counts only) found 8 of 517 examples, on 5 phrases, reading one of the phrase's characters differently from the phrase card, all where the merge had changed the phrase's reading: examples were computed from the dictionary alone, so the merge and overrides never reached them. Only settled syllables are inherited, since an unsettled one is just the dictionary's and the sentence's own context (一/不 sandhi, 不对 bú) reads it better |
+| 106 | A term's example shows the phrase's settled reading for the phrase's own characters: every occurrence of the hanzi in the example takes each syllable the merge or Will's override settled (where it differs from the computed one); the rest stays computed in context (`examplePinyin`, §4.2, §5.5.3). Engine-only, no schema change. Its follow-up is #107 | A prod-copy check (counts only) found 8 of 517 examples, on 5 phrases, reading one of the phrase's characters differently from the phrase card, all where the merge had changed the phrase's reading: examples were computed from the dictionary alone, so the merge and overrides never reached them. Only settled syllables are inherited, since an unsettled one is just the dictionary's and the sentence's own context (一/不 sandhi, 不对 bú) reads it better |
+| 107 | `extract_turn.v8`: Gemini returns each example's pinyin, merged per syllable like the phrase's (`settleExample`, the shared rules; agree, invalid → computed, both valid → the referee among valid readings plus the neutral tone) and stored on the example (`pinyin`, `pinyin_sources`, optional json fields: expand only). The phrase's `pinyin` job carries the examples that need it (`pinyin_reading.v2`, `pinyin_referee.v2`, still ≤ 2 requests, one phrase with its examples), `phrase_settled` when only they do. The card uses the stored reading, else computed, with #106's inheritance on top. Older examples are filled by `backfill --examples-pinyin`: `backfill`-marked jobs only the paid-key backfill run claims (§5.5.3b, §5.5.6) | Gemini has a reading in mind when it writes the sentence, so a polyphone in an example (得 děi, 长, 了) needn't fall back to the dictionary alone; the same merge keeps stored pinyin a valid dictionary reading. Reusing the phrase's job keeps one request path, one rate limiter and the privacy scope. Marking backfill jobs, rather than queueing them on deploy for every worker, keeps ~300 jobs off the free key's 20 requests a day, which new imports need; the paid run is paced by its own limiter. A prod-copy check (counts only) found all 517 examples display unchanged under the new code |
 
 ## Appendix A — Synthetic fixtures
 

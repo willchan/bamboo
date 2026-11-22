@@ -245,7 +245,8 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
     ).map((e) => ({
       hanzi: e.hanzi,
       english: e.english,
-      pinyin: examplePinyin(e.hanzi, p.hanzi, pinyin),
+      // Its stored, merged reading when it has one (§10 #107), with the phrase's settled reading on top.
+      pinyin: examplePinyin(e, p.hanzi, pinyin),
     })),
     note: p.note,
     breakdown: breakdownView(p.breakdown, pinyin),

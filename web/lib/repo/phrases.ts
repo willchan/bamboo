@@ -20,7 +20,14 @@ import type { BatchItem } from "drizzle-orm/batch";
 import { checkBreakdown } from "../domain/breakdown";
 import { newCardColumns } from "../domain/fsrs";
 import { derivedFields, examplesFor, type PhraseInput } from "../domain/phrase";
-import { computePinyin, overrideFromEdits, repinyin, storedPinyin } from "../domain/pinyin";
+import {
+  computePinyin,
+  exampleNeedsPinyin,
+  overrideFromEdits,
+  repinyin,
+  storedExample,
+  storedPinyin,
+} from "../domain/pinyin";
 import { effectiveScore, orderQueue } from "../domain/queue";
 import { eventRow, newId, runBatch } from "./db";
 import { queuePinyinJob } from "./pinyin";
@@ -174,6 +181,18 @@ export async function updatePhrase(
   }
 
   const hanziChanged = input.hanzi !== prev.hanzi;
+  // An example Will left as it was keeps its merged pinyin (§10 #107); a new or edited one gets
+  // the dictionary's until a pinyin job has read it.
+  const examples = examplesFor(
+    input.kind,
+    (input.examples as PhraseExample[]).map((e) => {
+      const old = prev.examples.find((x) => x.hanzi === e.hanzi);
+      return old?.pinyin_sources
+        ? { ...e, pinyin: old.pinyin, pinyin_sources: old.pinyin_sources }
+        : e;
+    }),
+  );
+  const newExamples = examples.some((e) => !prev.examples.some((x) => x.hanzi === e.hanzi));
   const py = repinyin(prev, input.hanzi);
   // The stored reading: the merged one while the hanzi is unchanged, else the dictionary's until
   // the new hanzi's pinyin job has run (§5.5.3b). Overrides are relative to it.
@@ -202,7 +221,7 @@ export async function updatePhrase(
         hanziKey: derived.hanziKey,
         english: input.english,
         heardAs: input.heardAs,
-        examples: examplesFor(input.kind, input.examples),
+        examples,
         note: input.note,
         // A breakdown stays only while it still matches the (possibly edited) hanzi and kind.
         breakdown: checkBreakdown(input.kind, input.hanzi, prev.breakdown).breakdown,
@@ -219,8 +238,11 @@ export async function updatePhrase(
   ];
 
   if (hanziChanged) {
-    const examples = examplesFor(input.kind, input.examples);
     writes.push(queuePinyinJob(db, { id, hanzi: input.hanzi, examples }, null, now));
+  } else if (newExamples && examples.some(exampleNeedsPinyin)) {
+    writes.push(
+      queuePinyinJob(db, { id, hanzi: input.hanzi, examples }, null, now, { phraseSettled: true }),
+    );
   }
 
   const wanted = new Set(input.cardTypes);
@@ -428,14 +450,18 @@ export async function recomputeStoredPinyin(db: Db): Promise<number> {
       hanzi: phrase.hanzi,
       pinyin: phrase.pinyin,
       pinyinSources: phrase.pinyinSources,
+      examples: phrase.examples,
     })
     .from(phrase);
   const updates = rows.flatMap((r) => {
-    // The merge's referee choices stay while they're still valid readings (§5.5.3b).
+    // The merge's referee choices stay while they're still valid readings (§5.5.3b), and so do
+    // an example's stored reading's (§10 #107).
     const computed = storedPinyin(r.hanzi, r.pinyinSources);
-    return JSON.stringify(computed) === JSON.stringify(r.pinyin)
-      ? []
-      : [db.update(phrase).set({ pinyin: computed }).where(eq(phrase.id, r.id))];
+    const examples = r.examples.map(storedExample);
+    const set: Partial<typeof phrase.$inferInsert> = {};
+    if (JSON.stringify(computed) !== JSON.stringify(r.pinyin)) set.pinyin = computed;
+    if (JSON.stringify(examples) !== JSON.stringify(r.examples)) set.examples = examples;
+    return Object.keys(set).length ? [db.update(phrase).set(set).where(eq(phrase.id, r.id))] : [];
   });
   await runBatch(db, updates);
   return updates.length;

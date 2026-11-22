@@ -1,9 +1,10 @@
 // One `extract_turn` attempt (DESIGN §5.3, §5.5.2) on any chat model (Gemini, or the Ollama
-// fallback): the v4 prompt, the reply constrained to `ModelExtractTurnResultV4`, one repair turn on
-// invalid output. The model's shape is then turned into the API's `ExtractTurnResult`.
+// fallback): the newest prompt (v8), the reply constrained to `ModelExtractTurnResultV8` (v4's
+// shape plus each example's pinyin, §10 #107), one repair turn on invalid output. The model's
+// shape is then turned into the API's `ExtractTurnResult`.
 import {
   ExtractTurnResult,
-  ModelExtractTurnResultV4,
+  ModelExtractTurnResultV8,
   trimArrays,
   trimToCaps,
   trimmedTotal,
@@ -18,25 +19,30 @@ import { repairMessage, userMessage, type Prompt } from "./prompt";
  * The strict JSON schema: Ollama's `format` as is; Gemini's `responseJsonSchema` without the
  * limits it can't serve (`geminiSchema`, H7).
  */
-export const RESULT_SCHEMA = z.toJSONSchema(ModelExtractTurnResultV4) as Record<string, unknown>;
+export const RESULT_SCHEMA = z.toJSONSchema(ModelExtractTurnResultV8) as Record<string, unknown>;
 
 export interface ChatModel {
   chat(messages: ChatMessage[], schema: Record<string, unknown>): Promise<string>;
 }
 
 /**
- * The model's v4 reply as the API's contract: examples (with `example` = the first, for the
+ * The model's v8 reply as the API's contract: examples (with `example` = the first, for the
  * engine's older path), the breakdown's `summary` as a term's `meaning` or a sentence's `note`,
- * and Gemini's pinyin, unless `keepPinyin` is off (the Ollama fallback carries none, §5.5.2).
+ * and Gemini's pinyin for the item and each example, unless `keepPinyin` is off (the Ollama
+ * fallback carries none, §5.5.2).
  */
-export function fromModelV4(
-  r: ModelExtractTurnResultV4,
+export function fromModelV8(
+  r: ModelExtractTurnResultV8,
   opts: { keepPinyin: boolean },
 ): ExtractTurnResult {
   return {
     turn_kind: r.turn_kind,
     items: r.items.map((i): ExtractItem => {
-      const examples = i.kind === "term" ? i.examples : [];
+      const examples = (i.kind === "term" ? i.examples : []).map((e) => ({
+        hanzi: e.hanzi,
+        english: e.english,
+        pinyin: opts.keepPinyin && e.pinyin.length ? e.pinyin : null,
+      }));
       return {
         kind: i.kind,
         hanzi: i.hanzi,
@@ -88,7 +94,7 @@ export function parseReply<S extends z.ZodType>(
 
 /**
  * The model's reply cut to the caps Gemini's schema can't enforce (`trimToCaps`, H7), checked
- * against the strict v4 schema, then as the API's contract. `trimmed` counts what was cut.
+ * against the strict v8 schema, then as the API's contract. `trimmed` counts what was cut.
  */
 export function checkReply(
   content: string,
@@ -101,9 +107,9 @@ export function checkReply(
     return { ok: false, errors: `- not valid JSON (${(e as Error).message})` };
   }
   const t = trimToCaps(json);
-  const r = ModelExtractTurnResultV4.safeParse(t.value);
+  const r = ModelExtractTurnResultV8.safeParse(t.value);
   if (!r.success) return { ok: false, errors: issueLines(r.error) };
-  const out = ExtractTurnResult.safeParse(fromModelV4(r.data, opts));
+  const out = ExtractTurnResult.safeParse(fromModelV8(r.data, opts));
   return out.success
     ? { ok: true, result: out.data, trimmed: trimmedTotal(t.trimmed) }
     : { ok: false, errors: issueLines(out.error) };

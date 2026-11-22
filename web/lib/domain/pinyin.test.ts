@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type { PhraseExample } from "@bamboo/db";
 import {
+  applyExampleResults,
   computePinyin,
   displayPinyin,
+  exampleNeedsPinyin,
   examplePinyin,
+  pinyinJobInput,
+  settleExample,
+  storedExample,
   normalizeSyllable,
   overrideFromEdits,
   pinyinText,
@@ -169,5 +175,135 @@ describe("examplePinyin", () => {
 
   it("ignores a phrase reading that doesn't line up with its hanzi", () => {
     expect(examplePinyin("倒过来", phrase, [["倒", "dào"]])).toEqual(computePinyin("倒过来"));
+  });
+});
+
+// §10 #107: examples store their own merged reading (extract_turn.v8), and the card uses it.
+describe("example pinyin, merged per syllable", () => {
+  // Synthetic: the dictionary reads 得 dé in 我得走了。, Gemini reads děi (both valid).
+  const ex = "我得走了。";
+  const disputed = ["wǒ", "děi", "zǒu", "le"];
+
+  it("settles an example like a phrase: agree, invalid, dispute, none", () => {
+    const agree = settleExample({ hanzi: ex, english: null }, ["wǒ", "dé", "zǒu", "le"]);
+    expect(agree.pinyin_sources).toEqual([]);
+    expect(pinyinText(agree.pinyin!)).toBe("wǒ dé zǒu le");
+    expect(exampleNeedsPinyin(agree)).toBe(false);
+
+    const invalid = settleExample({ hanzi: ex, english: null }, ["wǒ", "dài", "zǒu", "le"]);
+    expect(invalid.pinyin_sources).toEqual([
+      expect.objectContaining({ rule: "invalid", chosen: "dé" }),
+    ]);
+    expect(pinyinText(invalid.pinyin!)).toBe("wǒ dé zǒu le");
+
+    const dispute = settleExample({ hanzi: ex, english: null }, disputed);
+    expect(dispute.pinyin_sources).toEqual([expect.objectContaining({ rule: "pending" })]);
+    expect(exampleNeedsPinyin(dispute)).toBe(true);
+
+    const referee = settleExample({ hanzi: ex, english: null }, disputed, new Map([[1, "děi"]]));
+    expect(pinyinText(referee.pinyin!)).toBe("wǒ děi zǒu le");
+
+    // No reading, or one that doesn't line up: nothing stored, and stale fields go.
+    for (const g of [null, ["wǒ"]]) {
+      const none = settleExample({ hanzi: ex, english: null, pinyin: [["x", "y"]] }, g);
+      expect(none).toEqual({ hanzi: ex, english: null });
+      expect(exampleNeedsPinyin(none)).toBe(true);
+    }
+  });
+
+  it("the card uses the stored reading, then the phrase's settled reading on top", () => {
+    const stored = settleExample({ hanzi: ex, english: null }, disputed, new Map([[1, "děi"]]));
+    expect(pinyinText(examplePinyin(stored, "走", computePinyin("走")))).toBe("wǒ děi zǒu le");
+    // Inside the phrase's span, the phrase's settled syllable still wins (§10 #106).
+    const shown: PinyinPairs = [
+      ["得", "de"],
+      ["走", "zǒu"],
+    ];
+    expect(pinyinText(examplePinyin(stored, "得走", shown))).toBe("wǒ de zǒu le");
+    // A stored reading that no longer lines up with the hanzi (Will edited it) is ignored.
+    const edited = { hanzi: "我得走吧。", pinyin: stored.pinyin };
+    expect(examplePinyin(edited, "走", computePinyin("走"))).toEqual(computePinyin("我得走吧。"));
+    // Older examples have none: computed, as before.
+    expect(examplePinyin({ hanzi: ex }, "走", computePinyin("走"))).toEqual(computePinyin(ex));
+  });
+
+  it("a pinyin job carries the examples that need it, with pending readings", () => {
+    const settled = settleExample({ hanzi: "走吧", english: null }, ["zǒu", "ba"]);
+    const pending = settleExample({ hanzi: ex, english: null }, disputed);
+    const examples = [settled, pending, { hanzi: "快走", english: null }];
+    const input = pinyinJobInput({ id: "p1", hanzi: "走", examples }, null, {
+      phraseSettled: true,
+      backfill: true,
+      exampleGemini: new Map([[ex, disputed]]),
+    });
+    expect(input).toMatchObject({
+      context: ["走吧", ex, "快走"],
+      phrase_settled: true,
+      backfill: true,
+    });
+    expect(input.examples!.map((e) => [e.index, e.hanzi, e.gemini])).toEqual([
+      [1, ex, disputed],
+      [2, "快走", null],
+    ]);
+    expect(input.examples![0]!.slots[1]).toMatchObject({
+      char: "得",
+      readings: ["dé", "děi", "de"],
+    });
+    expect(pinyinJobInput({ id: "p1", hanzi: "走", examples: [] }, null)).not.toHaveProperty(
+      "phrase_settled",
+    );
+  });
+
+  it("applies a job's results to the examples still in place", () => {
+    const current: PhraseExample[] = [
+      { hanzi: ex, english: "I must go.", turn_id: "t1" },
+      { hanzi: "快走", english: null, turn_id: null },
+    ];
+    const input = pinyinJobInput({ id: "p1", hanzi: "走", examples: current }, null);
+    const r = applyExampleResults(
+      [...current.slice(0, 1), { hanzi: "慢走", english: null, turn_id: null }],
+      input,
+      {
+        examples: [
+          { index: 0, gemini: disputed, referee: [{ index: 1, reading: "děi" }] },
+          { index: 1, gemini: ["kuài", "zǒu"], referee: [] },
+        ],
+      },
+    );
+    expect(r.changed).toBe(true);
+    expect(r.examples[0]).toMatchObject({ english: "I must go.", turn_id: "t1" });
+    expect(pinyinText(r.examples[0]!.pinyin!)).toBe("wǒ děi zǒu le");
+    expect(r.examples[0]!.pinyin_sources).toEqual([
+      expect.objectContaining({ rule: "referee", winner: "gemini" }),
+    ]);
+    // Will changed the second example since the job was queued: left alone.
+    expect(r.examples[1]).toEqual({ hanzi: "慢走", english: null, turn_id: null });
+    expect(r.settled.map((x) => x.index)).toEqual([0]);
+
+    // An unanswered dispute is final (rejected); a misaligned reading still counts as checked.
+    const unanswered = applyExampleResults(current, input, {
+      examples: [
+        { index: 0, gemini: disputed, referee: [] },
+        { index: 1, gemini: ["kuài"], referee: [] },
+      ],
+    });
+    expect(unanswered.examples[0]!.pinyin_sources).toEqual([
+      expect.objectContaining({ rule: "rejected", chosen: "dé" }),
+    ]);
+    expect(unanswered.examples[1]!.pinyin_sources).toEqual([]);
+    // An older worker's result (no examples) settles them on the dictionary reading.
+    expect(applyExampleResults(current, { examples: undefined }, {}).changed).toBe(false);
+  });
+
+  it("repinyin keeps an example's referee choice and recomputes the rest", () => {
+    const e = settleExample(
+      { hanzi: ex, english: null, turn_id: null },
+      disputed,
+      new Map([[1, "děi"]]),
+    );
+    const stale = { ...e, pinyin: e.pinyin!.map(([c]) => [c, "x"] as [string, string]) };
+    expect(storedExample(stale as PhraseExample)).toEqual(e);
+    const old: PhraseExample = { hanzi: ex, english: null, turn_id: null };
+    expect(storedExample(old)).toBe(old);
   });
 });

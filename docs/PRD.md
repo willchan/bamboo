@@ -116,7 +116,9 @@ words; characters still help. He already talks to his household's **OpenClaw** a
     sentence's back shows a **word-by-word gloss** and one short note on how the sentence is
     built. Gemini writes the glosses (from H4; H3 built the card back); the breakdown always
     matches the phrase's characters, and its pinyin is the phrase's own. A card without one
-    looks as before.
+    looks as before. An example's pinyin is checked the way the phrase's is (2026-11): Gemini's
+    reading of the sentence, kept only where it's a valid dictionary reading, with disputes
+    settled by a second look; the phrase's own characters in it always read as on the card.
   - **Listen**: the front only plays audio; he recalls the meaning; the back shows everything
     including the example, and, if he typed what he heard when he asked, a small "you first heard:
     *podafen*" under the answer, so he sees his guess next to the real thing. (On the front it
