@@ -24,7 +24,7 @@ import {
   type FsrsColumns,
   type Grade,
 } from "../domain/fsrs";
-import { computePinyin, displayPinyin } from "../domain/pinyin";
+import { displayPinyin, examplePinyin } from "../domain/pinyin";
 import {
   buildRound,
   isFirstSight,
@@ -245,7 +245,7 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
     ).map((e) => ({
       hanzi: e.hanzi,
       english: e.english,
-      pinyin: computePinyin(e.hanzi),
+      pinyin: examplePinyin(e.hanzi, p.hanzi, pinyin),
     })),
     note: p.note,
     breakdown: breakdownView(p.breakdown, pinyin),
