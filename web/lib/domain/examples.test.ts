@@ -75,14 +75,25 @@ describe("rerunExamples", () => {
     english,
     turn_id,
   });
-  it("replaces the stored examples, keeping stored English for the same sentence", () => {
+  it("replaces the stored examples; stored English only fills a missing one", () => {
     const stored = [ex(Q1, "old"), ex(Q2, null), ex(Q3, null)];
     expect(rerunExamples(stored, [ex("红豆要先泡一晚。", "Soak.", "t2")])).toEqual([
       ex("红豆要先泡一晚。", "Soak.", "t2"),
     ]);
     expect(
       rerunExamples(stored, [ex("做红豆汤除了红豆和冰糖，还要买什么吗？", "new", "t2")]),
-    ).toEqual([ex(Q1, "old", "t2")]);
+    ).toEqual([ex(Q1, "new", "t2")]);
+    expect(rerunExamples(stored, [ex(Q2, null, "t2")])).toEqual([ex(Q2, null, "t2")]);
+    expect(rerunExamples([ex(Q1, "old")], [ex(Q1, null, "t2")])).toEqual([ex(Q1, "old", "t2")]);
+  });
+
+  it("regression: a re-run's corrected English replaces the stored English", () => {
+    // A name-filter re-run (§10 #104) returned the same sentence with clean English, and the
+    // stored, damaged English won (§10 #109).
+    const stored = [ex("红豆要先泡一晚。", "Beans someone soak overnight.")];
+    expect(
+      rerunExamples(stored, [ex("红豆要先泡一晚。", "Soak the beans overnight.", "t2")]),
+    ).toEqual([ex("红豆要先泡一晚。", "Soak the beans overnight.", "t2")]);
   });
   it("keeps the stored ones when the re-run has none", () => {
     expect(rerunExamples([ex(Q1, "a")], [])).toEqual([ex(Q1, "a")]);

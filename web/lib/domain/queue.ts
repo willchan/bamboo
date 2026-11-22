@@ -485,8 +485,8 @@ export function mergeExamples(
 
 /**
  * A re-run's examples (§4.6.1, §10 #103): the new ones replace the stored ones, which an older
- * prompt copied from the turn, keeping a stored English for the same sentence. None keeps the
- * stored ones.
+ * prompt copied from the turn, with the new English (a stored English for the same sentence only
+ * fills one left empty, §10 #109). None keeps the stored ones.
  */
 export function rerunExamples(
   stored: readonly PhraseExample[],
@@ -498,8 +498,10 @@ export function rerunExamples(
   const english = new Map(
     stored.filter((e) => e.english).map((e) => [hanziKey(e.hanzi), e.english]),
   );
+  // The re-run's English wins: it's what the current prompt and name filter produced, so a re-run
+  // can correct English (§10 #109). Stored English only fills one the re-run left empty.
   return distinctExamples(
-    incoming.map((e) => ({ ...e, english: english.get(hanziKey(e.hanzi)) ?? e.english })),
+    incoming.map((e) => ({ ...e, english: e.english ?? english.get(hanziKey(e.hanzi)) ?? null })),
     term,
     max,
   );
