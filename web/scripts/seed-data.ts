@@ -117,7 +117,7 @@ export const SEEDS: Seed[] = [
     tags: ["household"],
     turnKind: "say",
     usefulness: 4,
-    activeDaysAgo: 3,
+    activeDaysAgo: 9,
   },
   {
     kind: "term",
