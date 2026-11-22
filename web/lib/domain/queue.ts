@@ -13,6 +13,7 @@ import {
 } from "@bamboo/shared";
 import { config, type ExtractionConfig, type RankConfig } from "../config";
 import { checkBreakdown } from "./breakdown";
+import { exampleNeedsPinyin, settleExample } from "./pinyin";
 import { bundledFrequencies, commonness, type WordFrequencies } from "./frequency";
 
 export interface ScoreInput {
@@ -193,7 +194,14 @@ export function distinctExamples<T extends { hanzi: string; english: string | nu
     }
     const kept = out[i]!;
     if (hanziKey(kept.hanzi) === hanziKey(ex.hanzi)) {
-      if (!kept.english && ex.english) out[i] = { ...kept, english: ex.english };
+      let next = kept;
+      if (!kept.english && ex.english) next = { ...next, english: ex.english };
+      // A stored example without merged pinyin takes the same sentence's (§10 #107).
+      const k = kept as Partial<PhraseExample>;
+      const x = ex as Partial<PhraseExample>;
+      if (!k.pinyin_sources && x.pinyin_sources && kept.hanzi === ex.hanzi)
+        next = { ...next, pinyin: x.pinyin, pinyin_sources: x.pinyin_sources };
+      out[i] = next;
     } else if (len(ex) < len(kept)) out[i] = ex;
   }
   return out.slice(0, max);
@@ -206,6 +214,12 @@ export function writesExamples(
 ): boolean {
   return !!model && model.toLowerCase().startsWith(prefix);
 }
+
+/**
+ * A validated example: its hanzi and English, and since extract_turn.v8 its pinyin merged with
+ * Gemini's reading (`settleExample`, §5.5.3b), absent when there was no reading that lined up.
+ */
+export type ValidExample = Omit<PhraseExample, "turn_id">;
 
 /** A validated item, ready to become (or merge into) a phrase. */
 export interface ValidItem {
@@ -220,7 +234,12 @@ export interface ValidItem {
    * Terms only: examples that contain the term, without near-duplicates. Copied from the turn, or
    * since extract_turn.v7 written by Gemini (`writtenExamples`, §10 #103).
    */
-  examples: { hanzi: string; english: string | null }[];
+  examples: ValidExample[];
+  /**
+   * extract_turn.v8 (§10 #107): Gemini's reading of each example whose merge left a dispute for
+   * the referee, by example hanzi, for its pinyin job. Optional: absent means none.
+   */
+  exampleReadings?: Record<string, string[]>;
   usefulness: number;
   /** Gemini's reading, one syllable per hanzi (v4 on Gemini); null for Ollama and older prompts. */
   pinyin: string[] | null;
@@ -341,6 +360,7 @@ export function validateExtraction(
     }
 
     let examples: ValidItem["examples"] = [];
+    const exampleReadings: Record<string, string[]> = {};
     const rawExamples = raw.examples?.length ? raw.examples : raw.example ? [raw.example] : [];
     if (raw.kind === "term") {
       for (const ex of rawExamples) {
@@ -352,7 +372,13 @@ export function validateExtraction(
           (opts.writtenExamples === true &&
             Array.from(exKey).length <= config.phrase.writtenExampleMaxChars);
         if (sourced && exKey.includes(k) && isLearnableExample(exHanzi)) {
-          examples.push({ hanzi: exHanzi, english: ex.english?.trim() || null });
+          const settled = settleExample(
+            { hanzi: exHanzi, english: ex.english?.trim() || null },
+            ex.pinyin,
+          );
+          if (settled.pinyin_sources && exampleNeedsPinyin(settled) && ex.pinyin)
+            exampleReadings[exHanzi] = [...ex.pinyin];
+          examples.push(settled);
         } else {
           if (!flags.includes("example_dropped")) flags.push("example_dropped");
           out.examplesDropped += 1;
@@ -379,6 +405,7 @@ export function validateExtraction(
       note: englishNote(raw.note),
       heardAs,
       examples,
+      ...(Object.keys(exampleReadings).length ? { exampleReadings } : {}),
       usefulness: raw.usefulness,
       pinyin: raw.pinyin?.length ? [...raw.pinyin] : null,
       tags: tags.tags,
@@ -623,6 +650,9 @@ export interface ReextractMerge {
    * separate column and is never touched.
    */
   gemini: string[] | null;
+  /** The re-run's examples (by hanzi) and their pending readings, for the follow-ups (§10 #107). */
+  freshExamples: string[];
+  exampleReadings: Record<string, string[]>;
 }
 
 export interface ReextractPlan {
@@ -699,6 +729,8 @@ export function planReextract(
       id: p.id,
       revived,
       gemini,
+      freshExamples: p.kind === "term" ? item.examples.map((e) => e.hanzi) : [],
+      exampleReadings: item.exampleReadings ?? {},
       patch: {
         status,
         english: item.english,

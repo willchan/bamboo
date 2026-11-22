@@ -404,7 +404,8 @@ function failWrites(
  * for, or null when idle. Order: ordinary extract_turn jobs, then `pinyin` jobs (small, H4), then
  * re-runs (§4.6.1), so a new import is never stuck behind a backlog. Without `types` (an older
  * worker) only extract_turn jobs are offered. `reextractOnly` (H7's backfill worker) skips the
- * ordinary jobs: only pinyin jobs and re-runs.
+ * ordinary jobs: only pinyin jobs and re-runs. Only it takes the example-pinyin backfill's pinyin
+ * jobs (§10 #107).
  */
 export async function claimJob(
   db: Db,
@@ -418,7 +419,7 @@ export async function claimJob(
     if (ordinary) return ordinary;
   }
   if (types.includes("pinyin")) {
-    const p = await claimPinyinJob(db, now);
+    const p = await claimPinyinJob(db, now, { backfill: opts.reextractOnly });
     if (p) return p;
   }
   return types.includes("extract_turn") ? claimExtractJob(db, now, true) : null;
@@ -640,6 +641,22 @@ async function applyExtraction(
 
     const plan = planMerge(p, item, { importId: ctx.importId, turnId: ctx.turn.id, now });
     writes.push(db.update(phrase).set(plan.patch).where(eq(phrase.id, p.id)));
+    // The examples this turn added get their pinyin settled too (§10 #107); the phrase's stays.
+    const follow = pinyinFollowUps(
+      db,
+      { id: p.id, hanzi: p.hanzi, examples: plan.patch.examples },
+      null,
+      null,
+      now,
+      {
+        fresh: item.examples
+          .map((e) => e.hanzi)
+          .filter((h) => !p.examples.some((e) => e.hanzi === h)),
+        exampleGemini: readingsOf(item.exampleReadings),
+      },
+    );
+    writes.push(...follow.writes);
+    if (follow.queued) py.pinyinJobs += 1;
     if (plan.bumped) {
       writes.push(
         db
@@ -688,6 +705,8 @@ async function applyExtraction(
   return { writes, validation, phrasesNew, phrasesAgain, ...py, rerun: null };
 }
 
+const readingsOf = (r: Record<string, string[]> | undefined) => new Map(Object.entries(r ?? {}));
+
 /**
  * The rows for a phrase an extraction creates: the phrase (its pinyin merged with Gemini's,
  * §5.5.3b), its cards, and the merge's follow-ups (a `pinyin_disagreement` event, a `pinyin` job).
@@ -730,6 +749,7 @@ function newImportedPhrase(
     merged,
     item.pinyin,
     now,
+    { exampleGemini: readingsOf(item.exampleReadings) },
   );
   if (follow.queued) counts.pinyinJobs += 1;
   if (merged.misaligned) counts.pinyinMisaligned += 1;
@@ -790,18 +810,18 @@ async function applyReextraction(
         })
         .where(eq(phrase.id, m.id)),
     );
-    if (merged) {
-      const follow = pinyinFollowUps(
-        db,
-        { id: p.id, hanzi: p.hanzi, examples: m.patch.examples },
-        merged,
-        m.gemini,
-        now,
-      );
-      writes.push(...follow.writes);
-      if (follow.queued) py.pinyinJobs += 1;
-      if (merged.misaligned) py.pinyinMisaligned += 1;
-    }
+    // The examples a re-run brings get their own merge's follow-ups (§10 #107).
+    const follow = pinyinFollowUps(
+      db,
+      { id: p.id, hanzi: p.hanzi, examples: m.patch.examples },
+      merged,
+      m.gemini,
+      now,
+      { fresh: m.freshExamples, exampleGemini: readingsOf(m.exampleReadings) },
+    );
+    writes.push(...follow.writes);
+    if (follow.queued) py.pinyinJobs += 1;
+    if (merged?.misaligned) py.pinyinMisaligned += 1;
     if (m.revived) {
       writes.push(
         db

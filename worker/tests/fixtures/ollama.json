@@ -35,7 +35,7 @@
     "created_at": "2026-11-06T04:11:59.935035Z",
     "message": {
       "role": "assistant",
-      "content": "{\"turn_kind\":\"decode\",\"items\":[{\"kind\":\"term\",\"hanzi\":\"高压锅\",\"english\":\"pressure cooker\",\"note\":null,\"heard_as\":\"gaoyaguo\",\"examples\":[{\"hanzi\":\"用高压锅煮汤，二十分钟就好了。\",\"english\":\"Cook the soup in the pressure cooker, it's done in twenty minutes.\"}],\"usefulness\":4,\"tags\":[\"cooking\",\"household\"],\"pinyin\":[\"gāo\",\"yā\",\"guō\"],\"breakdown\":{\"parts\":[{\"hanzi\":\"高\",\"gloss\":\"high\"},{\"hanzi\":\"压\",\"gloss\":\"pressure\"},{\"hanzi\":\"锅\",\"gloss\":\"pot\"}],\"summary\":\"A high-pressure pot.\"}}]}"
+      "content": "{\"turn_kind\":\"decode\",\"items\":[{\"kind\":\"term\",\"hanzi\":\"高压锅\",\"english\":\"pressure cooker\",\"note\":null,\"heard_as\":\"gaoyaguo\",\"examples\":[{\"hanzi\":\"用高压锅煮汤，二十分钟就好了。\",\"english\":\"Cook the soup in the pressure cooker, it's done in twenty minutes.\",\"pinyin\":[\"yòng\",\"gāo\",\"yā\",\"guō\",\"zhǔ\",\"tāng\",\"èr\",\"shí\",\"fēn\",\"zhōng\",\"jiù\",\"hǎo\",\"le\"]}],\"usefulness\":4,\"tags\":[\"cooking\",\"household\"],\"pinyin\":[\"gāo\",\"yā\",\"guō\"],\"breakdown\":{\"parts\":[{\"hanzi\":\"高\",\"gloss\":\"high\"},{\"hanzi\":\"压\",\"gloss\":\"pressure\"},{\"hanzi\":\"锅\",\"gloss\":\"pot\"}],\"summary\":\"A high-pressure pot.\"}}]}"
     },
     "done": true,
     "done_reason": "stop",
@@ -52,7 +52,7 @@
     "created_at": "2026-11-06T04:12:03.112203Z",
     "message": {
       "role": "assistant",
-      "content": "{\"turn_kind\":\"decode\",\"items\":[{\"kind\":\"term\",\"hanzi\":\"高压锅\",\"english\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"note\":null,\"heard_as\":\"gaoyaguo\",\"examples\":[{\"hanzi\":\"用高压锅煮汤，二十分钟就好了。\",\"english\":\"Cook the soup in the pressure cooker, it's done in twenty minutes.\"}],\"usefulness\":9,\"tags\":[\"cooking\",\"household\"],\"pinyin\":[\"gāo\",\"yā\",\"guō\"],\"breakdown\":{\"parts\":[{\"hanzi\":\"高\",\"gloss\":\"high\"},{\"hanzi\":\"压\",\"gloss\":\"pressure\"},{\"hanzi\":\"锅\",\"gloss\":\"pot\"}],\"summary\":\"A high-pressure pot.\"}}]}"
+      "content": "{\"turn_kind\":\"decode\",\"items\":[{\"kind\":\"term\",\"hanzi\":\"高压锅\",\"english\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"note\":null,\"heard_as\":\"gaoyaguo\",\"examples\":[{\"hanzi\":\"用高压锅煮汤，二十分钟就好了。\",\"english\":\"Cook the soup in the pressure cooker, it's done in twenty minutes.\",\"pinyin\":[\"yòng\",\"gāo\",\"yā\",\"guō\",\"zhǔ\",\"tāng\",\"èr\",\"shí\",\"fēn\",\"zhōng\",\"jiù\",\"hǎo\",\"le\"]}],\"usefulness\":9,\"tags\":[\"cooking\",\"household\"],\"pinyin\":[\"gāo\",\"yā\",\"guō\"],\"breakdown\":{\"parts\":[{\"hanzi\":\"高\",\"gloss\":\"high\"},{\"hanzi\":\"压\",\"gloss\":\"pressure\"},{\"hanzi\":\"锅\",\"gloss\":\"pot\"}],\"summary\":\"A high-pressure pot.\"}}]}"
     },
     "done": true,
     "done_reason": "stop",

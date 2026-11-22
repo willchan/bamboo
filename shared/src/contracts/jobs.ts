@@ -31,10 +31,30 @@ export const PinyinSlot = z.object({
 });
 export type PinyinSlot = z.infer<typeof PinyinSlot>;
 
+const Reading = z.array(z.string().max(12)).max(200);
+
+/**
+ * One of the phrase's examples to settle in a `pinyin` job (DESIGN §5.5.3b, §10 #107): merged per
+ * syllable like the phrase. `index` is its place in `context`.
+ */
+export const PinyinJobExample = z.object({
+  index: z
+    .number()
+    .int()
+    .min(0)
+    .max(sharedConfig.pinyin.maxContextExamples - 1),
+  hanzi: z.string().min(1).max(200),
+  slots: z.array(PinyinSlot).max(200),
+  /** Gemini's reading from the extraction (then only the referee runs), or null: read it. */
+  gemini: Reading.nullable(),
+});
+export type PinyinJobExample = z.infer<typeof PinyinJobExample>;
+
 /**
  * A `pinyin` job (DESIGN §5.5.3b): Gemini's reading of a hand-added, edited or fallback-extracted
  * phrase (when `gemini` is null), then the referee for real disputes. `context` is the phrase's
- * own examples, which come from its turn or from Will.
+ * own examples, which come from its turn or from Will. Since §10 #107 it settles those examples
+ * too (`examples`); jobs queued before it have none.
  */
 export const PinyinJobInput = z.object({
   phrase_id: z.string(),
@@ -42,17 +62,45 @@ export const PinyinJobInput = z.object({
   context: z.array(z.string().max(200)).max(sharedConfig.pinyin.maxContextExamples),
   slots: z.array(PinyinSlot).max(200),
   /** Gemini's reading from the extraction, when it had one: then only the referee runs. */
-  gemini: z.array(z.string().max(12)).max(200).nullable(),
+  gemini: Reading.nullable(),
+  /** The examples whose pinyin isn't settled yet (§10 #107). */
+  examples: z.array(PinyinJobExample).max(sharedConfig.pinyin.maxContextExamples).optional(),
+  /**
+   * The phrase's own pinyin is already settled: only `examples` are merged, and the phrase's
+   * reading, if the worker reads it, is ignored.
+   */
+  phrase_settled: z.boolean().optional(),
+  /**
+   * Queued by the example-pinyin backfill (`POST /api/agent/example-pinyin`): claimed only by the
+   * backfill run on the paid key (`reextract_only`), never by the everyday worker on the free key.
+   */
+  backfill: z.boolean().optional(),
 });
 export type PinyinJobInput = z.infer<typeof PinyinJobInput>;
 
+const RefereeChoices = z
+  .array(z.object({ index: z.number().int().min(0), reading: z.string().max(12) }))
+  .max(200);
+
 /** What the worker sends back: Gemini's reading (if it asked) and the referee's choices. */
 export const PinyinJobResult = z.object({
-  gemini: z.array(z.string().max(12)).max(200).nullable(),
+  gemini: Reading.nullable(),
   /** The referee's reading per disputed slot (by index into `slots`); empty if none. */
-  referee: z
-    .array(z.object({ index: z.number().int().min(0), reading: z.string().max(12) }))
-    .max(200),
+  referee: RefereeChoices,
+  /**
+   * Per job example (by its `index`): Gemini's reading if it asked, and the referee's choices by
+   * index into that example's `slots` (§10 #107). Absent from older workers.
+   */
+  examples: z
+    .array(
+      z.object({
+        index: z.number().int().min(0),
+        gemini: Reading.nullable(),
+        referee: RefereeChoices,
+      }),
+    )
+    .max(sharedConfig.pinyin.maxContextExamples)
+    .optional(),
 });
 export type PinyinJobResult = z.infer<typeof PinyinJobResult>;
 

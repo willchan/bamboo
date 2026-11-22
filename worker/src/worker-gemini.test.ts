@@ -148,7 +148,7 @@ describe("worker on Gemini", () => {
     expect(engine.completes[0]).toMatchObject({
       status: "done",
       model: "gemini-test",
-      prompt_version: "extract_turn.v7",
+      prompt_version: "extract_turn.v8",
       dropped_name: 0,
     });
     const result = (engine.completes[0] as { result: { items: { pinyin: unknown }[] } }).result;
@@ -320,8 +320,16 @@ describe("name filter (synthetic deny file)", () => {
           note: null,
           heard_as: null,
           examples: [
-            { hanzi: "测名该洗澡了。", english: null },
-            { hanzi: "宝宝该洗澡了。", english: "Zorblat should take a bath" },
+            {
+              hanzi: "测名该洗澡了。",
+              english: null,
+              pinyin: ["cè", "míng", "gāi", "xǐ", "zǎo", "le"],
+            },
+            {
+              hanzi: "宝宝该洗澡了。",
+              english: "Zorblat should take a bath",
+              pinyin: ["bǎo", "bao", "gāi", "xǐ", "zǎo", "le"],
+            },
           ],
           usefulness: 4,
           tags: ["baby"],
@@ -358,8 +366,13 @@ describe("name filter (synthetic deny file)", () => {
     };
     expect(c.result.items.map((i) => i.hanzi)).toEqual(["洗澡"]);
     expect(c.result.items[0]!.english).toBe("bathe (someone's bath)");
+    // v8: the example's reading (syllables only) passes through the filter as it is.
     expect(c.result.items[0]!.examples).toEqual([
-      { hanzi: "宝宝该洗澡了。", english: "someone should take a bath" },
+      {
+        hanzi: "宝宝该洗澡了。",
+        english: "someone should take a bath",
+        pinyin: ["bǎo", "bao", "gāi", "xǐ", "zǎo", "le"],
+      },
     ]);
     // item, example, two English rewrites
     expect(c.dropped_name).toBe(4);
@@ -438,8 +451,8 @@ describe("H7 backfill worker (reextract only, until idle)", () => {
     expect(engine.jobs.find((j) => j.job_id === "new-import")?.status).toBe("queued");
     expect(engine.claimReextractOnly.every(Boolean)).toBe(true);
     expect(worker.reports.map((r) => r.promptVersion)).toEqual([
-      "extract_turn.v7",
-      "extract_turn.v7",
+      "extract_turn.v8",
+      "extract_turn.v8",
     ]);
     expect(lines).toContain("until-idle: nothing left to claim; stopping");
   });
@@ -602,11 +615,11 @@ describe("pinyin jobs", () => {
     const { engine, fake, worker } = setup();
     engine.addPinyin(input(null));
     fake.replies = [
-      JSON.stringify({ pinyin: ["wǒ", "děi", "zǒu", "le"] }),
+      JSON.stringify({ pinyin: ["wǒ", "děi", "zǒu", "le"], examples: [] }),
       JSON.stringify({
         choices: [
-          { index: 1, reading: "děi" },
-          { index: 3, reading: "liǎo" },
+          { sentence: 0, index: 1, reading: "děi" },
+          { sentence: 0, index: 3, reading: "liǎo" },
         ],
       }),
     ];
@@ -614,15 +627,105 @@ describe("pinyin jobs", () => {
     expect(engine.completes[0]).toMatchObject({
       status: "done",
       model: "gemini-test",
-      prompt_version: "pinyin_reading.v1+pinyin_referee.v1",
+      prompt_version: "pinyin_reading.v2+pinyin_referee.v2",
       // The answer for a slot nobody asked about is left out; the engine re-checks the rest.
       result: { gemini: ["wǒ", "děi", "zǒu", "le"], referee: [{ index: 1, reading: "děi" }] },
     });
+    // A job queued before §10 #107 (no `examples`) gets no examples back.
+    expect((engine.completes[0] as { result: object }).result).not.toHaveProperty("examples");
     const referee = fake.bodies[1]!.body as { contents: { parts: { text: string }[] }[] };
     const text = referee.contents[0]!.parts[0]!.text;
-    expect(text).toContain("1: 得 → dé | děi | de");
+    expect(text).toContain("0, 1: 得 → dé | děi | de");
     expect(text).not.toContain("3: 了");
-    expect(text).toContain("我得走了，明天见。");
+    expect(text).toContain("1: 我得走了，明天见。");
+  });
+
+  // §10 #107: the phrase's examples are read and refereed in the same two calls.
+  const exSlots: PinyinJobInput["slots"] = [
+    { char: "我", computed: "wǒ", readings: ["wǒ"] },
+    { char: "得", computed: "dé", readings: ["dé", "děi", "de"] },
+    { char: "走", computed: "zǒu", readings: ["zǒu"] },
+    { char: "，", computed: null, readings: [] },
+    { char: "明", computed: "míng", readings: ["míng"] },
+    { char: "天", computed: "tiān", readings: ["tiān"] },
+    { char: "见", computed: "jiàn", readings: ["jiàn", "xiàn"] },
+    { char: "。", computed: null, readings: [] },
+  ];
+
+  it("reads the examples with the phrase and referees their disputes in one call", async () => {
+    const { engine, fake, worker } = setup();
+    engine.addPinyin({
+      ...input(null),
+      context: ["我得走，明天见。"],
+      examples: [{ index: 0, hanzi: "我得走，明天见。", slots: exSlots, gemini: null }],
+    });
+    fake.replies = [
+      JSON.stringify({
+        pinyin: ["wǒ", "dé", "zǒu", "le"],
+        examples: [
+          { sentence: 1, pinyin: ["wǒ", "děi", "zǒu", "míng", "tiān", "jiàn"] },
+          // A sentence nobody listed is ignored.
+          { sentence: 2, pinyin: ["x"] },
+        ],
+      }),
+      JSON.stringify({
+        choices: [
+          { sentence: 1, index: 1, reading: "děi" },
+          { sentence: 0, index: 1, reading: "děi" },
+        ],
+      }),
+    ];
+    await worker.run();
+    expect(fake.bodies).toHaveLength(2);
+    expect(engine.completes[0]).toMatchObject({
+      status: "done",
+      prompt_version: "pinyin_reading.v2+pinyin_referee.v2",
+      result: {
+        gemini: ["wǒ", "dé", "zǒu", "le"],
+        // The phrase had no dispute, so its stray answer is left out.
+        referee: [],
+        examples: [
+          {
+            index: 0,
+            gemini: ["wǒ", "děi", "zǒu", "míng", "tiān", "jiàn"],
+            referee: [{ index: 1, reading: "děi" }],
+          },
+        ],
+      },
+    });
+    const text = (fake.bodies[1]!.body as { contents: { parts: { text: string }[] }[] })
+      .contents[0]!.parts[0]!.text;
+    expect(text).toContain("1, 1: 得 → dé | děi | de");
+    expect(text).not.toContain("0, 1:");
+  });
+
+  it("a settled phrase with the extraction's example reading needs only the referee", async () => {
+    const { engine, fake, worker } = setup();
+    engine.addPinyin({
+      ...input(null),
+      phrase_settled: true,
+      context: ["我得走，明天见。"],
+      examples: [
+        {
+          index: 0,
+          hanzi: "我得走，明天见。",
+          slots: exSlots,
+          gemini: ["wǒ", "děi", "zǒu", "míng", "tiān", "jiàn"],
+        },
+      ],
+    });
+    fake.replies = [JSON.stringify({ choices: [{ sentence: 1, index: 1, reading: "děi" }] })];
+    await worker.run();
+    expect(fake.bodies).toHaveLength(1);
+    expect(engine.completes[0]).toMatchObject({
+      status: "done",
+      prompt_version: "pinyin_referee.v2",
+      result: {
+        gemini: null,
+        referee: [],
+        examples: [{ index: 0, gemini: null, referee: [{ index: 1, reading: "děi" }] }],
+      },
+    });
   });
 
   it("with the extraction's reading and no dispute, makes no call", async () => {

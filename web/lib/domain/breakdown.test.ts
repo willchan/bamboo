@@ -210,7 +210,7 @@ describe("the synthetic seed's breakdowns", () => {
   it("all pass the exact-match rule (else the seeded shots would show none)", async () => {
     const { SEEDS } = await import("../../scripts/seed-data");
     const withBreakdown = SEEDS.filter((s) => s.breakdown);
-    expect(withBreakdown.map((s) => s.kind).sort()).toEqual(["sentence", "term"]);
+    expect([...new Set(withBreakdown.map((s) => s.kind))].sort()).toEqual(["sentence", "term"]);
     for (const s of withBreakdown) {
       const r = checkBreakdown(s.kind, s.hanzi, s.breakdown);
       expect(r.dropped).toBe(false);

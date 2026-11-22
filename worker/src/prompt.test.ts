@@ -10,9 +10,9 @@ const FILE = (n: string) =>
   `<!-- note ${n} -->\n<!-- system -->\nS${n}\n<!-- user -->\nU {{user_text}}\n<!-- repair -->\nR {{errors}}\n`;
 
 describe("prompt files", () => {
-  it("the shipped prompt loads as extract_turn.v7 with all three parts", () => {
+  it("the shipped prompt loads as extract_turn.v8 with all three parts", () => {
     const p = loadPrompt();
-    expect(p.version).toBe("extract_turn.v7");
+    expect(p.version).toBe("extract_turn.v8");
     expect(p.system).toContain("turn_kind");
     expect(p.user).toContain("{{user_text}}");
     expect(p.user).toContain("{{reply_text}}");
@@ -39,9 +39,12 @@ describe("prompt files", () => {
     expect(v4).toMatch(/Never two that reword each other/u);
     expect(v4).toMatch(/short English translation as `english`/u);
     expect(v4).toMatch(/Never write an item that is not in the turn/u);
+    // v8: each example has its own reading (§10 #107).
+    expect(v4).toMatch(/Each example has its own `pinyin`/u);
     for (const name of ["pinyin_reading", "pinyin_referee"]) {
       const p = loadPrompt(name);
-      expect(p.version).toBe(`${name}.v1`);
+      expect(p.version).toBe(`${name}.v2`);
+      expect(p.user).toContain("{{context}}");
       expect(p.system).toMatch(/Never a person's name/u);
       expect(p.user).toContain("{{hanzi}}");
     }

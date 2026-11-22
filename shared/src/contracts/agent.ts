@@ -52,6 +52,23 @@ export const ReextractResponse = z.object({
 });
 export type ReextractResponse = z.infer<typeof ReextractResponse>;
 
+/**
+ * `POST /api/agent/example-pinyin` (§10 #107): queue `pinyin` jobs (marked `backfill`) for
+ * current terms whose examples have no stored pinyin yet, oldest first, at most `limit`. Phrases
+ * with an open pinyin job are skipped. Only the backfill run on the paid key claims them.
+ */
+export const ExamplePinyinRequest = z
+  .object({ limit: z.number().int().min(1).max(sharedConfig.reextract.maxLimit).optional() })
+  .strict();
+export type ExamplePinyinRequest = z.infer<typeof ExamplePinyinRequest>;
+
+export const ExamplePinyinResponse = z.object({
+  queued: z.number().int().min(0),
+  /** Phrases still missing example pinyin with no open job, after this call. */
+  remaining: z.number().int().min(0),
+});
+export type ExamplePinyinResponse = z.infer<typeof ExamplePinyinResponse>;
+
 /** `GET /api/agent/backfill?since=<ms>` (H7, DESIGN §5.5.6): counts only, never text. */
 export const BackfillQuery = z.object({
   /** Re-run results finished at or after this time (ms since the epoch) are summed. */
@@ -112,6 +129,14 @@ export const BackfillReport = z.object({
     models: z.record(z.string(), count),
   }),
   phrases_reported_open: count,
+  /**
+   * §10 #107: current terms with an example that has no settled pinyin (none stored, or a dispute
+   * still pending), those of them `POST /api/agent/example-pinyin` would queue now (no open
+   * pinyin job), and the open backfill jobs. Optional: an older engine doesn't send it.
+   */
+  example_pinyin: z
+    .object({ phrases_missing: count, queueable: count, open_backfill_jobs: count })
+    .optional(),
   review: z.object({ review_log_rows: count, reviewed_cards: count }),
 });
 export type BackfillReport = z.infer<typeof BackfillReport>;

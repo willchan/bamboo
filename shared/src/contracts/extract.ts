@@ -37,6 +37,17 @@ export const ExtractExample = z.object({
 });
 export type ExtractExample = z.infer<typeof ExtractExample>;
 
+/** Gemini's reading of a sentence: one syllable per Chinese character, in order. */
+const ModelReading = z.array(z.string().min(1).max(12)).max(200);
+
+/**
+ * An example as the API takes it: since extract_turn.v8, with Gemini's reading of it (DESIGN
+ * §5.5.3b, §10 #107). Never stored as such: the engine merges it per syllable with the computed
+ * reading, as it does a phrase's. Absent for Ollama results and older prompts.
+ */
+export const ExtractItemExample = ExtractExample.extend({ pinyin: ModelReading.nullish() });
+export type ExtractItemExample = z.infer<typeof ExtractItemExample>;
+
 export const ExtractItem = z.object({
   kind: z.enum(ITEM_KINDS),
   /** Copied exactly from the turn; frames use `…` for the slot. */
@@ -52,12 +63,12 @@ export const ExtractItem = z.object({
   /** Decode turns only: Will's guess, copied from his message. */
   heard_as: z.string().max(80).nullable(),
   /** Terms only: a sentence from the reply that uses the term, copied exactly. */
-  example: ExtractExample.nullable(),
+  example: ExtractItemExample.nullable(),
   /**
    * extract_turn.v4 (H4): more than one example per term, each copied exactly. When present it is
    * used instead of `example` (the worker sends `example` too: its first entry).
    */
-  examples: z.array(ExtractExample).max(sharedConfig.extraction.maxExamplesPerItem).nullish(),
+  examples: z.array(ExtractItemExample).max(sharedConfig.extraction.maxExamplesPerItem).nullish(),
   /**
    * extract_turn.v4 on Gemini: Gemini's reading, one syllable per Chinese character of `hanzi`,
    * in order. Never stored as such: the engine merges it with the computed reading (DESIGN
@@ -141,3 +152,20 @@ export const ModelExtractTurnResultV4 = z.object({
   items: z.array(ModelExtractItemV4).max(sharedConfig.extraction.maxItems),
 });
 export type ModelExtractTurnResultV4 = z.infer<typeof ModelExtractTurnResultV4>;
+
+/**
+ * extract_turn.v8's output schema (DESIGN §5.5.2, §10 #107): v4's, with Gemini's reading of each
+ * example (`pinyin`, one syllable per Chinese character, as for the item). The worker sends it to
+ * Gemini through `servableSchema` and to Ollama as is; the Ollama fallback's readings are dropped.
+ */
+export const ModelExtractExampleV8 = ExtractExample.extend({ pinyin: ModelReading });
+export const ModelExtractItemV8 = ModelExtractItemV4.extend({
+  examples: z.array(ModelExtractExampleV8).max(sharedConfig.extraction.maxExamplesPerItem),
+});
+export type ModelExtractItemV8 = z.infer<typeof ModelExtractItemV8>;
+
+export const ModelExtractTurnResultV8 = z.object({
+  turn_kind: z.enum(TURN_KINDS),
+  items: z.array(ModelExtractItemV8).max(sharedConfig.extraction.maxItems),
+});
+export type ModelExtractTurnResultV8 = z.infer<typeof ModelExtractTurnResultV8>;

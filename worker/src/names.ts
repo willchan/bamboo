@@ -109,8 +109,9 @@ export function filterNames(
       dropped += 1;
       return false;
     });
+    // An example's pinyin (v8) is syllables only, so it stays as it is.
     const cleanExamples = examples.map((e) => ({
-      hanzi: e.hanzi,
+      ...e,
       english: e.english === null ? null : english(e.english),
     }));
     let heardAs = item.heard_as;

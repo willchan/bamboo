@@ -6,6 +6,7 @@ import { and, count, eq, gte, inArray, isNotNull, like, sql } from "drizzle-orm"
 import { config } from "../config";
 import { atReplyCap, sumRerunEvents } from "../domain/backfill";
 import { openReextractions, staleTurnIds } from "./capture";
+import { examplePinyinCandidates, openBackfillPinyinJobs } from "./pinyin";
 
 const num = (v: unknown) => Number(v ?? 0);
 
@@ -80,6 +81,10 @@ export async function backfillReport(db: Db, since: number): Promise<BackfillRep
         .where(and(eq(job.reextract, true), eq(job.status, "failed"), gte(job.finishedAt, since))),
     ]);
 
+  const [examplePinyin, openBackfill] = await Promise.all([
+    examplePinyinCandidates(db),
+    openBackfillPinyinJobs(db),
+  ]);
   const [reported, logRows, reviewed] = await Promise.all([
     db
       .select({ n: count() })
@@ -113,6 +118,11 @@ export async function backfillReport(db: Db, since: number): Promise<BackfillRep
       referee_calls: referee[0]!.n,
     },
     phrases_reported_open: reported[0]!.n,
+    example_pinyin: {
+      phrases_missing: examplePinyin.missing.length,
+      queueable: examplePinyin.queueable.length,
+      open_backfill_jobs: openBackfill,
+    },
     review: { review_log_rows: logRows[0]!.n, reviewed_cards: reviewed[0]!.n },
   };
 }

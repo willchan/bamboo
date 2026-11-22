@@ -4,7 +4,11 @@ import {
   ClaimedJob,
   ClientLogEntry,
   CompleteRequest,
+  ExtractItem,
   ExtractTurnResult,
+  ModelExtractTurnResultV8,
+  PinyinJobInput,
+  PinyinJobResult,
   ImportRequest,
   KnownRequest,
   NotificationsResponse,
@@ -101,5 +105,40 @@ describe("contracts", () => {
     expect(ClientLogEntry.safeParse({ ...ok, page: "/review/abc123" }).success).toBe(false);
     expect(ClientLogEntry.safeParse({ ...ok, name: "a b" }).success).toBe(false);
     expect(ClientLogEntry.safeParse({ ...ok, kind: "boom" }).success).toBe(false);
+  });
+});
+
+describe("example pinyin contracts (§10 #107)", () => {
+  const item = {
+    kind: "term",
+    hanzi: "走",
+    english: "to go",
+    note: null,
+    heard_as: null,
+    examples: [{ hanzi: "快走", english: "Go quickly." }],
+    usefulness: 3,
+    tags: [],
+    pinyin: ["zǒu"],
+    breakdown: null,
+  };
+  it("v8's model schema requires each example's reading; the API's makes it optional", () => {
+    const v8 = (examples: unknown) =>
+      ModelExtractTurnResultV8.safeParse({ turn_kind: "say", items: [{ ...item, examples }] })
+        .success;
+    expect(v8([{ hanzi: "快走", english: "Go quickly." }])).toBe(false);
+    expect(v8([{ hanzi: "快走", english: "Go quickly.", pinyin: ["kuài", "zǒu"] }])).toBe(true);
+    const api = (ex: object) =>
+      ExtractItem.safeParse({ ...item, example: ex, examples: [ex] }).success;
+    expect(api({ hanzi: "快走", english: null })).toBe(true);
+    expect(api({ hanzi: "快走", english: null, pinyin: ["kuài", "zǒu"] })).toBe(true);
+  });
+
+  it("a pinyin job queued before it (no examples) still parses", () => {
+    const old = { phrase_id: "p", hanzi: "走", context: [], slots: [], gemini: null };
+    expect(PinyinJobInput.parse(old)).toEqual(old);
+    expect(PinyinJobResult.parse({ gemini: null, referee: [] })).toEqual({
+      gemini: null,
+      referee: [],
+    });
   });
 });

@@ -25,7 +25,7 @@ import { count, eq } from "drizzle-orm";
 import { checkBreakdown } from "../lib/domain/breakdown";
 import { reviewCard, type FsrsColumns, type Grade } from "../lib/domain/fsrs";
 import { initialCardTypes } from "../lib/domain/phrase";
-import { mergedPinyin } from "../lib/domain/pinyin";
+import { mergedPinyin, settleExample } from "../lib/domain/pinyin";
 import { eventRow, newId } from "../lib/repo/db";
 import { findByKey, phraseRows } from "../lib/repo/phrases";
 
@@ -35,7 +35,15 @@ export interface Seed {
   english: string;
   note?: string;
   heardAs?: string;
-  examples?: { hanzi: string; english: string }[];
+  /**
+   * `merge`: Gemini's reading of the example and the referee's answers (extract_turn.v8, §10 #107),
+   * stored merged; without it the example has no stored pinyin, like one from before v8.
+   */
+  examples?: {
+    hanzi: string;
+    english: string;
+    merge?: { gemini: string[]; referee: Record<number, string> };
+  }[];
   /** A synthetic card-back breakdown (DESIGN §5.5.4); must match the hanzi (`checkBreakdown`). */
   breakdown?: PhraseBreakdown;
   tags: string[];
@@ -113,7 +121,27 @@ export const SEEDS: Seed[] = [
     english: "turn upside down",
     // The dictionary reads 倒 dǎo; the referee settles on dào, and the example follows (§10 #106).
     merge: { gemini: ["dào", "guò", "lái"], referee: { 0: "dào" } },
-    examples: [{ hanzi: "别把杯子倒过来。", english: "Don't turn the cup upside down." }],
+    examples: [
+      { hanzi: "别把杯子倒过来。", english: "Don't turn the cup upside down." },
+      // §10 #107: the example's own merge settles 得 on děi (the dictionary reads dé).
+      {
+        hanzi: "我得把它倒过来。",
+        english: "I have to turn it upside down.",
+        merge: {
+          gemini: ["wǒ", "děi", "bǎ", "tā", "dào", "guò", "lái"],
+          referee: { 1: "děi", 4: "dào" },
+        },
+      },
+    ],
+    // A breakdown, so the card back shows every example, not only the first (§6).
+    breakdown: {
+      parts: [
+        { hanzi: "倒", gloss: "upside down" },
+        { hanzi: "过", gloss: "over" },
+        { hanzi: "来", gloss: "come" },
+      ],
+      meaning: "Flip something over so its top faces down.",
+    },
     tags: ["household"],
     turnKind: "say",
     usefulness: 4,
@@ -345,7 +373,12 @@ async function seedPhrases(db: Db, now: number): Promise<number> {
         english: s.english,
         note: s.note,
         heardAs: s.heardAs,
-        examples: (s.examples ?? []).map((e) => ({ ...e, turn_id: null })),
+        examples: (s.examples ?? []).map(({ merge, ...e }) => {
+          const ex = { ...e, turn_id: null };
+          if (!merge) return ex;
+          const referee = new Map(Object.entries(merge.referee).map(([i, r]) => [Number(i), r]));
+          return settleExample(ex, merge.gemini, referee, { final: true });
+        }),
         breakdown: s.breakdown ? checkBreakdown(s.kind, s.hanzi, s.breakdown).breakdown : null,
         ...(s.merge ? mergedFields(s.hanzi, s.merge) : {}),
         tags: s.tags,
