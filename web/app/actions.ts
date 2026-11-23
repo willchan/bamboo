@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth/current";
 import { GRADES, type Grade } from "@/lib/domain/fsrs";
 import { PhraseInput } from "@/lib/domain/phrase";
-import { phraseFormToInput } from "@/lib/phrase-form";
+import { phraseFormToInput, roundReturnPath } from "@/lib/phrase-form";
 import { hasHanzi } from "@bamboo/shared";
 import { importPastedText, queueReextraction, retryFailedJobs } from "@/lib/repo/capture";
 import { serverClock } from "@/lib/repo/clock";
@@ -127,7 +127,12 @@ export async function savePhraseAction(
         : { errors: ["That phrase no longer exists."] };
     }
     revalidatePath("/", "layout");
-    redirect(`/phrases/${res.id}?saved=${res.overrideDropped ? "override-dropped" : "1"}`);
+    // Opened from a round (the review ⋯ menu): back to it, the card now edited. A dropped pinyin
+    // override stays on the editor so Will sees the warning, with the way back.
+    const back = roundReturnPath(fd.get("round"));
+    if (back && !res.overrideDropped) redirect(back);
+    const round = back ? `&round=${String(fd.get("round"))}` : "";
+    redirect(`/phrases/${res.id}?saved=${res.overrideDropped ? "override-dropped" : "1"}${round}`);
   });
 }
 
@@ -138,7 +143,7 @@ export async function dropPhraseAction(fd: FormData): Promise<void> {
     const from = String(fd.get("from") ?? "");
     await dropPhrase(getDb(), id, Date.now(), from === "queue" ? "remove" : "editor");
     revalidatePath("/", "layout");
-    if (from !== "queue") redirect("/phrases");
+    if (from !== "queue") redirect(roundReturnPath(fd.get("round")) ?? "/phrases");
   });
 }
 

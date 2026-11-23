@@ -25,8 +25,9 @@ const nextConfig: NextConfig = {
       "../node_modules/.pnpm/node_modules/sharp",
     ],
   },
-  // Keep the dev indicator off the bottom tab bar (it covered the Today tab on a phone).
-  devIndicators: { position: "top-right" },
+  // No dev indicator: on a phone every corner covers a control (the tab bar at the bottom, the
+  // review screen's ✕ and ⋯ at the top). Runtime errors still open Next's error overlay.
+  devIndicators: false,
 };
 
 export default nextConfig;

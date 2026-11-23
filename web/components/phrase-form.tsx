@@ -34,7 +34,7 @@ const KINDS_WITH_FRAME = ["term", "frame", "sentence"] as const;
 const field = "h-11 w-full rounded-xl border border-border bg-card px-3";
 const label = "flex flex-col gap-1 text-sm font-medium";
 
-export function PhraseForm({ values }: { values: PhraseFormValues }) {
+export function PhraseForm({ values, round }: { values: PhraseFormValues; round?: string | null }) {
   const [state, action, pending] = useActionState<PhraseFormState, FormData>(savePhraseAction, {});
   const [kind, setKind] = useState(values.kind);
   // Frames are retired (DESIGN §10 #77): a new phrase can't be one; an old frame still shows its kind.
@@ -45,6 +45,7 @@ export function PhraseForm({ values }: { values: PhraseFormValues }) {
   return (
     <form action={action} className="flex flex-col gap-5">
       {values.id ? <input type="hidden" name="id" value={values.id} /> : null}
+      {round ? <input type="hidden" name="round" value={round} /> : null}
 
       {state.errors?.length ? (
         <div role="alert" className="rounded-xl border border-danger p-3 text-sm text-danger">

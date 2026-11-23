@@ -275,7 +275,7 @@ export async function getPhrase(db: Db, id: string): Promise<PhraseWithCards | u
   return { ...p, cards };
 }
 
-export type DropVia = "not_useful" | "remove" | "editor" | "retire";
+export type DropVia = "not_useful" | "review" | "remove" | "editor" | "retire";
 
 /**
  * Drop a phrase: it leaves the queue and its cards leave scheduling. Logs `phrase_dropped` with

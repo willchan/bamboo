@@ -5,6 +5,7 @@ import { dropPhraseAction, restorePhraseAction } from "@/app/actions";
 import { PhraseForm } from "@/components/phrase-form";
 import { Ruby } from "@/components/ruby";
 import { requireUser } from "@/lib/auth/current";
+import { roundReturnPath } from "@/lib/phrase-form";
 import { displayPinyin } from "@/lib/domain/pinyin";
 import { getDb } from "@/lib/repo/db";
 import { getPhrase } from "@/lib/repo/phrases";
@@ -23,7 +24,10 @@ export default async function EditPhrasePage({ params, searchParams }: PageProps
   return timed("page /phrases/[id]", async () => {
     await requireUser();
     const { id } = await params;
-    const { saved } = await searchParams;
+    const { saved, round } = await searchParams;
+    // Opened from a round's ⋯ menu: ← and saving go back to it (DESIGN §6 *Review*).
+    const back = roundReturnPath(round);
+    const roundId = back ? (round as string) : null;
     const p = await getPhrase(getDb(), id);
     if (!p) notFound();
 
@@ -33,7 +37,11 @@ export default async function EditPhrasePage({ params, searchParams }: PageProps
     return (
       <main className="flex flex-col gap-4">
         <header className="flex items-center gap-3">
-          <Link href="/phrases" className="text-sm text-muted" aria-label="Back to phrases">
+          <Link
+            href={back ?? "/phrases"}
+            className="text-sm text-muted"
+            aria-label={back ? "Back to the round" : "Back to phrases"}
+          >
             ←
           </Link>
           <h1 className="text-2xl font-semibold">Edit phrase</h1>
@@ -49,6 +57,14 @@ export default async function EditPhrasePage({ params, searchParams }: PageProps
             {saved === "override-dropped"
               ? " The Chinese changed, so your pinyin edits were dropped: check the new pinyin."
               : ""}
+            {back ? (
+              <>
+                {" "}
+                <Link href={back} className="underline underline-offset-4">
+                  Back to the round
+                </Link>
+              </>
+            ) : null}
           </p>
         ) : null}
 
@@ -70,6 +86,7 @@ export default async function EditPhrasePage({ params, searchParams }: PageProps
         ) : null}
 
         <PhraseForm
+          round={roundId}
           key={`${p.id}:${p.updatedAt}`}
           values={{
             id: p.id,
@@ -89,6 +106,7 @@ export default async function EditPhrasePage({ params, searchParams }: PageProps
         {gone ? null : (
           <form action={dropPhraseAction} className="pt-2">
             <input type="hidden" name="id" value={p.id} />
+            {roundId ? <input type="hidden" name="round" value={roundId} /> : null}
             <button type="submit" className="h-12 w-full rounded-2xl text-danger">
               Drop this phrase
             </button>
