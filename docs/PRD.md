@@ -161,6 +161,11 @@ words; characters still help. He already talks to his household's **OpenClaw** a
 - The **first time** a new card appears, two more buttons:
   - **Not useful**: the phrase is dropped, and the drop teaches the ranking.
   - **Already know**: graded Easy, so it comes back much later.
+- On **every** card, a **⋯** menu at the top right offers:
+  - **Edit phrase**: opens the phrase's editor in the same tab (answers given so far are saved
+    first); saving, dropping it or ← goes back to the round, at the same card, now edited.
+  - **Not useful**: drops the phrase there and then, for a card that turns out not to be worth
+    keeping after a few reviews. The round moves on, and the phrase's other cards leave it too.
 - Audio comes from the device's Mandarin voice (`zh-CN`). There is a replay button and a slow-replay
   button (about a third of normal speed, so it's clearly slower on an iPhone too). Earphones are recommended at night.
 

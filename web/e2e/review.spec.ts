@@ -249,3 +249,56 @@ test("a save from an older deploy reloads and resends instead of looping", async
   await page.goto("/");
   await expect(page.getByRole("button", { name: /^Learn \d+ more/ })).toHaveCount(0);
 });
+
+// Will's iPhone feedback (Nov 2026): a card past its first sight had no way to drop or fix it
+// mid-round. The ⋯ menu offers Edit phrase (same tab, back to the round at that card) and Not
+// useful on every card (DESIGN §6 *Review*).
+test("the ⋯ menu edits a card and comes back, or drops it", async ({ page }) => {
+  for (const [hanzi, english] of [
+    ["拿勺子。", "Get the spoon."],
+    ["擦擦嘴。", "Wipe your mouth."],
+  ] as const) {
+    await page.goto("/phrases/new");
+    await page.getByRole("radio", { name: "sentence" }).check({ force: true });
+    await page.getByLabel("Chinese", { exact: true }).fill(hanzi);
+    await page.getByLabel("English intent", { exact: true }).fill(english);
+    await page.getByRole("button", { name: "Add phrase" }).click();
+    await expect(page.getByTestId("saved")).toBeVisible();
+  }
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Learn 2 more" }).click();
+  const progress = page.getByTestId("progress");
+  await expect(progress).toHaveText("1 / 2");
+  const front = page.getByTestId("card-front");
+  const first = (await front.textContent())!;
+
+  // Edit: the editor opens in the same tab, ← points back at the round, and saving returns to it.
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "Edit phrase" }).click();
+  await expect(page.getByRole("heading", { name: "Edit phrase" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to the round" })).toHaveAttribute(
+    "href",
+    /^\/review\//,
+  );
+  await page.getByLabel("English intent", { exact: true }).fill(`${first} (edited)`);
+  await page.getByRole("button", { name: /^Save/ }).click();
+  await expect(progress).toHaveText("1 / 2");
+  await expect(front).toHaveText(`${first} (edited)`);
+
+  // Not useful from the menu drops it and moves on.
+  await page.getByRole("button", { name: "More" }).click();
+  await page.getByRole("menuitem", { name: "Not useful" }).click();
+  await expect(progress).toHaveText("2 / 2");
+  await expect(front).not.toHaveText(`${first} (edited)`);
+  await expect(async () => {
+    await page.getByRole("button", { name: "Show", exact: true }).click();
+    await expect(page.getByRole("button", { name: /^Good/ })).toBeVisible({ timeout: 300 });
+  }).toPass();
+  await page.getByRole("button", { name: /^Good/ }).click();
+  await expect(page.getByTestId("done-for-today")).toBeVisible();
+
+  // The dropped phrase isn't in Up next or waiting for Learn more.
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: /^Learn \d+ more/ })).toHaveCount(0);
+});

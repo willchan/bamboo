@@ -107,6 +107,7 @@ function RoundSession({
   const [cards, setCards] = useState<ClientCard[]>(initialCards);
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [finished, setFinished] = useState<Today | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ pending: 0, failed: false });
@@ -184,6 +185,7 @@ function RoundSession({
     setCards(next);
     setIndex((i) => i + 1);
     setRevealed(false);
+    setMenuOpen(false);
   };
 
   const reveal = () => {
@@ -252,10 +254,12 @@ function RoundSession({
     });
   };
 
+  // Not useful: on first sight, or any time from the ⋯ menu (DESIGN §4.4). The phrase's other
+  // cards still to come in this round go too.
   const notUseful = () => {
     if (!current) return;
-    const { cardId } = current;
-    advance(cards);
+    const { cardId, phraseId } = current;
+    advance(cards.filter((c, i) => i <= index || c.phraseId !== phraseId));
     const id = crypto.randomUUID();
     addPending({ kind: "notUseful", id, roundId, cardId });
     saves.push(async () => {
@@ -278,6 +282,17 @@ function RoundSession({
     e.preventDefault();
     void saves.idle().then((drained) => {
       if (drained) router.push("/");
+    });
+  };
+
+  // Edit from the ⋯ menu: the same tab (a new one would leave the installed app), once the last
+  // grades have landed. The editor comes back to this round, which resumes at this card.
+  const edit = () => {
+    if (!current) return;
+    const href = `/phrases/${current.phraseId}?round=${roundId}`;
+    setMenuOpen(false);
+    void saves.idle().then((drained) => {
+      if (drained) router.push(href);
     });
   };
 
@@ -326,7 +341,49 @@ function RoundSession({
         <span data-testid="progress">
           {position} / {Math.max(total, cards.length)}
         </span>
-        <span className="w-6" />
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setMenuOpen((o) => !o)}
+            className="-mr-2 rounded-md px-2 py-1 text-lg leading-none"
+            aria-label="More"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            ⋯
+          </button>
+          {menuOpen ? (
+            <>
+              <button
+                type="button"
+                aria-label="Close menu"
+                className="fixed inset-0 z-10 cursor-default"
+                onClick={() => setMenuOpen(false)}
+              />
+              <div
+                role="menu"
+                className="absolute right-0 z-20 mt-1 flex w-44 flex-col overflow-hidden rounded-xl border border-border bg-card text-base text-foreground shadow-lg"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={edit}
+                  className="h-11 px-4 text-left"
+                >
+                  Edit phrase
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={notUseful}
+                  className="h-11 border-t border-border px-4 text-left text-danger"
+                >
+                  Not useful
+                </button>
+              </div>
+            </>
+          ) : null}
+        </div>
       </header>
 
       <button

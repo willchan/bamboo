@@ -367,8 +367,8 @@ describe("rounds", () => {
     });
   });
 
-  it("refuses Not useful on a card that has been reviewed", async () => {
-    await add();
+  it("Not useful after first sight drops the phrase as a review drop", async () => {
+    const id = await add();
     const roundId = (await startRound(db, clock()))!;
     const c = (await getRound(db, roundId, clock()))!.cards[0]!;
     await gradeCard(
@@ -376,7 +376,12 @@ describe("rounds", () => {
       { roundId, cardId: c.cardId, grade: 1, source: "session", durationMs: null },
       clock(),
     );
-    expect(await markNotUseful(db, c.cardId, clock())).toBe(false);
+    expect(await markNotUseful(db, c.cardId, clock())).toBe(true);
+    expect((await getPhrase(db, id))!.status).toBe("dropped");
+    const dropped = await db.select().from(event).where(eq(event.type, "phrase_dropped"));
+    // Not a first sight: Stats' Not useful rate leaves it out.
+    expect(dropped[0]!.data).toMatchObject({ phrase_id: id, via: "review" });
+    expect(await markNotUseful(db, c.cardId, clock())).toBe(false); // already dropped
     expect(await markNotUseful(db, "nope", clock())).toBe(false);
   });
 

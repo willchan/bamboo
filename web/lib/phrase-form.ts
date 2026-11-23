@@ -40,3 +40,11 @@ export function phraseFormToInput(fd: FormData): PhraseInputRaw {
     pinyinEdits,
   };
 }
+
+/**
+ * The round the editor was opened from (the review ⋯ menu's Edit, `?round=`), as the path to go
+ * back to, or null. Only a round id is accepted, so the value can't send Will anywhere else.
+ */
+export function roundReturnPath(round: unknown): string | null {
+  return typeof round === "string" && /^[0-9A-Za-z]{1,40}$/.test(round) ? `/review/${round}` : null;
+}

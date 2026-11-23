@@ -398,6 +398,10 @@ today** (`Workload.newToday`) once a card has been introduced or Keep going is o
   `newPerDay`.
 - **Already know** → grade **Easy** with `source: 'already_know'`.
 
+**Not useful later** (the review ⋯ menu, §6): the same drop on any card, logged with
+`via: "review"` instead of `"not_useful"`, so Stats' Not useful rate still measures first sights
+only (§10 #110).
+
 A phrase becomes `active` (`introduced_at`) when its first card is graded (Not useful drops it
 instead), logging `phrase_introduced` with its queue rank at that moment.
 
@@ -1550,6 +1554,16 @@ full-screen.
 - **Review** (`/review/[id]`): one card at a time. **Start** is a server action that builds the
   round, stores it and opens `/review/<round id>`; reloading resumes it. Grading, Not useful and
   finishing are server actions; Again's re-insertion (§4.4) happens in the client.
+  - **⋯ menu** (top right, every card, §10 #110): **Edit phrase** waits for pending saves (like
+    ✕), then opens `/phrases/<id>?round=<round id>` in the same tab, not a new one: a new tab
+    would leave the installed PWA for Safari. With `round` (`roundReturnPath`: a round id only,
+    so it can't redirect elsewhere), ← and Drop go back to `/review/<round id>`, and Save does
+    too unless it dropped a pinyin override (the editor then shows the warning and a link back).
+    The round resumes from the server with its ungraded cards, so the edited card comes first. An
+    in-round repeat waiting in the client (Again) isn't in the server's round, so it's seen in the
+    next round instead. **Not useful** drops the phrase on any card and removes its other cards
+    still to come from the client's round. Next's dev indicator is off (`devIndicators: false`):
+    every corner covers a control on a phone.
   - **Grading doesn't wait for the server.** The round's cards are already on the client, each
     with its interval preview per grade (`dueInMsByGrade`), so a grade shows the next card at once
     and decides any in-round repeat locally. Saves go through a client queue
@@ -1656,7 +1670,8 @@ the MVP: no offline review and no web push (the reminder comes through Discord).
   (the raw result stays in `job.result`, so dropped items can be sampled)
 - `phrase_introduced {phrase_id, rank, effective_score, usefulness, kind}`
 - `phrase_dropped {phrase_id, effective_score, usefulness, kind, turn_kind, status_before, via}`
-  (`via`: `not_useful`, `remove`, `editor`, or `retire`, H6)
+  (`via`: `not_useful`, `review` (Not useful after first sight, §10 #110), `remove`, `editor`,
+  or `retire`, H6)
 - `already_know {phrase_id}`
 - `asked_again {phrase_id, status, import_id}` (status before the merge)
 - `phrase_revived {phrase_id, reextract?}`
@@ -2015,7 +2030,7 @@ bamboo/
 | 5 | Turn identity = hash of Will's prompt text | Stable across re-shares, formats and multiple conversations |
 | 6 | **Superseded by #74, #76** (Gemini extracts; the verbatim rule stays). Local LLM extracts and rates; it never writes Chinese for study | 9B models copy and classify Chinese well; the verbatim check enforces it, examples included |
 | 7 | **Superseded by #103** (Gemini writes them since v7). Terms carry example sentences copied from Gemini | Will needs usage, not just the word; copying keeps Chinese generation out of the local model |
-| 8 | **Daily cap superseded by #79.** Automatic selection: ranked queue → ≤ 3 new/day (5 since #64); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
+| 8 | **Daily cap superseded by #79; Not useful any time since #110.** Automatic selection: ranked queue → ≤ 3 new/day (5 since #64); Not useful / Already know on first sight | Will prefers not to sort; corrections during review are cheap and train the ranking |
 | 9 | **Refined by #80** (computed, then merged with Gemini's among valid readings). Pinyin computed (pinyin-pro) with overrides | Gemini's pinyin is inconsistent even within a single reply |
 | 10 | "Asked again" = Again on active phrases, revives dropped/expired ones | Re-asking is the clearest forgetting (and usefulness) signal available |
 | 11 | Daily unit = one round of ~10 cards; FSRS at 0.85 | Tiny required unit plus optional extra, as habit-forming apps do; smaller review load |
@@ -2117,6 +2132,7 @@ bamboo/
 | 107 | `extract_turn.v8`: Gemini returns each example's pinyin, merged per syllable like the phrase's (`settleExample`, the shared rules; agree, invalid → computed, both valid → the referee among valid readings plus the neutral tone) and stored on the example (`pinyin`, `pinyin_sources`, optional json fields: expand only). The phrase's `pinyin` job carries the examples that need it (`pinyin_reading.v2`, `pinyin_referee.v2`, still ≤ 2 requests, one phrase with its examples), `phrase_settled` when only they do. The card uses the stored reading, else computed, with #106's inheritance on top. Older examples are filled by `backfill --examples-pinyin`: `backfill`-marked jobs only the paid-key backfill run claims (§5.5.3b, §5.5.6) | Gemini has a reading in mind when it writes the sentence, so a polyphone in an example (得 děi, 长, 了) needn't fall back to the dictionary alone; the same merge keeps stored pinyin a valid dictionary reading. Reusing the phrase's job keeps one request path, one rate limiter and the privacy scope. Marking backfill jobs, rather than queueing them on deploy for every worker, keeps ~300 jobs off the free key's 20 requests a day, which new imports need; the paid run is paced by its own limiter. A prod-copy check (counts only) found all 517 examples display unchanged under the new code |
 | 108 | The ignore step builds when `VERCEL_ENV` is `production` **or** the branch is `main` (`VERCEL_GIT_COMMIT_REF`); a test runs the command in `sh` with both cases (§8.2) | #105's `[ "$VERCEL_ENV" != production ]` alone skipped every `main` push after it (#65, #66, #67 all "Canceled by Ignored Build Step"; prod stayed on #64), found when `POST /api/agent/example-pinyin` answered 404 on prod. Why `VERCEL_ENV` wasn't `production` at that step isn't visible from the repo; checking the branch as well builds `main` whichever is true, and the test checks what the command does, not its text. After a deploy, `pnpm smoke` and the commit's Vercel status (Deployment completed, not Canceled) confirm it went out |
 | 109 | A re-run's example English replaces the stored English for the same sentence; stored English only fills one the re-run left empty (`rerunExamples`, §5.5.4) | Checking the `--named` re-run (#104, prod copy, counts only): it re-read all 11 turns cleanly, but one card kept its damaged translation because the re-run returned the same Chinese sentence and #103's merge preferred the stored English. A re-run already replaces a phrase's English, note and examples, so its example English should win too; preferring stored English only made sense for a merge from a new import, which `mergeExamples` still does |
+| 110 | A ⋯ menu on every review card: **Edit phrase** (same tab, back to the round) and **Not useful** at any time, logged `via: "review"`; first-sight Not useful / Already know stay (amends #8) | Will's iPhone feedback (Nov 2026): a card that turned out not to be worth keeping after a few reviews could only be dropped from Phrases, outside the round, and a wrong translation couldn't be fixed from the card. A separate `via` keeps Stats' Not useful rate a first-sight ranking measure. A new tab would open Safari from the installed PWA, so Edit navigates in place; nothing is lost because pending saves drain first and the round resumes from the server |
 
 ## Appendix A — Synthetic fixtures
 

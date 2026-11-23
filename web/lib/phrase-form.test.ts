@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { phraseFormToInput, splitTags } from "./phrase-form";
+import { phraseFormToInput, roundReturnPath, splitTags } from "./phrase-form";
 
 const form = (entries: [string, string][]) => {
   const fd = new FormData();
@@ -54,5 +54,28 @@ describe("phraseFormToInput", () => {
 
   it("splits tags on English and Chinese commas", () => {
     expect(splitTags("a,b，c、d")).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+describe("roundReturnPath", () => {
+  it("goes back to the round the editor was opened from", () => {
+    expect(roundReturnPath("01JDXK3V7Q9ZB2W4M5N6P8R0ST")).toBe(
+      "/review/01JDXK3V7Q9ZB2W4M5N6P8R0ST",
+    );
+  });
+
+  it("accepts only a round id", () => {
+    for (const v of [
+      undefined,
+      null,
+      "",
+      ["a"],
+      "//evil.example",
+      "../phrases",
+      "a b",
+      "x".repeat(41),
+    ]) {
+      expect(roundReturnPath(v)).toBeNull();
+    }
   });
 });

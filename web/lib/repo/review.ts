@@ -419,8 +419,10 @@ export async function gradeCard(
 /** Not useful (first sight only): the phrase is dropped and the drop teaches the ranking. */
 export async function markNotUseful(db: Db, cardId: string, clock: Clock): Promise<boolean> {
   const c = await db.query.card.findFirst({ where: eq(card.id, cardId) });
-  if (!c || !isFirstSight(c)) return false;
-  return dropPhrase(db, c.phraseId, clock.now, "not_useful");
+  if (!c) return false;
+  // On first sight it's the ranking signal Stats measures; later (the review ⋯ menu) it's a plain
+  // drop, logged apart so it doesn't count as a first sight (DESIGN §4.4).
+  return dropPhrase(db, c.phraseId, clock.now, isFirstSight(c) ? "not_useful" : "review");
 }
 
 /** Close the round (idempotent) and say what's next. */
