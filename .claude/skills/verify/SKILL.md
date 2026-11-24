@@ -1,13 +1,13 @@
 ---
 name: verify
-description: How to see a Bamboo change working before calling it done — seeded phone screenshots (light and dark) for any UI change, then the read-only prod copy when real data matters. Read before finishing any change to web pages, components, styles, domain logic, scheduling, imports or stats.
+description: How to see a Bamboo change working before calling it done — seeded phone screenshots (light and dark; open only the ones that show the change) for any UI change, then the read-only prod copy when real data matters. Read before finishing any change to web pages, components, styles, domain logic, scheduling, imports or stats.
 ---
 
 # Verifying a Bamboo change
 
 Tests passing isn't the bar: Will's iPhone checks (light-mode pinyin, the reminder switch after a
 reload, "Learn 3 more") stayed pending for days after their PRs merged green. Look at the change
-the way Will meets it, on a phone, in both themes. The tools are in docs/DESIGN.md §8.6.
+the way Will meets it, on a phone, in the themes it affects. The tools are in docs/DESIGN.md §8.6.
 
 **Bamboo's data is Will's real Gemini conversations about family Mandarin.** Prod data and
 prod-copy screenshots never go in commits, PRs, fixtures, CI logs or chat. In chat: counts and
@@ -32,10 +32,17 @@ the read-only token, never `TURSO_AUTH_TOKEN`.
    `/review/start` is a round's first card; `/review/back` is the same card after Show.
 2. It exits 1 on any console error, page error, failed request or HTTP ≥ 400 — fix those, don't
    wave them through (a hydration warning is an error).
-3. **Open every PNG and look**: layout at 390 px, both themes, contrast (pinyin is `--muted`),
-   the bottom nav not covering content, text that fits.
-4. Send Will the shots that show the change (SendUserFile). They're synthetic, but they are not
-   committed: `web/.shots/` is gitignored.
+3. **Open the PNGs that show the change and look**: layout at 390 px, contrast (pinyin is
+   `--muted`), the bottom nav not covering content, text that fits. Open one theme; open both when
+   the change touches colors, theme tokens, contrast, pinyin or images (light-mode pinyin was a
+   real bug). Shots of paths your change doesn't alter only need the exit code.
+   Every image you open stays in the session's context and is re-read on every later turn, so
+   open only what you need. The shot run itself is free: its exit code covers errors on every
+   path and theme.
+   With more than about 4 shots to look at, have a subagent open them and report what it saw, so
+   the images stay out of this session. When fixing, re-shoot only the path you're fixing.
+4. Send Will the shots that show the change (SendUserFile; you don't need to open a file to send
+   it). They're synthetic, but they are not committed: `web/.shots/` is gitignored.
 
 ## 2. Prod copy (when real data matters)
 
