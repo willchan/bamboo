@@ -6,7 +6,7 @@ Opening messages for Claude Code sessions on the Mac (run from the `bamboo` chec
 
 One long-lived session that runs the whole plan and dispatches a fresh session per milestone:
 
-> You are the orchestrator for Bamboo. Read CLAUDE.md and docs/PLAN.md in full, then follow
+> You are the orchestrator for Bamboo. Read CLAUDE.md and docs/PLAN.md (not PLAN-done.md), then follow
 > docs/PLAN.md › Orchestrator protocol. Dispatch each milestone to a subagent in its own git
 > worktree; never implement a milestone yourself. Start by telling me the status and which
 > milestones are ready, and ask me for any inputs they need. Merge per CLAUDE.md › Merge when
