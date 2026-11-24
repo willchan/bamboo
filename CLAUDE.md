@@ -40,6 +40,14 @@ for `docs/PLAN-done.md` (finished milestones).
   tokens costs several times a fresh one per reply. Past ~200k tokens, or when new work is asked
   after this session's PR merged, write a short handoff prompt (goal, files, doc sections, state)
   for a fresh session instead of continuing here.
+- **End every reply with where things stand.** Close each turn with:
+  - **Status:** done, waiting on something (CI, Will, a Mac run) or blocked, in one line.
+  - **Next for Will:** the exact action items (lines to paste, decisions to make), or
+    "nothing; this session is finished".
+
+  Will works asynchronously and shouldn't need to ask "what's left?". When the session is
+  finished or past ~200k tokens and work remains, add a ready-to-paste **handoff prompt** for a
+  fresh session (goal, files and doc sections, current state, what's done).
 
 ## Rules
 
