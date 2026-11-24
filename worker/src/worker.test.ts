@@ -36,7 +36,7 @@ function setup(opts: { idlePolls?: number } = {}) {
   let idle = 0;
   const idlePolls = opts.idlePolls ?? 1;
   clock.afterSleep = (ms) => {
-    idle = ms === POLL ? idle + 1 : 0;
+    idle = ms >= POLL && ms <= W.idleMaxSeconds * 1000 ? idle + 1 : 0;
     if (idle >= idlePolls) worker.stop();
   };
   return { engine, ollama, clock, worker, lines };
@@ -186,9 +186,46 @@ describe("claim loop (fake engine with M3's rules)", () => {
     expect(clock.slept).toEqual([POLL, POLL * 2, POLL * 4, POLL]);
   });
 
+  it("backs off idle polls (doubling up to idleMaxSeconds) and resets after a job", async () => {
+    const { engine, ollama, worker, clock } = setup({ idlePolls: 99 });
+    const max = W.idleMaxSeconds * 1000;
+    const ladder = [POLL, POLL * 2, POLL * 4, POLL * 8].map((ms) => Math.min(ms, max));
+    let n = 0;
+    clock.afterSleep = () => {
+      n += 1;
+      if (n === 5) {
+        engine.add(fixtureTurns[0]!);
+        ollama.replies = [VALID];
+      }
+      if (n === 8) worker.stop();
+    };
+    await worker.run();
+    expect(clock.slept.slice(0, 5)).toEqual([...ladder, max]);
+    // The job found after sleep 5 was done; the wait starts over from the poll interval.
+    expect(engine.completes).toHaveLength(1);
+    expect(clock.slept.slice(5, 8)).toEqual(
+      [POLL, POLL * 2, POLL * 4].map((ms) => Math.min(ms, max)),
+    );
+  });
+
+  it("an engine error resets the idle wait to the poll interval's error backoff", async () => {
+    const { engine, worker, clock } = setup({ idlePolls: 99 });
+    let n = 0;
+    clock.afterSleep = () => {
+      n += 1;
+      if (n === 3) engine.serverErrorClaims = 1;
+      if (n === 5) worker.stop();
+    };
+    await worker.run();
+    // idle 15, 30, 60; then one error (backoff restarts at 15s); then idle starts over at 15s.
+    expect(clock.slept).toEqual([POLL, POLL * 2, POLL * 4, POLL, POLL]);
+  });
+
   it("heartbeats every 10 minutes while idle", async () => {
     const perBeat = (W.heartbeatMinutes * 60_000) / POLL;
-    const { engine, worker } = setup({ idlePolls: perBeat * 2 + 1 });
+    // Idle waits back off to idleMaxSeconds, so 17 empty polls span a bit over 20 minutes.
+    expect(perBeat).toBeGreaterThan(0);
+    const { engine, worker } = setup({ idlePolls: 17 });
     await worker.run();
     expect(engine.heartbeats).toHaveLength(3);
   });

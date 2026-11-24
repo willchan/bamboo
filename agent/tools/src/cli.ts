@@ -10,6 +10,7 @@ import { inForum, openclawDiscord, type Discord } from "./discord";
 import { loadSettings, type Settings } from "./env";
 import { uploadConversation, type Conversation } from "./importer";
 import { PdfError, readPdf } from "./pdf";
+import { markImportPending, recordPoll, repliesDue } from "./replies-gate";
 import { readShareLink, ShareParseError } from "./share";
 
 export const USAGE = `usage: bamboo-tools <command> [options]
@@ -220,6 +221,7 @@ async function importConversation(
       channelId,
       messageId: v["message-id"] ?? null,
     });
+    if (v["message-id"]) markImportPending(deps.env, automationCtx(deps).now());
     const unknown = conv.unknownComponents ?? {};
     return {
       code: 0,
@@ -358,7 +360,10 @@ async function cmdReplies(args: readonly string[], deps: Deps): Promise<CliResul
   parse("replies", args);
   return automation("replies", automationCtx(deps), async () => {
     const { settings, client } = automationClient(deps);
+    const now = automationCtx(deps).now();
+    if (!repliesDue(deps.env, now)) return NO_REPLY;
     const notes = await client.notifications();
+    recordPoll(deps.env, now, notes.length);
     const discord = discordOf(deps);
     const unplaced: Notification[] = [];
     const failed: string[] = [];

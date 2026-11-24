@@ -26,6 +26,7 @@ make prod-copy-clean                       # delete the copy when you're done
 bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
 bamboo-tools ask --text-file <txt> / turn --question-file … --answer-file … --message-id …   # the skill's pasted-answer/question routing and tutor capture (H5)
 pnpm smoke https://bamboo-panda.vercel.app   # after each deploy (prod): public, read-only checks, no secrets (cloud: README › After each deploy)
+# idle polling is throttled: worker.idleMaxSeconds, tools.automation.replies in shared/src/config.ts (DESIGN §10 #110)
 make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
 pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model (the fallback)
 BAMBOO_EVAL_GEMINI=1 pnpm --filter @bamboo/worker test:gemini   # Mac, as openclaw-agent: synthetic turns through Gemini (free-tier key in agent.env; counts only)

@@ -504,6 +504,38 @@ describe("bamboo-tools replies", () => {
     expect(await run(["replies"], deps())).toEqual({ code: 0, out: NO_REPLY });
   });
 
+  // Idle polling costs the engine Vercel CPU (DESIGN §10 #110): `replies` only calls it while an
+  // import from this Mac may be unfinished, plus once an hour as a safety net.
+  describe("idle gate", () => {
+    const at = (iso: string) => ({ now: () => new Date(iso) });
+    const T = "2026-11-10T12:00:00Z";
+    const calls = () => engine.calls.filter((c) => c.path === "/api/agent/notifications").length;
+
+    it("skips the engine between safety polls when no import is pending", async () => {
+      expect(await run(["replies"], { ...deps(), ...at(T) })).toEqual({ code: 0, out: NO_REPLY });
+      expect(calls()).toBe(1); // the first run polls
+      await run(["replies"], { ...deps(), ...at("2026-11-10T12:05:00Z") });
+      await run(["replies"], { ...deps(), ...at("2026-11-10T12:55:00Z") });
+      expect(calls()).toBe(1);
+      await run(["replies"], { ...deps(), ...at("2026-11-10T13:00:00Z") });
+      expect(calls()).toBe(2);
+    });
+
+    it("polls every run after an import with a message id, until it settles", async () => {
+      await run(["replies"], { ...deps(), ...at(T) });
+      const imp = importArgs(["--url", "https://g.co/share/x"]);
+      expect((await run(imp, { ...deps(), ...at("2026-11-10T12:01:00Z") })).code).toBe(0);
+      const before = calls();
+      await run(["replies"], { ...deps(), ...at("2026-11-10T12:05:00Z") });
+      await run(["replies"], { ...deps(), ...at("2026-11-10T12:10:00Z") });
+      expect(calls()).toBe(before + 2);
+      // An empty poll more than the pending window after the import ends the fast polling.
+      await run(["replies"], { ...deps(), ...at("2026-11-10T12:40:00Z") });
+      await run(["replies"], { ...deps(), ...at("2026-11-10T12:45:00Z") });
+      expect(calls()).toBe(before + 3);
+    });
+  });
+
   it("prints what has no post to reply in (announced as a new post)", async () => {
     engine.notifications = [{ ...note("i1", "900", "A"), discord_channel_id: null }];
     expect(await run(["replies"], deps())).toEqual({ code: 0, out: "A" });

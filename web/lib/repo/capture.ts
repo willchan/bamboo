@@ -413,6 +413,9 @@ export async function claimJob(
   types: readonly JobType[] = ["extract_turn"],
   opts: { reextractOnly?: boolean } = {},
 ): Promise<ClaimedJob | null> {
+  // The worker polls all day and nearly every claim is empty: one indexed call says whether
+  // anything is queued or a lease has run out, and the rest is skipped when not (§10 #110).
+  if (!(await hasClaimableWork(db, now))) return null;
   await sweepExpiredLeases(db, now);
   if (types.includes("extract_turn") && !opts.reextractOnly) {
     const ordinary = await claimExtractJob(db, now, false);
@@ -423,6 +426,20 @@ export async function claimJob(
     if (p) return p;
   }
   return types.includes("extract_turn") ? claimExtractJob(db, now, true) : null;
+}
+
+/**
+ * Is any job (either table) queued, or leased with a lease that has run out? One round trip.
+ * Deliberately wider than what this worker may claim (types, `reextractOnly`): a false positive
+ * only costs the full path.
+ */
+async function hasClaimableWork(db: Db, now: number): Promise<boolean> {
+  const rows = await db.all(sql`select 1 as x where
+    exists (select 1 from ${job} where ${job.status} = 'queued')
+    or exists (select 1 from ${job} where ${job.status} = 'leased' and ${job.leaseExpiresAt} < ${now + 1})
+    or exists (select 1 from ${pinyinJob} where ${pinyinJob.status} = 'queued')
+    or exists (select 1 from ${pinyinJob} where ${pinyinJob.status} = 'leased' and ${pinyinJob.leaseExpiresAt} < ${now + 1})`);
+  return rows.length > 0;
 }
 
 async function claimExtractJob(

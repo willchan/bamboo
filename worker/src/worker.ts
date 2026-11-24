@@ -172,6 +172,8 @@ export class Worker {
     await this.heartbeat();
     let nextHeartbeat = this.now() + W.heartbeatMinutes * 60_000;
     let backoff = pollIntervalMs;
+    let idleWait = pollIntervalMs;
+    const idleMax = Math.max(pollIntervalMs, W.idleMaxSeconds * 1000);
 
     while (!this.stopping) {
       if (this.now() >= nextHeartbeat) {
@@ -199,6 +201,7 @@ export class Worker {
         log(`claim failed: ${claim.message}; retrying in ${Math.round(backoff / 1000)}s`);
         await this.sleep(backoff, this.stopper.signal);
         backoff = Math.min(backoff * 2, W.maxBackoffSeconds * 1000);
+        idleWait = pollIntervalMs;
         continue;
       }
       backoff = pollIntervalMs;
@@ -207,9 +210,12 @@ export class Worker {
           log("until-idle: nothing left to claim; stopping");
           break;
         }
-        await this.sleep(pollIntervalMs, this.stopper.signal);
+        // Idle: wait longer after each empty claim (each one costs the engine CPU time).
+        await this.sleep(idleWait, this.stopper.signal);
+        idleWait = Math.min(idleWait * 2, idleMax);
         continue;
       }
+      idleWait = pollIntervalMs;
       // Not interrupted by stop(): the job is finished and reported first.
       await this.process(claim.job);
     }
