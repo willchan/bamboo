@@ -19,9 +19,12 @@ export function finishedMilestones(plan: string): string[] {
       .split("|")
       .slice(1, -1)
       .map((c) => c.trim());
-    if (cells.length < 2 || /^-+$/.test(cells[0].replace(/:/g, ""))) continue;
-    const id = cells[0].split(/\s+/)[0];
-    if (id && FINISHED.test(cells[1])) ids.push(id);
+    const [first, status] = cells;
+    if (first === undefined || status === undefined || /^-+$/.test(first.replace(/:/g, ""))) {
+      continue;
+    }
+    const id = first.split(/\s+/)[0];
+    if (id && FINISHED.test(status)) ids.push(id);
   }
   return ids;
 }
