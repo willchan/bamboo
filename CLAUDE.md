@@ -108,6 +108,7 @@ for `docs/PLAN-done.md` (finished milestones).
 pnpm install
 pnpm dev                                   # web on localhost:3000 (DEV_AUTH_BYPASS=1 for local sign-in)
 pnpm lint && pnpm typecheck && pnpm test   # what CI runs (web test enforces ≥ 90% coverage on lib/domain), plus: pnpm --filter web build
+pnpm check:plan                            # finished milestones' sections have left docs/PLAN.md (in pnpm test)
 pnpm --filter web test:e2e                 # Playwright, phone viewport; servers on :3100 (fresh db/e2e.db) and :3101 (seeded)
 pnpm --filter web exec playwright install chromium   # once, before the first e2e run
 pnpm db:generate                           # after editing db/src/schema/*: new migration (commit it)

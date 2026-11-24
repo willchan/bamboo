@@ -17,9 +17,13 @@
    plus any manual steps Will must do (accounts, env vars, phone checks).
 6. Drive the PR to green and mergeable: on every check, look at mergeability before CI (a PR that
    conflicts with `main` gets no CI).
-7. Don't edit files owned by another milestone except where your milestone says so. If you must,
+7. **The PR that finishes your milestone moves it out.** In that same PR, move the milestone's
+   whole section, Notes included, from this file to the end of [PLAN-done.md](PLAN-done.md), and
+   mark its status row `merged`. CI fails while a `merged` or `done` row still has its
+   `## <id> —` section here (`pnpm check:plan`, part of `pnpm test`).
+8. Don't edit files owned by another milestone except where your milestone says so. If you must,
    call it out in the PR.
-8. Never commit, quote or paste Will's real conversations (CLAUDE.md *Privacy*). Report counts only.
+9. Never commit, quote or paste Will's real conversations (CLAUDE.md *Privacy*). Report counts only.
 
 ## Orchestrator protocol
 
@@ -52,7 +56,8 @@ worktree). The orchestrator:
    green*:** a PR that is mergeable, with every required check passed and no unresolved review
    thread, is merged without asking, unless its milestone (or Will) says he reviews it first.
    Anything that needs `sudo` or touches production is still asked first.
-7. **Keeps the status table current,** then loops back to step 1 until M6 is merged. At the end it
+7. **Keeps the status table current** (a finished milestone's section leaves this file in its
+   own PR, *Session protocol* step 7), then loops back to step 1 until M6 is merged. At the end it
    summarizes what was built, what changed from the plan, and the open ROADMAP candidates. The
    same loop ran the *Hybrid* milestones (H1–H7, now in PLAN-done.md); their sessions
    branched as `claude/h<N>-<slug>` and titled PRs `H<N>: <title>`.

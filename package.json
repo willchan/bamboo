@@ -8,10 +8,11 @@
   },
   "scripts": {
     "dev": "pnpm --filter web dev",
-    "lint": "pnpm -r --if-present lint && prettier --check .",
+    "lint": "pnpm -r --if-present lint && eslint scripts && prettier --check .",
     "format": "prettier --write .",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test",
+    "test": "pnpm -r --if-present test && node --test 'scripts/*.test.ts'",
+    "check:plan": "node scripts/check-plan.ts",
     "db:generate": "pnpm --filter @bamboo/db generate",
     "db:check": "pnpm --filter @bamboo/db check",
     "db:migrate": "pnpm --filter @bamboo/db migrate",
