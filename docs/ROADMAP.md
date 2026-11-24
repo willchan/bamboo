@@ -9,7 +9,7 @@
   Gemini Flash clearly better than every local model tried (2026-11-06 blind by Will; 2026-11-14
   with `qwen3.8:27b`, no better; DESIGN §10 #58). So, reversing the local-only rule (DESIGN §10
   #74), the tutor is now the `#bamboo` OpenClaw agent on Gemini Flash, and every question asked
-  there is captured as a Bamboo turn with no share link. Built in H5 (docs/PLAN.md › *Hybrid
+  there is captured as a Bamboo turn with no share link. Built in H5 (docs/PLAN-done.md › *Hybrid
   H1–H7*, done 2026-11-19). The harness stays (`make tutor-eval`) in case a local model ever becomes
   good enough to serve as more than the fallback extractor.
 - **Tutor that reuses what's due.** When answering "how do I say X", prefer phrasing that

@@ -4,7 +4,7 @@ Bamboo helps Will remember the Mandarin he looks up in Gemini for talking to his
 yuesao, his toddler and the nanny. He asks the `#bamboo` OpenClaw agent (Gemini Flash) in Discord,
 or shares Gemini conversations there. The Mac mini's worker has Gemini extract phrases from each
 turn into a queue, and a PWA runs a short daily spoken review (one round of ~10 cards, FSRS).
-(The move from local models to this Gemini-backed hybrid is done: docs/PLAN.md › *Hybrid
+(The move from local models to this Gemini-backed hybrid is done: docs/PLAN-done.md › *Hybrid
 H1–H7*, DESIGN §5.5.)
 
 The pieces:
@@ -25,7 +25,17 @@ and shares that Mac's OpenClaw (and its Ollama, now only the worker's fallback).
 | [docs/PROMPTS.md](docs/PROMPTS.md) | You're Will, starting a session (orchestrator, milestone, plan update, quality review) |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build Cantonese, a Discord quiz, or neural TTS: they're deferred |
 
-Read only the sections your task needs.
+Read only the sections your task needs. DESIGN.md is very long (40k+ tokens): find yours with
+`grep -n '^#' docs/DESIGN.md` and read only that range, never the whole file. The same goes
+for `docs/PLAN-done.md` (finished milestones).
+
+## Sessions
+
+- **One task per session.** A session does one task and its PR. When that PR merges, stop: new
+  work starts in a fresh session, not on top of this one's context.
+- **Plan first for multi-file changes.** In plan mode, write a plan that names the files, doc
+  sections and commands, so building it doesn't need to explore again.
+- **Keep output short.** Show failures or `| tail -40` of long command output, not the whole log.
 
 ## Rules
 

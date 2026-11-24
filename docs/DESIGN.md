@@ -1190,7 +1190,7 @@ by Will: both far below Gemini; `qwen3.8:27b` was no better than `qwen3.5:27b` (
 ### 5.5 Gemini-backed hybrid *(decided 2026-11; built in H1–H7)*
 
 Will's decisions of 2026-11 (§10 #74–#83) move tutoring and extraction to Gemini. This section is
-the target design; docs/PLAN.md › *Hybrid H1–H7* builds it. Until a milestone lands, the sections
+the target design; docs/PLAN-done.md › *Hybrid H1–H7* builds it. Until a milestone lands, the sections
 it changes still describe the running code; each milestone moves its part from here into them.
 
 ```

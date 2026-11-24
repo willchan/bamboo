@@ -39,7 +39,7 @@ Gemini is also sometimes wrong. Its pinyin can be inconsistent within one reply,
 sentence is unnatural. So nothing it says should be trusted blindly.
 
 > **2026-11: the Gemini-backed hybrid.** Will decided to move tutoring and extraction to Gemini
-> (DESIGN §5.5, §10 #74–#83; built in docs/PLAN.md › *Hybrid H1–H7*). The sections below
+> (DESIGN §5.5, §10 #74–#83; built in docs/PLAN-done.md › *Hybrid H1–H7*). The sections below
 > describe the target; where the running app still differs, the text says "until H<N>".
 
 ## 2. User
