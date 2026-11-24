@@ -95,6 +95,12 @@ export const sharedConfig = {
      * engine has been unreachable this long; then one alert, and one line on recovery.
      */
     automation: {
+      /**
+       * `replies` runs every 5 min but only asks the engine while an import from this Mac may be
+       * unfinished (the `pendingMinutes` after one), and once per `safetyPollMinutes` otherwise
+       * (a missed import, another channel). Each idle call costs the engine Vercel CPU (§10 #110).
+       */
+      replies: { pendingMinutes: 30, safetyPollMinutes: 60 },
       outageAlertMinutes: 30,
       /** A gap this long with no failing run (the Mac was off) starts a new outage. */
       outageResetMinutes: 60,
@@ -166,6 +172,12 @@ export const sharedConfig = {
     heartbeatMinutes: 10,
     /** While the model isn't pulled (or Ollama is down), re-check this often; no claims meanwhile. */
     modelRecheckSeconds: 60,
+    /**
+     * While the queue is empty the wait between claims doubles from the poll interval up to this
+     * (reset by a job or an error), so an idle worker doesn't spend the engine's Vercel free-tier
+     * CPU on ~5,760 empty claims a day (DESIGN §10 #110). A new import waits at most this long.
+     */
+    idleMaxSeconds: 90,
     /** Back-off after an engine error (network, 5xx): doubles from the poll interval up to this. */
     maxBackoffSeconds: 300,
     /** A `complete` that fails on the network is retried after these delays (the lease is 10 min). */

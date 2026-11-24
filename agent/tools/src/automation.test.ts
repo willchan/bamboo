@@ -173,7 +173,8 @@ describe("non-transient errors", () => {
     const bad = deps({ BAMBOO_AGENT_API_TOKEN: "wrong" });
     expect((await at(0, "replies", bad)).code).toBe(1);
     expect(await at(5)).toEqual(quiet);
-    expect((await at(10, "replies", bad)).code).toBe(1);
+    // `replies` only polls once an hour when idle (§10 #110): the next poll is an hour later.
+    expect((await at(65, "replies", bad)).code).toBe(1);
   });
 
   it("a response that breaks the contract is reported, not hidden", async () => {
