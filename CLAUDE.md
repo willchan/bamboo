@@ -36,6 +36,10 @@ for `docs/PLAN-done.md` (finished milestones).
 - **Plan first for multi-file changes.** In plan mode, write a plan that names the files, doc
   sections and commands, so building it doesn't need to explore again.
 - **Keep output short.** Show failures or `| tail -40` of long command output, not the whole log.
+- **Hand off instead of growing.** Every turn resends the whole context, so a session at 300k+
+  tokens costs several times a fresh one per reply. Past ~200k tokens, or when new work is asked
+  after this session's PR merged, write a short handoff prompt (goal, files, doc sections, state)
+  for a fresh session instead of continuing here.
 
 ## Rules
 
@@ -95,6 +99,11 @@ for `docs/PLAN-done.md` (finished milestones).
   or chat (counts and pass/fail only). Ask Will before `make prod-copy`; delete the copy when done.
 - **Opened a PR?** Turn on its Auto-fix (the app's PR monitor) so CI failures, merge conflicts
   and review comments wake you.
+- **Merge without extra wakes.** Each wake resends the whole context. When the PR is green, in
+  one turn: cancel any backup check-in you scheduled (`delete_trigger`) and unsubscribe from the
+  PR (`unsubscribe_pr_activity`) *before* marking it ready or merging, then merge and check
+  `main`'s CI (one check-in only if it's still running). While Auto-fix is on, don't schedule
+  backup check-ins as well.
 - **Merge when green.** Will doesn't review PRs here. Once a PR you opened (or were asked to drive)
   is mergeable, every required check on its head commit has passed, and no review thread is
   unresolved, merge it yourself (squash) without asking. Don't merge on red, pending or
@@ -102,35 +111,20 @@ for `docs/PLAN-done.md` (finished milestones).
 
 ## Commands
 
-> Keep this list accurate as milestones land. Node 24, pnpm (pinned in `package.json`).
+> Node 24, pnpm (pinned in `package.json`). The full list (pinyin tools, prod copy, bamboo-tools,
+> Mac mini worker, backfill, Gemini probe, tutor eval) is in [docs/COMMANDS.md](docs/COMMANDS.md):
+> grep it before guessing a command, and keep it accurate as milestones land.
 
 ```
 pnpm install
 pnpm dev                                   # web on localhost:3000 (DEV_AUTH_BYPASS=1 for local sign-in)
-pnpm lint && pnpm typecheck && pnpm test   # what CI runs (web test enforces ≥ 90% coverage on lib/domain), plus: pnpm --filter web build
-pnpm check:plan                            # finished milestones' sections have left docs/PLAN.md (in pnpm test)
-pnpm --filter web test:e2e                 # Playwright, phone viewport; servers on :3100 (fresh db/e2e.db) and :3101 (seeded)
-pnpm --filter web exec playwright install chromium   # once, before the first e2e run
+pnpm lint && pnpm typecheck && pnpm test   # what CI runs, plus: pnpm --filter web build
+pnpm --filter web test:e2e                 # Playwright, phone viewport
 pnpm db:generate                           # after editing db/src/schema/*: new migration (commit it)
-pnpm db:migrate                            # apply migrations to TURSO_DATABASE_URL (default file:db/dev.db)
-pnpm --filter web repinyin                 # recompute stored phrase pinyin after a pinyin change (the Vercel build runs it)
-pnpm --filter web gen:pinyin-dict          # regenerate web/lib/data/pinyin-dict.json after bumping pinyin-pro or @pinyin-pro/data (--check verifies)
-pnpm db:seed                               # synthetic dev phrases into a local DB (refuses Turso)
 pnpm --filter web dev:seeded               # next dev on a throwaway seeded db/dev-seeded.db (dev sign-in)
-pnpm --filter web shot / /review/back /imports /stats   # phone shots, light + dark → web/.shots; nonzero on console/request errors
-pnpm --filter web shot /review/back/辅食    # the answer of the round's card showing that hanzi (one /review/… path per run)
-make prod-copy                             # ask Will first: prod → .scratch/prod-copy.db, READ-ONLY token, counts only (DESIGN §8.6)
-pnpm --filter web dev:prod-copy            # next dev on the prod copy (refuses non-file: DBs)
-make prod-copy-clean                       # delete the copy when you're done
-bamboo-tools segment --url <link> | --file <pdf>   # dry-run parse (agent/tools/bin/bamboo-tools in a checkout; no API calls)
-bamboo-tools ask --text-file <txt> / turn --question-file … --answer-file … --message-id …   # the skill's pasted-answer/question routing and tutor capture (H5)
-pnpm smoke https://bamboo-panda.vercel.app   # after each deploy (prod): public, read-only checks, no secrets (cloud: README › After each deploy)
-make worker-install / worker-logs / agent-install / agent-check / mac-update   # Mac mini, as openclaw-agent (DESIGN §8.3); DRY_RUN=1 make agent-install
-pnpm --filter @bamboo/worker test:ollama   # opt-in eval: synthetic turns through the local Ollama model (the fallback)
-BAMBOO_EVAL_GEMINI=1 pnpm --filter @bamboo/worker test:gemini   # Mac, as openclaw-agent: synthetic turns through Gemini (free-tier key in agent.env; counts only)
-pnpm --filter @bamboo/worker backfill -- --gemini-key=paid --count | --limit 10 | --all | --named | --examples-pinyin[=N]   # Mac, as openclaw-agent, launchd worker stopped: H7 re-runs on the paid key (--named: turns the name filter acted on; --examples-pinyin: pinyin jobs for examples without stored pinyin, §10 #107); counts only
-pnpm --filter @bamboo/worker gemini-probe -- [--gemini-key=paid]   # Mac, as openclaw-agent: 4 synthetic Gemini requests (each schema as sent), pass/fail and Google's error each
-make tutor-eval ARGS="run | serve | score …"   # Mac, as openclaw-agent: local tutor evaluation (DESIGN §5.4); output in ~/bamboo-eval/
+pnpm --filter web shot / /review/back /imports /stats   # phone shots, light + dark → web/.shots
+make prod-copy                             # ask Will first: prod → .scratch/prod-copy.db, READ-ONLY, counts only
+make mac-update                            # Mac mini, as openclaw-agent, after a Mac-side PR merges
 ```
 
 ## Working on the live Mac mini
@@ -144,7 +138,7 @@ Lessons from live runs (November 2026). Ask before anything that changes product
 - **After a PR merges,** run `make mac-update` there. It pulls, installs, restarts the worker and
   runs `agent-install` (which ends with `agent-check`), so it also picks up a new tutor prompt or
   skill. If it changed an extraction schema or prompt, run the Gemini probe there too
-  (`gemini-probe`, above): Google rejects some schemas only on a real request ("too many states
+  (`gemini-probe`, docs/COMMANDS.md): Google rejects some schemas only on a real request ("too many states
   for serving", H7), which CI can't see.
 - **Cloud sessions can't reach the Mac.** Whenever something has to run there, end your report
   with the exact line(s) for Will to paste from his own account (`willchan`) on the Mac mini,

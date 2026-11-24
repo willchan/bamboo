@@ -42,6 +42,11 @@ worktree). The orchestrator:
    for M<N> exactly. Inputs from Will: <…>. When done, report: the PR URL, the acceptance results,
    the deviations you recorded in Notes, and every manual step Will must take."* Independent ready
    milestones (M0 ∥ M1; M4 ∥ M5) may run in parallel, each in its own worktree.
+   Dispatch with **`model: "sonnet"`** and **`effort: "medium"`** (`create_session` in the cloud;
+   this is the standing instruction those parameters require). Use `model: "opus"`, still at
+   medium effort, only for a milestone whose core is new design: a schema or API contract, a
+   prompt or extraction schema, the pinyin merge, scheduling, or a backfill on production data.
+   Say which you chose and why.
 4. **Reviews** each result:
    - reads the PR diff and Notes;
    - checks it against the milestone's acceptance and CLAUDE.md rules (privacy above all);
@@ -62,8 +67,10 @@ worktree). The orchestrator:
    same loop ran the *Hybrid* milestones (H1–H7, now in PLAN-done.md); their sessions
    branched as `claude/h<N>-<slug>` and titled PRs `H<N>: <title>`.
 
-Restart the orchestrator after each merge, or whenever its context gets long: everything it needs is in this file
-(the status table and Notes) and the PRs.
+Restart the orchestrator after each merge, or once its context passes ~200k tokens: end with a
+one-paragraph status and the prompt to start the next one. Everything it needs is in this file (the
+status table and Notes) and the PRs. Don't answer follow-up questions in a grown orchestrator;
+each reply there resends its whole context.
 
 ## Dependency graph
 
