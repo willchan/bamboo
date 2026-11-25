@@ -119,7 +119,53 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H5 Tutor capture | merged | [#47](https://github.com/willchan/bamboo/pull/47) |
 | H6 Re-run extension | merged | [#49](https://github.com/willchan/bamboo/pull/49) |
 | H7 Backfill | merged | [#50](https://github.com/willchan/bamboo/pull/50), [#51](https://github.com/willchan/bamboo/pull/51), [#52](https://github.com/willchan/bamboo/pull/52); two keys in [#48](https://github.com/willchan/bamboo/pull/48) |
+| T1 Neural TTS spike | proposed (awaiting Will) | |
+| T2 Neural TTS | proposed (after T1) | |
 
 Finished milestones (M0–M6, H1–H7) and their **Notes** are in [PLAN-done.md](PLAN-done.md). Read
 one there only when your task depends on it; never read that file in full. New milestones go in
 this file and move there once merged.
+
+## T1 — Neural TTS spike
+
+*Proposed; starts when Will says go (DESIGN §6.1, §10 #111). Depends on nothing.*
+
+**Will first:** create an Azure AI Speech resource (free tier F0, a region near the Bay Area)
+and give the session `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` in its own env. Never commit
+them.
+
+**Build:** `web/scripts/tts-spike.ts`, which isn't shipped. It synthesizes a fixed list of
+**synthetic** phrases: 长了, 长大, 头发很长, 银行, 还钱, 我得走了, 你好, 一个, 不对, 觉得, 睡觉, plus
+one example sentence. Each is made in three variants: plain text, polyphones pinned and every
+syllable pinned. It uses two or three `zh-CN` neural voices (HD voices included, if they accept
+phonemes), with slow replay made both ways (§6.1). It writes the MP3s and an `index.html` to
+the gitignored `private/tts-spike/` for Will to play on his iPhone, from the installed PWA's
+origin if possible.
+
+**Decide, and record in Notes:** the voice; whether to pin only polyphones or every syllable
+(listen for 3-3 sandhi in 你好 and 一/不); the slow-replay method; whether a clip autoplays after
+the Start-tap unlock in standalone mode; how F0 counts characters (markup or not) and its rate
+limit; and Azure's handling of synthesis input. If Azure fails on readings, repeat with Google
+Cloud TTS (`pinyin` alphabet) before giving up.
+
+**Acceptance:** Will's choices are in Notes, and DESIGN §6.1 and §10 #111 are updated to match
+(drop "Proposed" from #111 if he goes ahead). No product code.
+
+## T2 — Neural TTS
+
+*Proposed; after T1 (DESIGN §6.1). Adds a migration, so it follows the serial-migration rule.*
+
+**Build:** `web/lib/domain/tts.ts` (`speechSsml`, clip key; tested, including 长了 → `zhang 3`
+and an override); migration `tts_clip`; the Azure client (`web/lib/tts-azure.ts`, a timeout,
+no retries in the request path); `GET /api/tts/{phraseId}/{part}`; round payload clip URLs and
+`after()` warming; `audio.ts` playback with the Web Speech fallback and the unlock; daily-cron
+pruning; `config.audio.neural.*`; the `tts_synth` event and `tts_fallback` client log; env in §8.1
+and `.env.example`. PRD: audio now matches the card's reading.
+
+**Regression test first:** a card whose displayed pinyin is `zhǎng le` yields SSML that pins
+`zhang 3`. It fails before the change because nothing builds SSML.
+
+**Acceptance:** `pnpm lint && pnpm typecheck && pnpm test`, `pnpm --filter web build`, e2e with
+the Azure client stubbed (clip served; fallback when it fails); `pnpm --filter web shot
+/review/back` unchanged. Manual, Will on his iPhone: the 长了 card says zhǎng; Slow works; Listen
+autoplays; airplane mode falls back to the device voice.
