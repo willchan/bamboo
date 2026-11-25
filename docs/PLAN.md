@@ -130,9 +130,42 @@ this file and move there once merged.
 
 *Proposed; starts when Will says go (DESIGN §6.1, §10 #111). Depends on nothing.*
 
-**Will first:** create an Azure AI Speech resource (free tier F0, a region near the Bay Area)
-and give the session `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION` in its own env. Never commit
-them.
+**Will first: an Azure Speech resource** (about 10 minutes, free). The session can't do this
+for you, and it must never see the key in chat.
+
+1. **Azure account.** If you have none, sign up at <https://azure.microsoft.com/free> with a
+   Microsoft account. Azure asks for a phone and a card to verify you. The free tier (F0) below
+   never charges: past its monthly allowance, requests fail until the month resets.
+2. **Create the resource.** At <https://portal.azure.com>, choose *Create a resource*, search for
+   **Speech** (*Azure AI services › Speech*) and choose *Create*. Fill in:
+   - *Subscription*: yours.
+   - *Resource group*: *Create new* → `bamboo`.
+   - *Region*: **West US 2** (any region that offers neural voices will do; note which one).
+   - *Name*: `bamboo-speech`. Names are global, so add a suffix if it's taken.
+   - *Pricing tier*: **Free F0**. A subscription can have only one F0 Speech resource; if F0
+     isn't offered, one already exists, so use that one.
+   - Accept any terms notice the form shows, then *Review + create* → *Create*.
+3. **Copy the key and region.** Open the resource (*Go to resource*), then *Resource Management
+   › Keys and Endpoint*. Copy **KEY 1** and the **Location/Region** (for example `westus2`, the
+   short form, not "West US 2").
+4. **Give them to the spike, not the chat.** In the checkout where the T1 session runs, create
+   `web/.env.local` (it's gitignored by `.env*`):
+
+   ```
+   AZURE_SPEECH_KEY=<KEY 1>
+   AZURE_SPEECH_REGION=westus2
+   ```
+
+   Then tell the session "the Azure key is in web/.env.local".
+5. **Check it works** (optional): this prints the number of Mandarin voices, and something above
+   0 means the key and region are right.
+
+   ```bash
+   cd web && set -a && . ./.env.local && set +a && curl -s -H "Ocp-Apim-Subscription-Key: $AZURE_SPEECH_KEY" "https://$AZURE_SPEECH_REGION.tts.speech.microsoft.com/cognitiveservices/voices/list" | grep -o '"Locale":"zh-CN"' | wc -l
+   ```
+
+If a key ever leaks, *Keys and Endpoint › Regenerate Key 1* invalidates it at once (switch the
+app to KEY 2 first if it's live).
 
 **Build:** `web/scripts/tts-spike.ts`, which isn't shipped. It synthesizes a fixed list of
 **synthetic** phrases: 长了, 长大, 头发很长, 银行, 还钱, 我得走了, 你好, 一个, 不对, 觉得, 睡觉, plus
@@ -160,10 +193,23 @@ and an override); migration `tts_clip`; the Azure client (`web/lib/tts-azure.ts`
 no retries in the request path); `GET /api/tts/{phraseId}/{part}`; round payload clip URLs and
 `after()` warming; `audio.ts` playback with the Web Speech fallback and the unlock; daily-cron
 pruning; `config.audio.neural.*`; the `tts_synth` event and `tts_fallback` client log; env in §8.1
-and `.env.example`. PRD: audio now matches the card's reading.
+and `.env.example`; a README step 4 table row for the two Azure variables. PRD: audio now matches the card's reading.
 
 **Regression test first:** a card whose displayed pinyin is `zhǎng le` yields SSML that pins
 `zhang 3`. It fails before the change because nothing builds SSML.
+
+**Will, after T2 merges** (the session lists these in its PR):
+
+1. **Vercel:** in the `bamboo` project, open *Settings → Environment Variables* and add
+   `AZURE_SPEECH_KEY` (KEY 1, marked *Sensitive*) and `AZURE_SPEECH_REGION` (for example
+   `westus2`). Tick **Production** only: previews aren't built (§10 #105), and Development stays
+   unticked as for the other secrets (README step 4).
+2. **Redeploy** production (*Deployments → … → Redeploy*) so it picks them up. Until then the app
+   keeps using the device voice, so the merge itself is safe.
+3. **Delete** `web/.env.local` from the spike checkout if you no longer need it locally.
+4. If T1 found F0's rate limit too low: in the Azure resource, open *Pricing tier*, move to
+   **Standard S0**, and add a budget alert (*Cost Management › Budgets*, for example $5 a month,
+   emailing you at 50%).
 
 **Acceptance:** `pnpm lint && pnpm typecheck && pnpm test`, `pnpm --filter web build`, e2e with
 the Azure client stubbed (clip served; fallback when it fails); `pnpm --filter web shot
