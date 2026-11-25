@@ -28,7 +28,7 @@
 - **Self-recording.** Record yourself on the Say back, then compare with the TTS.
 - **Neural TTS: proposed.** The device voice picks polyphone readings itself and contradicted a
   card (长了 spoken cháng, Nov 2026). Proposed as Azure `zh-CN` voices with pinyin phonemes, made
-  and cached by the engine: DESIGN §6.1, §10 #111, PLAN › T1–T2. Awaiting Will's go.
+  and cached by the engine: DESIGN §6.1, §10 #111, PLAN › T1–T2. Approved; T1 is next.
 - **Offline review.** Cache the day's round in a service worker.
 - **"Used it for real".** Dropped because Will wouldn't tap it. Revisit only if a passive signal
   appears.

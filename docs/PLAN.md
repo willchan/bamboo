@@ -119,7 +119,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H5 Tutor capture | merged | [#47](https://github.com/willchan/bamboo/pull/47) |
 | H6 Re-run extension | merged | [#49](https://github.com/willchan/bamboo/pull/49) |
 | H7 Backfill | merged | [#50](https://github.com/willchan/bamboo/pull/50), [#51](https://github.com/willchan/bamboo/pull/51), [#52](https://github.com/willchan/bamboo/pull/52); two keys in [#48](https://github.com/willchan/bamboo/pull/48) |
-| T1 Neural TTS spike | proposed (awaiting Will) | |
+| T1 Neural TTS spike | ready (needs Will's Azure key, see T1) | |
 | T2 Neural TTS | proposed (after T1) | |
 
 Finished milestones (M0–M6, H1–H7) and their **Notes** are in [PLAN-done.md](PLAN-done.md). Read
@@ -128,7 +128,7 @@ this file and move there once merged.
 
 ## T1 — Neural TTS spike
 
-*Proposed; starts when Will says go (DESIGN §6.1, §10 #111). Depends on nothing.*
+*Approved 2026-11-25 (DESIGN §6.1, §10 #111). Starts once Will has done the steps below.*
 
 **Will first: an Azure Speech resource** (about 10 minutes, free). The session can't do this
 for you, and it must never see the key in chat.
