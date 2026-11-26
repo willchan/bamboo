@@ -1496,3 +1496,57 @@ Cloud TTS (`pinyin` alphabet) before giving up.
   input text nor the output audio is kept in Microsoft's logs, and the data is processed in the
   resource's region (batch, custom voice and the content tool can store, and aren't used).
   SSML gotcha found: an `xmlns` attribute on `<speak>` got an HTTP 400, so leave it off.
+
+## T2 — Neural TTS
+
+*Merged (T1 settled the voice and pins: T1 Notes above; DESIGN §6.1). Added migration `0008_tts_clip`.*
+
+**Build:** `web/lib/domain/tts.ts` (`speechSsml`, clip key; tested, including 长了 → `zhang 3`
+and an override); migration `tts_clip`; the Azure client (`web/lib/tts-azure.ts`, a timeout,
+no retries in the request path); `GET /api/tts/{phraseId}/{part}`; round payload clip URLs and
+`after()` warming; `audio.ts` playback with the Web Speech fallback and the unlock; daily-cron
+pruning; `config.audio.neural.*`; the `tts_synth` event and `tts_fallback` client log; env in §8.1
+and `.env.example`; a README step 4 table row for the two Azure variables. PRD: audio now matches the card's reading.
+
+**Regression test first:** a card whose displayed pinyin is `zhǎng le` yields SSML that pins
+`zhang 3`. It fails before the change because nothing builds SSML.
+
+**Will, after T2 merges** (the session lists these in its PR):
+
+1. **Vercel:** in the `bamboo` project, open *Settings → Environment Variables* and add
+   `AZURE_SPEECH_KEY` (KEY 1, marked *Sensitive*) and `AZURE_SPEECH_REGION` (for example
+   `westus2`). Tick **Production** only: previews aren't built (§10 #105), and Development stays
+   unticked as for the other secrets (README step 4).
+2. **Redeploy** production (*Deployments → … → Redeploy*) so it picks them up. Until then the app
+   keeps using the device voice, so the merge itself is safe.
+3. **Delete** `web/.env.local` from the spike checkout if you no longer need it locally.
+4. If F0's rate limit proves too low in practice (T1 saw 429s on an unpaced burst): in the Azure resource, open *Pricing tier*, move to
+   **Standard S0**, and add a budget alert (*Cost Management › Budgets*, for example $5 a month,
+   emailing you at 50%).
+
+**Acceptance:** `pnpm lint && pnpm typecheck && pnpm test`, `pnpm --filter web build`, e2e with
+the Azure client stubbed (clip served; fallback when it fails); `pnpm --filter web shot
+/review/back` unchanged. Manual, Will on his iPhone: the 长了 card says zhǎng; Slow works; Listen
+autoplays; airplane mode falls back to the device voice.
+
+**Notes (T2, 2026-11-25):**
+
+- **Followed T1:** voice `zh-CN-XiaoyiNeural`, every syllable pinned to the displayed reading,
+  slow replay by `playbackRate` 0.7 on the one clip (no `slow` route parameter, no slow row).
+  Output `audio-24khz-48kbitrate-mono-mp3`, as in T1's listening (about 12 KB a clip, twice
+  §6.1's estimate; still a few MB per thousand).
+- **One source for card and audio:** `phraseSpeech` (`web/lib/repo/tts.ts`) gives the displayed
+  pinyin and the shown examples; `cardView` uses it too, so `example-<n>` is the n-th example the
+  card back shows.
+- **Warming** runs in `after()` from `startRoundAction` (not from `getRound`): phrases first, then
+  examples, paced 3.2 s, a 429 retried twice after 15 s, stopping after 50 s; the rest are made on
+  first play. Vercel's default function duration covers it.
+- **Client:** `say(hanzi, {clip, slow})` in `web/lib/audio.ts`. After a failed clip it uses Web
+  Speech straight away for 60 s (`failCooldownMs`), so airplane mode doesn't wait 3 s per card.
+  The unlock plays a silent MP3 built in the page (zero MPEG frames) and ignores its abort.
+- **`tts_fallback`** is a `where` value of the existing `client_error` line
+  (`shared/src/contracts/client-log.ts`), not a new log kind.
+- **e2e:** `e2e/tts-stub.mjs` stands in for Azure (`AZURE_SPEECH_ENDPOINT`, e2e only); the seeded
+  and prod-copy dev servers blank `AZURE_SPEECH_KEY`, so shots and the prod copy never call Azure.
+- **Not checked here:** the iPhone (autoplay after the unlock in the installed PWA, 长了 says
+  zhǎng, Slow, airplane fallback) is Will's, after the Vercel env and redeploy.

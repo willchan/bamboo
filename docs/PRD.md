@@ -166,8 +166,11 @@ words; characters still help. He already talks to his household's **OpenClaw** a
     first); saving, dropping it or ← goes back to the round, at the same card, now edited.
   - **Not useful**: drops the phrase there and then, for a card that turns out not to be worth
     keeping after a few reviews. The round moves on, and the phrase's other cards leave it too.
-- Audio comes from the device's Mandarin voice (`zh-CN`). There is a replay button and a slow-replay
-  button (about a third of normal speed, so it's clearly slower on an iPhone too). Earphones are recommended at night.
+- Audio comes from a neural Mandarin voice (Azure, `zh-CN`) told the card's own pinyin, so it says
+  what the card shows (长了 as zhǎng le, an override included). If that voice isn't reachable
+  (offline, an error), the device's Mandarin voice speaks instead, with no change on screen. There
+  is a replay button and a slow-replay button (the same clip at 0.7 speed; the device voice uses
+  about a third of normal speed, so it's clearly slower on an iPhone too). Earphones are recommended at night.
 
 ### 5.3 Capture: send conversations to OpenClaw in Discord
 

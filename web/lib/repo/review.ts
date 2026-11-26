@@ -24,7 +24,6 @@ import {
   type FsrsColumns,
   type Grade,
 } from "../domain/fsrs";
-import { displayPinyin, examplePinyin } from "../domain/pinyin";
 import {
   buildRound,
   isFirstSight,
@@ -37,7 +36,8 @@ import {
   type Workload,
 } from "../domain/session";
 import { eventRow, newId, runBatch } from "./db";
-import { distinctExamples, isLearnableExample, orderQueue } from "../domain/queue";
+import { clipUrls, neuralEnabled, phraseSpeech } from "./tts";
+import { orderQueue } from "../domain/queue";
 import { dropPhrase, listQueue, queuedPhrasesQuery } from "./phrases";
 
 export interface Clock {
@@ -186,6 +186,8 @@ export interface ExampleView {
   hanzi: string;
   english: string | null;
   pinyin: PinyinPairs;
+  /** Its neural clip (DESIGN §6.1); null while neural TTS is off. */
+  audioUrl: string | null;
 }
 
 /** Everything the review screen needs for one card. */
@@ -199,6 +201,8 @@ export interface ReviewCardView {
   heardAs: string | null;
   hanzi: string;
   pinyin: PinyinPairs;
+  /** The phrase's neural clip (DESIGN §6.1); null while neural TTS is off (Web Speech). */
+  audioUrl: string | null;
   examples: ExampleView[];
   note: string | null;
   /** The card back's breakdown with each part's pinyin (DESIGN §5.5.4); null when there's none. */
@@ -225,8 +229,10 @@ async function intervalPreview(c: Card, now: number): Promise<IntervalPreview> {
   };
 }
 
-async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView> {
-  const pinyin = displayPinyin(p.pinyin, p.pinyinOverride);
+async function cardView(c: Card, p: Phrase, now: number, neural: boolean): Promise<ReviewCardView> {
+  const speech = phraseSpeech(p);
+  const { pinyin } = speech;
+  const clips = clipUrls(p.id, speech, neural);
   return {
     cardId: c.id,
     phraseId: p.id,
@@ -237,17 +243,8 @@ async function cardView(c: Card, p: Phrase, now: number): Promise<ReviewCardView
     heardAs: p.heardAs,
     hanzi: p.hanzi,
     pinyin,
-    // Older phrases may hold a romanized example, or several rewording one another, from before
-    // the extraction checks (§4.6 step 3, §10 #103).
-    examples: distinctExamples(
-      p.examples.filter((e) => isLearnableExample(e.hanzi)),
-      p.hanzi,
-    ).map((e) => ({
-      hanzi: e.hanzi,
-      english: e.english,
-      // Its stored, merged reading when it has one (§10 #107), with the phrase's settled reading on top.
-      pinyin: examplePinyin(e, p.hanzi, pinyin),
-    })),
+    audioUrl: clips.phrase,
+    examples: speech.examples.map((e, i) => ({ ...e, audioUrl: clips.examples[i] ?? null })),
     note: p.note,
     breakdown: breakdownView(p.breakdown, pinyin),
     ...(await intervalPreview(c, now)),
@@ -263,7 +260,13 @@ export interface RoundView {
 }
 
 /** The round with the cards still to do (so a reload resumes where Will left off). */
-export async function getRound(db: Db, roundId: string, clock: Clock): Promise<RoundView | null> {
+export async function getRound(
+  db: Db,
+  roundId: string,
+  clock: Clock,
+  opts: { neural?: boolean } = {},
+): Promise<RoundView | null> {
+  const neural = opts.neural ?? neuralEnabled();
   // One round trip: the round, what's been graded in it, and its cards (via json_each).
   const [[r], done, rows] = await db.batch([
     db.select().from(round).where(eq(round.id, roundId)),
@@ -290,7 +293,7 @@ export async function getRound(db: Db, roundId: string, clock: Clock): Promise<R
   const cards = await Promise.all(
     todo.flatMap((id) => {
       const x = live.get(id);
-      return x ? [cardView(x.card, x.phrase, clock.now)] : [];
+      return x ? [cardView(x.card, x.phrase, clock.now, neural)] : [];
     }),
   );
   return { id: r.id, finished: r.finishedAt !== null, total: r.cardIds.length, cards };

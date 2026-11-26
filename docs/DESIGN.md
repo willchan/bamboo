@@ -192,6 +192,9 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
   `created_at`, `finished_at` null. Claimed after ordinary extract jobs and before re-runs.
 - **`event`**: telemetry. Columns: `id`, `type`, `data` json, `at`. See §7.
 - **`setting`**: key/value: `nudge_enabled`, `nudge_last_sent_day`.
+- **`tts_clip`** (T2, §6.1): neural TTS clips by content. Columns: `key` text pk (sha256 of
+  voice, output format and SSML), `audio` blob (MP3), `chars` (characters sent), `created_at`,
+  `last_played_at` null. Pruned by the daily cron after `audio.neural.retainDays` (90) unplayed.
 
 ## 3. API and auth
 
@@ -233,8 +236,9 @@ this review: "new cards introduced today" counts `state_before = 0`), `round_id`
 | `POST /api/jobs/claim` | worker | Optional body `{types: ('extract_turn' \| 'pinyin')[]}` (H4; none = extract_turn only, for an older worker) → `{job_id, type, attempt, lease_expires_at, input}` (`ExtractTurnInput`, or `PinyinJobInput` for `pinyin`) or `204`. Lease = `jobs.leaseMinutes` (10); `attempt += 1`. Claim first requeues expired leases (or fails them after the last attempt). Ordinary extract jobs, then pinyin jobs, then re-runs (§4.6.1), each oldest first; a re-run looks the same to the worker. `reextract_only: true` (H7's backfill worker) skips ordinary extract jobs: only pinyin jobs and re-runs |
 | `POST /api/jobs/complete` | worker | `{job_id, attempt, status:'done', result, model, prompt_version, latency_ms?, repaired?}` or `{…, status:'failed', error}` → `{job_status}` (`queued` = will be retried). A stale `attempt` (not the current lease) → 409 `stale_attempt`, nothing changes. The result is validated against `ExtractTurnResult`: invalid → 422 `invalid_result`, which uses up the attempt like a failure. A valid one is applied in one transaction (§4.6) |
 | `POST /api/worker/heartbeat` | worker | `{version, sha, model, ollama_ok}` → `worker_heartbeat` event, 204 |
-| `GET /api/cron/daily` | cron | give say turns stored before the sentence rule their sentence (§4.7), re-score the queue (§4.7; nothing expires since H2b), requeue expired leases, prune events > `events.retainDays` (180) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
+| `GET /api/cron/daily` | cron | give say turns stored before the sentence rule their sentence (§4.7), re-score the queue (§4.7; nothing expires since H2b), requeue expired leases, prune events > `events.retainDays` (180) and neural clips unplayed for `audio.neural.retainDays` (90, `clips_pruned`) → counts. A Vercel Schedule (`schedules.daily` in `web/vercel.json`, 11:17 UTC, `requestMethod: GET`; §8.2). Safe to run twice |
 | `GET /api/version` | none | `{build}`: the deploy this server runs (`NEXT_PUBLIC_BUILD_ID`), `Cache-Control: no-store`. The PWA compares it with its own to reload into a new deploy (§6 *Saving*). Says nothing but a deployment id |
+| `GET /api/tts/{phraseId}/{part}?v=<key>` | session | T2 (§6.1): a card part's neural clip, `audio/mpeg`. `part` is `phrase` or `example-<n>` (the n-th example the card back shows). The stored clip for the part's current SSML, else synthesized once (no retry), stored and served. `v` (the key's first 16 hex) matching → `Cache-Control: private, max-age=31536000, immutable`; a stale `v` still gets the current clip, `no-cache`. Signed out → 401; unknown phrase or part → 404; neural TTS off → 503; Azure 429 → 503, any other failure → 502 (the PWA then speaks with Web Speech) |
 | `POST /api/client-log` | session | `ClientLogEntry` (fixed fields only, `.strict()`) → 204: one failure on the phone, written as a `client_error` log line (§8.5). Signed out → 401; anything else in the body → 400; past `client.logPerMinute` (30) per instance → 429 |
 
 Errors from every machine route are `{error, message?, issues?}` with `error` one of
@@ -1636,7 +1640,9 @@ full-screen.
 - **Stats** (`/stats`, the fifth tab): PRD §6 measures (§7), each with its target and ✓/✗.
 - Today also shows the **reminder toggle** (§4.9).
 
-**Audio** (`web/lib/audio.ts`): the Web Speech API. Voice choice: `lang` `zh-CN`, preferring an
+**Audio** (`web/lib/audio.ts`): the card's neural clip when neural TTS is on (§6.1, since T2),
+else the Web Speech API, which is also the fallback whenever a clip fails. The rest of this
+paragraph describes Web Speech. Voice choice: `lang` `zh-CN`, preferring an
 "Enhanced"/"Premium" voice (e.g. Tingting). Rate 0.9, and 0.3 for slow replay
 (`config.audio`). iOS Safari hands the rate to AVSpeechSynthesizer, which compresses the range:
 0.6 sounded almost the same as 0.9 on an iPhone, and 0.45 (half) was better but still not slow
@@ -1653,10 +1659,12 @@ hint: *Settings → Accessibility → Spoken Content → Voices → Chinese*.
 **PWA**: `manifest.webmanifest` (standalone, icons, theme color). There's no service worker in
 the MVP: no offline review and no web push (the reminder comes through Discord).
 
-### 6.1 Neural TTS *(approved 2026-11, §10 #111; T1 settled the details; not built until PLAN › T2)*
+### 6.1 Neural TTS *(approved 2026-11, §10 #111; T1 settled the details; built in T2)*
 
-Until T2 lands, *Audio* above describes the running code. This section is the target design,
-settled by T1's listening test on Will's iPhone (PLAN-done › T1 Notes).
+Built in T2 (PLAN-done › T2), as settled by T1's listening test on Will's iPhone (PLAN-done › T1
+Notes). Code: `web/lib/domain/tts.ts` (SSML, key), `web/lib/tts-azure.ts` (the Azure call),
+`web/lib/repo/tts.ts` (clips, warming, prune), `app/api/tts/[phraseId]/[part]/route.ts`,
+`web/lib/audio.ts` (`say`).
 
 **Why.** Web Speech is given only the hanzi, so the device voice picks the reading of every
 polyphone itself and can contradict the card. Will heard 长了 ("gained or grew") spoken cháng le
@@ -1681,14 +1689,17 @@ fallback.
   Never the computed default, which the Gemini merge exists to correct (T1's first pass pinned
   cháng for 长了). A pure function `speechSsml(hanzi, pairs, opts)` in `web/lib/domain/tts.ts`
   builds the SSML, converting tone marks to `sapi` (`zhǎng` → `zhang 3`); `…` becomes a
-  `<break>`, as `speechText` does today. Non-hanzi stays plain text. T1 heard 3-3 sandhi in
+  `<break>` (`audio.neural.breakMs`, 300), as `speechText` does for Web Speech. The card back and
+  the audio both come from `phraseSpeech` (`web/lib/repo/tts.ts`), so they can't disagree. Non-hanzi stays plain text. T1 heard 3-3 sandhi in
   你好 and 一/不 come out natural with every syllable pinned, and found polyphones-only equally
   good, so every syllable won as the simpler rule (no polyphone detection or dictionary
   dependency). Don't put an `xmlns` on `<speak>`: Azure answers 400.
 - **Where: the engine, not the worker.** It isn't an LLM call, so CLAUDE.md's *Gemini at
   runtime* rule doesn't apply. The engine already computes the displayed pinyin, and audio
   doesn't then depend on the Mac being up. Env: `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`
-  (web, §8.1). Without a key, neural TTS is off and the PWA uses Web Speech.
+  (web, §8.1). Without a key, neural TTS is off: the round carries no clip URLs and the PWA uses
+  Web Speech. The Azure call (`web/lib/tts-azure.ts`) has a timeout
+  (`audio.neural.requestTimeoutMs`, 8 s) and no retries in the request path.
 - **Storage:** a new table, `tts_clip`: `key` text pk (sha256 of voice, rate and SSML),
   `audio` blob (MP3), `chars`, `created_at`, `last_played_at`. A clip of about 2 s at 24 kbit/s
   is roughly 6 KB, so a thousand clips are a few MB in Turso. No new storage service. A changed
@@ -1699,26 +1710,34 @@ fallback.
   clip when one has that key, else synthesizes it, stores it and serves it. A `v` that no longer
   matches gets the current clip, so a stale page still plays the right reading. The response is
   `Cache-Control: private, max-age=31536000, immutable`, which is safe because `v` changes with
-  the reading. The round payload carries each card's clip URLs. Building the round warms its
-  normal-speed clips with `after()`, so the first play doesn't wait on Azure.
-- **Slow replay:** `playbackRate` 0.7 (`config.audio.neural.slowRate`) on the normal clip, with
+  the reading. The round payload carries each card's clip URLs (`audioUrl` on the card and on
+  each example). Starting the round (`startRoundAction`) warms its missing clips with `after()`,
+  every card's phrase first, then examples, paced and stopping after `audio.neural.warmBudgetMs`
+  (50 s); anything left is made when first played.
+- **Slow replay:** `playbackRate` 0.7 (`config.audio.neural.slowRate`, also set as
+  `defaultPlaybackRate`, since a new `src` resets the rate) on the normal clip, with
   `preservesPitch`. T1 compared it with SSML `<prosody rate="-30%">` and Will couldn't tell them
   apart, so there is no second clip, no `slow` route parameter and no extra synthesis.
 - **Playback** (`web/lib/audio.ts`): one reused `HTMLAudioElement`, unlocked by the Start tap
   the way speech is today (a silent clip played inside the gesture), so the Listen front can
   autoplay. T1: a later programmatic `play()` worked on Will's iPhone after the unlock
   (the spike's unlock logged an `AbortError` first, probably its silent clip cut off by the next
-  `src`; let it finish or ignore the abort). T2 confirms it in the installed PWA. On any failure (offline, an error, no key, no
-  audio within `config.audio.neural.timeoutMs`), it speaks with Web Speech instead, with no UI
-  change. It reports a `tts_fallback` client log (§8.5).
+  `src`; let it finish or ignore the abort). T2 ignores the abort; Will confirms autoplay in the
+  installed PWA after the merge. On any failure (offline, an error status, no audio within
+  `config.audio.neural.timeoutMs`, 3 s), it speaks with Web Speech instead, with no UI change, and
+  reports a `client_error` line with `where: "tts_fallback"` (§8.5). For
+  `audio.neural.failCooldownMs` (60 s) after a failure it goes straight to Web Speech, so
+  airplane mode doesn't wait 3 s per card. A card with no clip URL (neural off) uses Web Speech.
+  The unlock's silent clip is a few zero MPEG frames, built in the page (`silentMp3`).
 - **Cost:** Azure's free tier (F0) includes 0.5 M neural characters a month. The docs conflict
   on markup: `speak` and `voice` aren't billed, but markup in the text probably is, so assume the
   pins count. T1 measured about 165 request characters a clip with every syllable pinned,
   roughly 3,000 clips a month on F0, against a few dozen a day made once. **Rate limit:** F0
   answered HTTP 429 *Quota Exceeded* to an unpaced burst of about 100 requests and none at one
   request every 3.2 s (about 19 a minute). So `after()` warming paces and retries after a pause,
-  and the request path falls back to Web Speech on a 429. S0 pay-as-you-go is the fallback, at
-  cents a month. Event `tts_synth {chars, ms, ok}` (counts only, §7).
+  and the request path falls back to Web Speech on a 429 (`audio.neural.paceMs` 3.2 s,
+  `throttleWaitMs` 15 s, `throttleRetries` 2). S0 pay-as-you-go is the fallback, at cents a
+  month. Event `tts_synth {chars, ms, ok, warm, status?}` (counts only, §7).
 - **Privacy:** only a card's hanzi goes to Azure, and it has already passed the name filter
   (§5.5.8). No turn, English or note is sent. Even so, Azure would be a third outside service
   after Vercel/Turso and Gemini, which Will accepted (§10 #111). For prebuilt voices in real-time synthesis, Microsoft's docs say
@@ -1759,6 +1778,9 @@ fallback.
 - `nudge_sent {local_time, nudge_at}` (`HH:MM`, household time)
 - `worker_heartbeat {version, sha, model, ollama_ok, gemini_model, gemini_ok}` (the Gemini fields
   since H4)
+- `tts_synth {chars, ms, ok, warm, status?}` (T2, §6.1): one Azure synthesis, from the route
+  (`warm: false`) or round warming (`warm: true`); `status` on a failure (0: no answer). Counts
+  only, never the text
 - `phrase_retired {phrase_id, reason: 'frame', status_before}`: logged by migration
   `0006_retire_frames` for each frame it retired (H2b); H6's bulk Retire will add its own reason.
   `extraction` has `dropped_frame` since H2b. `pinyin_disagreement` and `dropped_name` came with H4
@@ -1799,6 +1821,8 @@ or weight changes. This is the same practice as PandaBase's diagnostics playbook
 | `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | web, db scripts | local dev: `file:db/dev.db` |
 | `AGENT_API_TOKEN`, `WORKER_API_TOKEN`, `CRON_SECRET` | web (+ tools / worker) | `openssl rand -hex 32` |
 | `HOUSEHOLD_TZ` | web | default `America/Los_Angeles` |
+| `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` | web | T2 (§6.1): Azure AI Speech KEY 1 (Sensitive) and its region's short name (`westus2`). Production only on Vercel. Either unset → neural TTS off (Web Speech). Blanked by the seeded and prod-copy dev servers |
+| `AZURE_SPEECH_ENDPOINT` | web (e2e) | replaces the region's endpoint; only for `e2e/tts-stub.mjs`, never set on Vercel |
 | `APP_URL` | web | for links in Discord messages |
 | `DEV_AUTH_BYPASS` | web (dev/e2e) | refused on every Vercel deployment |
 | `BAMBOO_API_URL`, `BAMBOO_AGENT_API_TOKEN` (the engine's `AGENT_API_TOKEN`), `BAMBOO_CONFIG` (path to tools config: Discord ids; default `~/.config/bamboo/bamboo.config.json`) | tools | `~/.config/bamboo/agent.env` in the `openclaw-agent` account (mode 600); the process env wins over the file, which is safe only because every key is `BAMBOO_`-prefixed (§10 #42). Never in OpenClaw's gateway env, which every app's tools receive (§5.1). On a 401, `bamboo-tools` names where its token came from (`BAMBOO_AGENT_API_TOKEN in <agent.env path>`, or `environment variable BAMBOO_AGENT_API_TOKEN`), never the value (§10 #46) |
@@ -2208,7 +2232,7 @@ bamboo/
 | 109 | A re-run's example English replaces the stored English for the same sentence; stored English only fills one the re-run left empty (`rerunExamples`, §5.5.4) | Checking the `--named` re-run (#104, prod copy, counts only): it re-read all 11 turns cleanly, but one card kept its damaged translation because the re-run returned the same Chinese sentence and #103's merge preferred the stored English. A re-run already replaces a phrase's English, note and examples, so its example English should win too; preferring stored English only made sense for a merge from a new import, which `mergeExamples` still does |
 | 110 | Idle Mac-side polling is made cheap, because Vercel's free Fluid Active CPU (4 h/month, shared by Will's projects) was at 3h41m and projects pause when it runs out. (1) The worker's idle wait doubles from `pollIntervalSeconds` (15 s) to `worker.idleMaxSeconds` (90 s) after each empty claim and resets on a job or an error. (2) `claimJob` first runs one `exists` query over both job tables (queued, or leased and expired) and returns 204 when nothing is claimable, instead of the sweep plus up to 3 selects. (3) `bamboo-tools replies` keeps its 5-minute cron but skips the engine unless an import with a reply target was uploaded in the last `tools.automation.replies.pendingMinutes` (30), or `safetyPollMinutes` (60) passed since the last poll. No schema change, no cron change, nothing for `agent-install` to re-register | By Vercel's route breakdown `GET /api/agent/notifications` led (147 requests in about 12 h, matching the 5-minute cron; heartbeat 74) and `POST /api/jobs/claim` ran ~5,760 times a day, nearly all empty at 5 database calls each. The notifications query was already one call on a small table, so the saving there is the number of calls, not their cost. Worst-case added latency: a new import's first job waits up to 90 s; its Discord reply is unchanged while pending, up to an hour late only for an import this Mac didn't upload. Idle claims go from ~5,760/day × 5 queries to ~960/day × 1; idle notifications from 288/day to ~24/day |
 | 110 | A ⋯ menu on every review card: **Edit phrase** (same tab, back to the round) and **Not useful** at any time, logged `via: "review"`; first-sight Not useful / Already know stay (amends #8) | Will's iPhone feedback (Nov 2026): a card that turned out not to be worth keeping after a few reviews could only be dropped from Phrases, outside the round, and a wrong translation couldn't be fixed from the card. A separate `via` keeps Stats' Not useful rate a first-sight ranking measure. A new tab would open Safari from the installed PWA, so Edit navigates in place; nothing is lost because pending saves drain first and the round resumes from the server |
-| 111 | **Approved (Will, 2026-11-25); details settled by T1 (same day):** neural TTS (Azure AI Speech, `zh-CN`) replaces Web Speech as the primary audio, from SSML that pins readings to the displayed pinyin; clips are made by the engine, stored in Turso by content key, with Web Speech as the fallback. Voice `zh-CN-XiaoyiNeural`, every syllable pinned to the displayed reading, slow replay by `playbackRate` (§6.1; PLAN-done › T1, PLAN › T2) | The device voice is given only hanzi and chooses polyphone readings itself, so audio can contradict the card (长了 spoken cháng); Web Speech can't take a reading. A homophone respelling table was rejected as a context rule in disguise that can't cover every reading. Azure's `zh-CN` `sapi` phonemes are pinyin with tone digits; the cost fits the free tier. T1 listening: pinned clips said the displayed reading and sounded natural; polyphone-only was equally good, so the simpler every-syllable rule won |
+| 111 | **Approved (Will, 2026-11-25); details settled by T1 (same day); built in T2:** neural TTS (Azure AI Speech, `zh-CN`) replaces Web Speech as the primary audio, from SSML that pins readings to the displayed pinyin; clips are made by the engine, stored in Turso by content key, with Web Speech as the fallback. Voice `zh-CN-XiaoyiNeural`, every syllable pinned to the displayed reading, slow replay by `playbackRate` (§6.1; PLAN-done › T1, PLAN › T2) | The device voice is given only hanzi and chooses polyphone readings itself, so audio can contradict the card (长了 spoken cháng); Web Speech can't take a reading. A homophone respelling table was rejected as a context rule in disguise that can't cover every reading. Azure's `zh-CN` `sapi` phonemes are pinyin with tone digits; the cost fits the free tier. T1 listening: pinned clips said the displayed reading and sounded natural; polyphone-only was equally good, so the simpler every-syllable rule won |
 
 ## Appendix A — Synthetic fixtures
 

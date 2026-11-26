@@ -8,6 +8,7 @@ import { defineConfig } from "@playwright/test";
 
 const PORT = 3100;
 const SEEDED_PORT = 3101;
+const TTS_STUB_PORT = 3102;
 const E2E_DB = fileURLToPath(new URL("../db/e2e.db", import.meta.url));
 const SEEDED_DB = fileURLToPath(new URL("../db/e2e-seeded.db", import.meta.url));
 
@@ -40,6 +41,12 @@ export default defineConfig({
   ],
   webServer: [
     {
+      command: `node e2e/tts-stub.mjs`,
+      url: `http://localhost:${TTS_STUB_PORT}/`,
+      reuseExistingServer: false,
+      env: { PORT: String(TTS_STUB_PORT) },
+    },
+    {
       // A fresh, migrated database every run, then the dev server.
       command: `rm -f "${E2E_DB}" "${E2E_DB}-journal" "${E2E_DB}-wal" "${E2E_DB}-shm" && pnpm --dir .. db:migrate && pnpm exec next dev --port ${PORT}`,
       url: `http://localhost:${PORT}/sign-in`,
@@ -55,6 +62,10 @@ export default defineConfig({
         AGENT_API_TOKEN: "e2e-agent-token",
         WORKER_API_TOKEN: "e2e-worker-token",
         CRON_SECRET: "e2e-cron-secret",
+        // Neural TTS against e2e/tts-stub.mjs, never Azure (e2e/tts.spec.ts; local values).
+        AZURE_SPEECH_KEY: "e2e-azure-key",
+        AZURE_SPEECH_REGION: "e2e",
+        AZURE_SPEECH_ENDPOINT: `http://localhost:${TTS_STUB_PORT}/cognitiveservices/v1`,
         NEXT_TELEMETRY_DISABLED: "1",
       },
     },

@@ -68,6 +68,7 @@ off to save Function Storage). The build runs
    | `HOUSEHOLD_TZ` | `America/Los_Angeles` | same |
    | `APP_URL` | `https://<production domain>` | same |
    | `AGENT_API_TOKEN`, `WORKER_API_TOKEN`, `CRON_SECRET` | `openssl rand -hex 32` each (used from M3) | different ones |
+   | `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` | Azure Speech resource › *Keys and Endpoint*: KEY 1 (*Sensitive*) and the region's short name (`westus2`) (T2, DESIGN §6.1) | leave unset (previews aren't built) |
 
    Never set `DEV_AUTH_BYPASS` on Vercel (the app ignores it there anyway).
 5. Redeploy production (*Deployments → … → Redeploy*) so it picks up the variables.

@@ -7,7 +7,7 @@
 //              Refuses unless TURSO_DATABASE_URL (default: the copy) is an existing `file:` URL.
 //
 // Both blank every secret that could reach a real service (Turso token, Google, machine tokens,
-// the read-only prod token): Next keeps a variable that is already set, even to "", over any .env
+// the read-only prod token, the Azure Speech key): Next keeps a variable that is already set, even to "", over any .env
 // file.
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -32,6 +32,8 @@ export const BLANKED = [
   "CRON_SECRET",
   "PROD_RO_TURSO_URL",
   "PROD_RO_TURSO_TOKEN",
+  // Neural TTS stays off: shots and the prod copy use the device voice, never Azure (§6.1).
+  "AZURE_SPEECH_KEY",
 ];
 
 export interface DevServer {

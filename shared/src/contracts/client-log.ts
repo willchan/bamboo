@@ -4,7 +4,15 @@
 import { z } from "zod";
 
 /** Where on the phone it failed. */
-export const CLIENT_LOG_WHERE = ["save", "resend", "window", "render", "version"] as const;
+export const CLIENT_LOG_WHERE = [
+  "save",
+  "resend",
+  "window",
+  "render",
+  "version",
+  // A neural clip failed and Web Speech spoke instead (DESIGN §6.1).
+  "tts_fallback",
+] as const;
 /**
  * What kind of failure: `stale` = the page is from an older deploy than the server (its server
  * actions are gone); `offline` = the request never got an answer; `server` = the server answered
