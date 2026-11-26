@@ -1403,3 +1403,96 @@ picks, so the queue can be rebuilt from stored turns without losing history.
   154 Gemini requests; 0 turns left on old prompts; review history unchanged (`review_log` rows
   and reviewed cards the same before and after). Of the 17 reported phrases, Will retired most
   and restored a few by hand. H1–H7 are done.
+
+## T1 — Neural TTS spike
+
+*Approved 2026-11-25 (DESIGN §6.1, §10 #111). Starts once Will has done the steps below.*
+
+**Will first: an Azure Speech resource** (about 10 minutes, free). The session can't do this
+for you, and it must never see the key in chat.
+
+1. **Azure account.** If you have none, sign up at <https://azure.microsoft.com/free> with a
+   Microsoft account. Azure asks for a phone and a card to verify you. The free tier (F0) below
+   never charges: past its monthly allowance, requests fail until the month resets.
+2. **Create the resource.** At <https://portal.azure.com>, choose *Create a resource*, search for
+   **Speech** (*Azure AI services › Speech*) and choose *Create*. Fill in:
+   - *Subscription*: yours.
+   - *Resource group*: *Create new* → `bamboo`.
+   - *Region*: **West US 2** (any region that offers neural voices will do; note which one).
+   - *Name*: `bamboo-speech`. Names are global, so add a suffix if it's taken.
+   - *Pricing tier*: **Free F0**. A subscription can have only one F0 Speech resource; if F0
+     isn't offered, one already exists, so use that one.
+   - Accept any terms notice the form shows, then *Review + create* → *Create*.
+3. **Copy the key and region.** Open the resource (*Go to resource*), then *Resource Management
+   › Keys and Endpoint*. Copy **KEY 1** and the **Location/Region** (for example `westus2`, the
+   short form, not "West US 2").
+4. **Give them to the spike, not the chat.** In the checkout where the T1 session runs, create
+   `web/.env.local` (it's gitignored by `.env*`):
+
+   ```
+   AZURE_SPEECH_KEY=<KEY 1>
+   AZURE_SPEECH_REGION=westus2
+   ```
+
+   Then tell the session "the Azure key is in web/.env.local".
+5. **Check it works** (optional): this prints the number of Mandarin voices, and something above
+   0 means the key and region are right.
+
+   ```bash
+   cd web && set -a && . ./.env.local && set +a && curl -s -H "Ocp-Apim-Subscription-Key: $AZURE_SPEECH_KEY" "https://$AZURE_SPEECH_REGION.tts.speech.microsoft.com/cognitiveservices/voices/list" | grep -o '"ShortName": *"zh-CN-[^"]*"' | wc -l
+   ```
+
+If a key ever leaks, *Keys and Endpoint › Regenerate Key 1* invalidates it at once (switch the
+app to KEY 2 first if it's live).
+
+**Build:** `web/scripts/tts-spike.ts`, which isn't shipped. It synthesizes a fixed list of
+**synthetic** phrases: 长了, 长大, 头发很长, 银行, 还钱, 我得走了, 你好, 一个, 不对, 觉得, 睡觉, plus
+one example sentence. Each is made in three variants: plain text, polyphones pinned and every
+syllable pinned. It uses two or three `zh-CN` neural voices (HD voices included, if they accept
+phonemes), with slow replay made both ways (§6.1). It writes the MP3s and an `index.html` to
+the gitignored `private/tts-spike/` for Will to play on his iPhone, from the installed PWA's
+origin if possible.
+
+**Decide, and record in Notes:** the voice; whether to pin only polyphones or every syllable
+(listen for 3-3 sandhi in 你好 and 一/不); the slow-replay method; whether a clip autoplays after
+the Start-tap unlock in standalone mode; how F0 counts characters (markup or not) and its rate
+limit; and Azure's handling of synthesis input. If Azure fails on readings, repeat with Google
+Cloud TTS (`pinyin` alphabet) before giving up.
+
+**Acceptance:** Will's choices are in Notes, and DESIGN §6.1 and §10 #111 are updated to match
+(drop "Proposed" from #111 if he goes ahead). No product code.
+
+**Notes (T1, Will's listening, 2026-11-25; `web/scripts/tts-spike.ts`, not shipped):**
+
+- **Voice: `zh-CN-XiaoyiNeural`** (Will's pick from Xiaoxiao, Yunxi and Xiaoyi). All three took
+  `sapi` phoneme tags without an error, in the plain, polyphone-pinned and every-syllable-pinned
+  variants. HD voices were not tried, so Google Cloud TTS was not needed either.
+- **Pin policy: every syllable.** Will found polyphones-only and every-syllable equally natural,
+  3-3 sandhi in 你好 and 一/不 included, with every syllable pinned. Every syllable is simpler
+  (no polyphone detection, so no dictionary dependency) and makes the audio match the card
+  exactly, an override on a non-polyphone included.
+- **Lesson: pin the card's displayed pinyin, never the computed default.** The spike's first
+  pass pinned the engine's computed reading (长了 → cháng, 我得走了 → dé), which is what the
+  Gemini merge exists to correct, so its pins were wrong in exactly the cases that matter. After
+  the readings were supplied explicitly (zhǎng, děi), the pinned clips were right. `speechSsml` takes
+  the display pairs.
+- **Slow replay: `playbackRate` 0.7 on the normal clip.** Will couldn't tell it from SSML
+  `<prosody rate="-30%">`. It needs no second clip or synthesis, so no slow row in `tts_clip`.
+  Drop `slowRate` and the `slow` route parameter from T2's design.
+- **Autoplay:** after a tap that plays a silent clip on the shared `<audio>` element, a later
+  programmatic `play()` worked on Will's iPhone. The spike's unlock logged an `AbortError` first,
+  likely because its silent clip was cut off by the next `src`. T2 should let the silent clip
+  finish, or catch and ignore the abort, and confirm in the installed PWA.
+- **F0 characters:** the docs conflict. Microsoft says a request is billed per converted
+  character with the `speak` and `voice` tags not billed, but markup in the text (`phoneme`,
+  `prosody`, `break`) counts. Assume pins count. Measured: the 36 every-syllable and plain
+  requests averaged about 165 request characters each with wrapper, so F0's 0.5 M a month is
+  around 3,000 clips. Bamboo makes a few dozen a day, once each.
+- **F0 rate limit:** an unpaced burst of about a hundred requests got HTTP 429 *Quota Exceeded*.
+  At one request every 3.2 s (about 19 a minute), 144 requests had no 429. The warming in
+  `after()` must be paced the same way and retry on 429 after a pause, and the request path must
+  fall back to Web Speech on a 429.
+- **Azure's input handling:** for prebuilt voices in real-time synthesis, the docs say neither the
+  input text nor the output audio is kept in Microsoft's logs, and the data is processed in the
+  resource's region (batch, custom voice and the content tool can store, and aren't used).
+  SSML gotcha found: an `xmlns` attribute on `<speak>` got an HTTP 400, so leave it off.

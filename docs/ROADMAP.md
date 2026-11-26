@@ -26,9 +26,9 @@
 - **Listening.** Strings of TTS clips for a commute, or recordings of the yuesao (with consent)
   attached to phrases.
 - **Self-recording.** Record yourself on the Say back, then compare with the TTS.
-- **Neural TTS: proposed.** The device voice picks polyphone readings itself and contradicted a
+- **Neural TTS: approved, T1 done.** The device voice picks polyphone readings itself and contradicted a
   card (长了 spoken cháng, Nov 2026). Proposed as Azure `zh-CN` voices with pinyin phonemes, made
-  and cached by the engine: DESIGN §6.1, §10 #111, PLAN › T1–T2. Approved; T1 is next.
+  and cached by the engine: DESIGN §6.1, §10 #111, PLAN › T2 (T1 chose the voice and pins).
 - **Offline review.** Cache the day's round in a service worker.
 - **"Used it for real".** Dropped because Will wouldn't tap it. Revisit only if a passive signal
   appears.

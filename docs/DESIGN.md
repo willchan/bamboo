@@ -1653,9 +1653,10 @@ hint: *Settings → Accessibility → Spoken Content → Voices → Chinese*.
 **PWA**: `manifest.webmanifest` (standalone, icons, theme color). There's no service worker in
 the MVP: no offline review and no web push (the reminder comes through Discord).
 
-### 6.1 Neural TTS *(proposed 2026-11, §10 #111; not built: PLAN › T1, T2)*
+### 6.1 Neural TTS *(approved 2026-11, §10 #111; T1 settled the details; not built until PLAN › T2)*
 
-Until T2 lands, *Audio* above describes the running code. This section is the target design.
+Until T2 lands, *Audio* above describes the running code. This section is the target design,
+settled by T1's listening test on Will's iPhone (PLAN-done › T1 Notes).
 
 **Why.** Web Speech is given only the hanzi, so the device voice picks the reading of every
 polyphone itself and can contradict the card. Will heard 长了 ("gained or grew") spoken cháng le
@@ -1669,20 +1670,21 @@ rule in all but name (§4.2).
 Each clip is made once, stored by content and played by the PWA. Web Speech stays as the
 fallback.
 
-- **Provider: Azure AI Speech**, a `zh-CN` neural voice (`config.audio.neural.voice`, chosen by
-  ear in T1). Its `zh-CN` `sapi` phone set is pinyin with a tone digit (neutral `5`, ü as `v`):
+- **Provider: Azure AI Speech**, `zh-CN-XiaoyiNeural` (`config.audio.neural.voice`, chosen by
+  ear in T1 from three). Its `zh-CN` `sapi` phone set is pinyin with a tone digit (neutral `5`, ü as `v`):
   `<phoneme alphabet="sapi" ph="zhang 3">长</phoneme>`. An unrecognized phone is an HTTP 400, so
   a bad reading fails loudly instead of being spoken wrong. Google Cloud TTS also has a `pinyin`
   alphabet (`chao2 yang2`). Its docs don't say which voice families honor it, though, and they
   give the neutral tone as both `0` and `5`. Google is the fallback candidate if Azure fails T1.
-- **What's pinned:** the displayed reading, so the audio says what the card shows, override
-  included: `displayPinyin` for the phrase, `examplePinyin` for an example. A pure function
-  `speechSsml(hanzi, pairs, opts)` in `web/lib/domain/tts.ts` builds the SSML; `…` becomes a
-  `<break>`, as `speechText` does today. T1 decides between two options. One pins only
-  polyphones: characters with more than one reading in pinyin-pro or the trimmed dictionary. The
-  other pins every syllable. Stored pinyin has citation tones except 一/不 (§4.2), and Azure
-  doesn't document whether its voice still applies 3-3 sandhi inside a phoneme tag. Pinning only
-  polyphones leaves the rest of the phrase to the voice's own prosody.
+- **What's pinned:** every syllable, to the card's displayed reading, so the audio says what the
+  card shows, override included: `displayPinyin` for the phrase, `examplePinyin` for an example.
+  Never the computed default, which the Gemini merge exists to correct (T1's first pass pinned
+  cháng for 长了). A pure function `speechSsml(hanzi, pairs, opts)` in `web/lib/domain/tts.ts`
+  builds the SSML, converting tone marks to `sapi` (`zhǎng` → `zhang 3`); `…` becomes a
+  `<break>`, as `speechText` does today. Non-hanzi stays plain text. T1 heard 3-3 sandhi in
+  你好 and 一/不 come out natural with every syllable pinned, and found polyphones-only equally
+  good, so every syllable won as the simpler rule (no polyphone detection or dictionary
+  dependency). Don't put an `xmlns` on `<speak>`: Azure answers 400.
 - **Where: the engine, not the worker.** It isn't an LLM call, so CLAUDE.md's *Gemini at
   runtime* rule doesn't apply. The engine already computes the displayed pinyin, and audio
   doesn't then depend on the Mac being up. Env: `AZURE_SPEECH_KEY` and `AZURE_SPEECH_REGION`
@@ -1692,29 +1694,36 @@ fallback.
   is roughly 6 KB, so a thousand clips are a few MB in Turso. No new storage service. A changed
   reading or hanzi gives a new key. The daily cron prunes clips not played for
   `config.audio.neural.retainDays`.
-- **Route:** `GET /api/tts/{phraseId}/{part}?slow=0|1&v=<key>` (session; `part` is `phrase` or
+- **Route:** `GET /api/tts/{phraseId}/{part}?v=<key>` (session; `part` is `phrase` or
   `example-<n>`). The engine rebuilds the SSML from the phrase and hashes it. It serves the stored
   clip when one has that key, else synthesizes it, stores it and serves it. A `v` that no longer
   matches gets the current clip, so a stale page still plays the right reading. The response is
   `Cache-Control: private, max-age=31536000, immutable`, which is safe because `v` changes with
   the reading. The round payload carries each card's clip URLs. Building the round warms its
   normal-speed clips with `after()`, so the first play doesn't wait on Azure.
-- **Slow replay:** a second clip, synthesized on the first Slow tap. T1 compares SSML
-  `<prosody rate>` (`config.audio.neural.slowRate`) with `playbackRate` on the normal clip
-  (WebKit keeps the pitch), and keeps whichever is clearer on the iPhone.
+- **Slow replay:** `playbackRate` 0.7 (`config.audio.neural.slowRate`) on the normal clip, with
+  `preservesPitch`. T1 compared it with SSML `<prosody rate="-30%">` and Will couldn't tell them
+  apart, so there is no second clip, no `slow` route parameter and no extra synthesis.
 - **Playback** (`web/lib/audio.ts`): one reused `HTMLAudioElement`, unlocked by the Start tap
   the way speech is today (a silent clip played inside the gesture), so the Listen front can
-  autoplay. T1 confirms this in the installed PWA. On any failure (offline, an error, no key, no
+  autoplay. T1: a later programmatic `play()` worked on Will's iPhone after the unlock
+  (the spike's unlock logged an `AbortError` first, probably its silent clip cut off by the next
+  `src`; let it finish or ignore the abort). T2 confirms it in the installed PWA. On any failure (offline, an error, no key, no
   audio within `config.audio.neural.timeoutMs`), it speaks with Web Speech instead, with no UI
   change. It reports a `tts_fallback` client log (§8.5).
-- **Cost:** Azure's free tier (F0) includes 0.5 M neural characters a month, and Bamboo's are a
-  few hundred characters a clip with markup, made once. T1 confirms whether markup counts and
-  what F0's rate limit allows. S0 pay-as-you-go is the fallback, at cents a month. Event
-  `tts_synth {chars, ms, ok}` (counts only, §7).
+- **Cost:** Azure's free tier (F0) includes 0.5 M neural characters a month. The docs conflict
+  on markup: `speak` and `voice` aren't billed, but markup in the text probably is, so assume the
+  pins count. T1 measured about 165 request characters a clip with every syllable pinned,
+  roughly 3,000 clips a month on F0, against a few dozen a day made once. **Rate limit:** F0
+  answered HTTP 429 *Quota Exceeded* to an unpaced burst of about 100 requests and none at one
+  request every 3.2 s (about 19 a minute). So `after()` warming paces and retries after a pause,
+  and the request path falls back to Web Speech on a 429. S0 pay-as-you-go is the fallback, at
+  cents a month. Event `tts_synth {chars, ms, ok}` (counts only, §7).
 - **Privacy:** only a card's hanzi goes to Azure, and it has already passed the name filter
   (§5.5.8). No turn, English or note is sent. Even so, Azure would be a third outside service
-  after Vercel/Turso and Gemini, which is Will's call (§10 #111). T1 checks Azure's data handling
-  for synthesis input.
+  after Vercel/Turso and Gemini, which Will accepted (§10 #111). For prebuilt voices in real-time synthesis, Microsoft's docs say
+  neither the input text nor the output audio is kept in its logs, and processing stays in the
+  resource's region.
 
 ## 7. Telemetry and stats
 
@@ -2199,7 +2208,7 @@ bamboo/
 | 109 | A re-run's example English replaces the stored English for the same sentence; stored English only fills one the re-run left empty (`rerunExamples`, §5.5.4) | Checking the `--named` re-run (#104, prod copy, counts only): it re-read all 11 turns cleanly, but one card kept its damaged translation because the re-run returned the same Chinese sentence and #103's merge preferred the stored English. A re-run already replaces a phrase's English, note and examples, so its example English should win too; preferring stored English only made sense for a merge from a new import, which `mergeExamples` still does |
 | 110 | Idle Mac-side polling is made cheap, because Vercel's free Fluid Active CPU (4 h/month, shared by Will's projects) was at 3h41m and projects pause when it runs out. (1) The worker's idle wait doubles from `pollIntervalSeconds` (15 s) to `worker.idleMaxSeconds` (90 s) after each empty claim and resets on a job or an error. (2) `claimJob` first runs one `exists` query over both job tables (queued, or leased and expired) and returns 204 when nothing is claimable, instead of the sweep plus up to 3 selects. (3) `bamboo-tools replies` keeps its 5-minute cron but skips the engine unless an import with a reply target was uploaded in the last `tools.automation.replies.pendingMinutes` (30), or `safetyPollMinutes` (60) passed since the last poll. No schema change, no cron change, nothing for `agent-install` to re-register | By Vercel's route breakdown `GET /api/agent/notifications` led (147 requests in about 12 h, matching the 5-minute cron; heartbeat 74) and `POST /api/jobs/claim` ran ~5,760 times a day, nearly all empty at 5 database calls each. The notifications query was already one call on a small table, so the saving there is the number of calls, not their cost. Worst-case added latency: a new import's first job waits up to 90 s; its Discord reply is unchanged while pending, up to an hour late only for an import this Mac didn't upload. Idle claims go from ~5,760/day × 5 queries to ~960/day × 1; idle notifications from 288/day to ~24/day |
 | 110 | A ⋯ menu on every review card: **Edit phrase** (same tab, back to the round) and **Not useful** at any time, logged `via: "review"`; first-sight Not useful / Already know stay (amends #8) | Will's iPhone feedback (Nov 2026): a card that turned out not to be worth keeping after a few reviews could only be dropped from Phrases, outside the round, and a wrong translation couldn't be fixed from the card. A separate `via` keeps Stats' Not useful rate a first-sight ranking measure. A new tab would open Safari from the installed PWA, so Edit navigates in place; nothing is lost because pending saves drain first and the round resumes from the server |
-| 111 | **Approved in principle (Will, 2026-11-25); details settled by T1:** neural TTS (Azure AI Speech, `zh-CN`) replaces Web Speech as the primary audio, from SSML that pins readings to the displayed pinyin; clips are made by the engine, stored in Turso by content key, with Web Speech as the fallback (§6.1; PLAN › T1, T2) | The device voice is given only hanzi and chooses polyphone readings itself, so audio can contradict the card (长了 spoken cháng); Web Speech can't take a reading. A homophone respelling table was rejected as a context rule in disguise that can't cover every reading. Azure's `zh-CN` `sapi` phonemes are pinyin with tone digits; the cost fits the free tier |
+| 111 | **Approved (Will, 2026-11-25); details settled by T1 (same day):** neural TTS (Azure AI Speech, `zh-CN`) replaces Web Speech as the primary audio, from SSML that pins readings to the displayed pinyin; clips are made by the engine, stored in Turso by content key, with Web Speech as the fallback. Voice `zh-CN-XiaoyiNeural`, every syllable pinned to the displayed reading, slow replay by `playbackRate` (§6.1; PLAN-done › T1, PLAN › T2) | The device voice is given only hanzi and chooses polyphone readings itself, so audio can contradict the card (长了 spoken cháng); Web Speech can't take a reading. A homophone respelling table was rejected as a context rule in disguise that can't cover every reading. Azure's `zh-CN` `sapi` phonemes are pinyin with tone digits; the cost fits the free tier. T1 listening: pinned clips said the displayed reading and sounded natural; polyphone-only was equally good, so the simpler every-syllable rule won |
 
 ## Appendix A — Synthetic fixtures
 
