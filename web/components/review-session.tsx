@@ -19,7 +19,7 @@ import { finishRoundAction, gradeAction, notUsefulAction } from "@/app/actions";
 import { LearnMoreButton, NewToday, StartButton } from "@/components/start-button";
 import { startRoundAction } from "@/app/actions";
 import { Ruby } from "@/components/ruby";
-import { speak } from "@/lib/audio";
+import { say } from "@/lib/audio";
 import { config, type SessionConfig } from "@/lib/config";
 import { reinsertIndex } from "@/lib/domain/session";
 import { classifyError } from "@/lib/client/client-log";
@@ -171,14 +171,15 @@ function RoundSession({
   // a repeat's labels arriving from its save don't replay it or restart its timer.
   const currentKey = current ? `${index}:${current.cardId}` : null;
   const autoplay = current?.type === "listen" ? current.hanzi : null;
+  const autoplayClip = current?.type === "listen" ? current.audioUrl : null;
   useEffect(() => {
     if (currentKey === null) {
       finish();
       return;
     }
     shownAt.current = performance.now();
-    if (autoplay !== null) void speak(autoplay);
-  }, [currentKey, autoplay, finish]);
+    if (autoplay !== null) void say(autoplay, { clip: autoplayClip });
+  }, [currentKey, autoplay, autoplayClip, finish]);
 
   const advance = (next: ClientCard[]) => {
     advancedAt.current = performance.now();
@@ -193,7 +194,7 @@ function RoundSession({
     // The next card appears under the finger that just graded: ignore an accidental second tap.
     if (performance.now() - advancedAt.current < config.review.revealGuardMs) return;
     setRevealed(true);
-    if (current.type === "say") void speak(current.hanzi);
+    if (current.type === "say") void say(current.hanzi, { clip: current.audioUrl });
   };
 
   /**
@@ -439,7 +440,7 @@ function RoundSession({
         <div className="flex justify-center gap-3">
           <button
             type="button"
-            onClick={() => void speak(current.hanzi)}
+            onClick={() => void say(current.hanzi, { clip: current.audioUrl })}
             className="h-11 rounded-full border border-border px-4 whitespace-nowrap"
             aria-label="Replay"
           >
@@ -449,7 +450,7 @@ function RoundSession({
             <>
               <button
                 type="button"
-                onClick={() => void speak(current.hanzi, { slow: true })}
+                onClick={() => void say(current.hanzi, { clip: current.audioUrl, slow: true })}
                 className="h-11 rounded-full border border-border px-4 whitespace-nowrap"
                 aria-label="Slow replay"
               >
@@ -458,7 +459,9 @@ function RoundSession({
               {current.examples[0] ? (
                 <button
                   type="button"
-                  onClick={() => void speak(current.examples[0]!.hanzi)}
+                  onClick={() =>
+                    void say(current.examples[0]!.hanzi, { clip: current.examples[0]!.audioUrl })
+                  }
                   className="h-11 rounded-full border border-border px-4 whitespace-nowrap"
                   aria-label="Play example"
                 >

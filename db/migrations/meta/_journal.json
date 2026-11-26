@@ -57,6 +57,13 @@
       "when": 1795112351090,
       "tag": "0007_phrase_unpicked",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1795676820895,
+      "tag": "0008_tts_clip",
+      "breakpoints": true
     }
   ]
 }

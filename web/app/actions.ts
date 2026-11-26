@@ -2,6 +2,7 @@
 // UI mutations (DESIGN §3.1: server actions, not routes). Each one checks the signed-in user.
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { requireUser } from "@/lib/auth/current";
 import { GRADES, type Grade } from "@/lib/domain/fsrs";
 import { PhraseInput } from "@/lib/domain/phrase";
@@ -27,6 +28,7 @@ import {
   type GradeResult,
   type Today,
 } from "@/lib/repo/review";
+import { neuralEnabled, warmRound } from "@/lib/repo/tts";
 import { timed } from "@/lib/timing";
 
 // --- Review ---------------------------------------------------------------------------------
@@ -41,7 +43,10 @@ export async function startRoundAction(fd?: FormData): Promise<void> {
     await requireUser();
     const learnMore = fd?.get("learnMore") === "1";
     const keepGoing = fd?.get("keepGoing") === "1";
-    const id = await startRound(getDb(), serverClock(), { learnMore, keepGoing });
+    const clock = serverClock();
+    const id = await startRound(getDb(), clock, { learnMore, keepGoing });
+    // Make the round's missing neural clips now, paced, so the first play doesn't wait (§6.1).
+    if (id && neuralEnabled()) after(() => warmRound(getDb(), id, clock.now));
     redirect(id ? `/review/${id}` : "/");
   });
 }

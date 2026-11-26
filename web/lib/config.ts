@@ -274,6 +274,37 @@ export const config = {
     slowRate: 0.3,
     /** Voices whose names contain these sound best on iOS. */
     preferredVoiceHints: ["Enhanced", "Premium", "Tingting", "Ting-Ting"],
+    /**
+     * Neural TTS (DESIGN §6.1, T1's choices): Azure AI Speech speaks SSML pinned to the card's
+     * displayed pinyin. Off without `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION`; Web Speech is the
+     * fallback either way.
+     */
+    neural: {
+      /** Will's pick by ear in T1, from Xiaoxiao, Yunxi and Xiaoyi. */
+      voice: "zh-CN-XiaoyiNeural",
+      /** What T1's listening clips used. */
+      outputFormat: "audio-24khz-48kbitrate-mono-mp3",
+      /** Slow replay: `playbackRate` on the normal clip (T1: indistinguishable from SSML -30%). */
+      slowRate: 0.7,
+      /** The slot `…` becomes this pause. */
+      breakMs: 300,
+      /** Client: no audio within this long → Web Speech. */
+      timeoutMs: 3000,
+      /** Client: after a failure, use Web Speech straight away for this long (airplane mode). */
+      failCooldownMs: 60_000,
+      /** Server: one Azure request's timeout. No retries in the request path. */
+      requestTimeoutMs: 8000,
+      /** Warming: one request per this long (T1: F0 had no 429 at 3.2 s, an unpaced burst did). */
+      paceMs: 3200,
+      /** Warming: wait this long after a 429, then try that clip again… */
+      throttleWaitMs: 15_000,
+      /** …at most this many times. */
+      throttleRetries: 2,
+      /** Warming stops after this long; the rest are made when first played. */
+      warmBudgetMs: 50_000,
+      /** The daily cron deletes clips not played for this long. */
+      retainDays: 90,
+    },
   },
 } as const;
 

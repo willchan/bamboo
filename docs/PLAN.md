@@ -120,40 +120,8 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H6 Re-run extension | merged | [#49](https://github.com/willchan/bamboo/pull/49) |
 | H7 Backfill | merged | [#50](https://github.com/willchan/bamboo/pull/50), [#51](https://github.com/willchan/bamboo/pull/51), [#52](https://github.com/willchan/bamboo/pull/52); two keys in [#48](https://github.com/willchan/bamboo/pull/48) |
 | T1 Neural TTS spike | merged | [#80](https://github.com/willchan/bamboo/pull/80) |
-| T2 Neural TTS | ready | |
+| T2 Neural TTS | merged | [#81](https://github.com/willchan/bamboo/pull/81) |
 
-Finished milestones (M0–M6, H1–H7, T1) and their **Notes** are in [PLAN-done.md](PLAN-done.md). Read
+Finished milestones (M0–M6, H1–H7, T1, T2) and their **Notes** are in [PLAN-done.md](PLAN-done.md). Read
 one there only when your task depends on it; never read that file in full. New milestones go in
 this file and move there once merged.
-
-## T2 — Neural TTS
-
-*Ready (T1 settled the voice and pins: PLAN-done › T1 Notes; DESIGN §6.1). Adds a migration, so it follows the serial-migration rule.*
-
-**Build:** `web/lib/domain/tts.ts` (`speechSsml`, clip key; tested, including 长了 → `zhang 3`
-and an override); migration `tts_clip`; the Azure client (`web/lib/tts-azure.ts`, a timeout,
-no retries in the request path); `GET /api/tts/{phraseId}/{part}`; round payload clip URLs and
-`after()` warming; `audio.ts` playback with the Web Speech fallback and the unlock; daily-cron
-pruning; `config.audio.neural.*`; the `tts_synth` event and `tts_fallback` client log; env in §8.1
-and `.env.example`; a README step 4 table row for the two Azure variables. PRD: audio now matches the card's reading.
-
-**Regression test first:** a card whose displayed pinyin is `zhǎng le` yields SSML that pins
-`zhang 3`. It fails before the change because nothing builds SSML.
-
-**Will, after T2 merges** (the session lists these in its PR):
-
-1. **Vercel:** in the `bamboo` project, open *Settings → Environment Variables* and add
-   `AZURE_SPEECH_KEY` (KEY 1, marked *Sensitive*) and `AZURE_SPEECH_REGION` (for example
-   `westus2`). Tick **Production** only: previews aren't built (§10 #105), and Development stays
-   unticked as for the other secrets (README step 4).
-2. **Redeploy** production (*Deployments → … → Redeploy*) so it picks them up. Until then the app
-   keeps using the device voice, so the merge itself is safe.
-3. **Delete** `web/.env.local` from the spike checkout if you no longer need it locally.
-4. If F0's rate limit proves too low in practice (T1 saw 429s on an unpaced burst): in the Azure resource, open *Pricing tier*, move to
-   **Standard S0**, and add a budget alert (*Cost Management › Budgets*, for example $5 a month,
-   emailing you at 50%).
-
-**Acceptance:** `pnpm lint && pnpm typecheck && pnpm test`, `pnpm --filter web build`, e2e with
-the Azure client stubbed (clip served; fallback when it fails); `pnpm --filter web shot
-/review/back` unchanged. Manual, Will on his iPhone: the 长了 card says zhǎng; Slow works; Listen
-autoplays; airplane mode falls back to the device voice.

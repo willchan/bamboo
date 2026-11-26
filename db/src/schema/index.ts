@@ -3,3 +3,4 @@ export * from "./setting";
 export * from "./phrases";
 export * from "./event";
 export * from "./capture";
+export * from "./tts";

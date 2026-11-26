@@ -1,6 +1,7 @@
 // Capture persistence (DESIGN §2.2–2.3, §3.2, §4.5–4.7, §5.3): imports and their turns, the
 // extract_turn job queue, applying extraction results to the phrase queue, notifications and the
 // daily cron. Rules live in lib/domain; this layer loads, calls them and writes the results.
+import { pruneClips } from "./tts";
 import {
   card,
   event,
@@ -1179,12 +1180,14 @@ export async function runDaily(db: Db, now: number) {
   );
   await runBatch(db, writes);
   const pruned = await db.delete(event).where(lt(event.at, now - config.events.retainDays * DAY));
+  const clipsPruned = await pruneClips(db, now);
   return {
     leases_requeued: leases.requeued,
     leases_failed: leases.failed,
     sentences_promoted: promoted,
     phrases_rescored: scores.length,
     events_pruned: pruned.rowsAffected,
+    clips_pruned: clipsPruned,
   };
 }
 
