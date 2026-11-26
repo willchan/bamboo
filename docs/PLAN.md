@@ -120,7 +120,7 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H6 Re-run extension | merged | [#49](https://github.com/willchan/bamboo/pull/49) |
 | H7 Backfill | merged | [#50](https://github.com/willchan/bamboo/pull/50), [#51](https://github.com/willchan/bamboo/pull/51), [#52](https://github.com/willchan/bamboo/pull/52); two keys in [#48](https://github.com/willchan/bamboo/pull/48) |
 | T1 Neural TTS spike | merged | [#80](https://github.com/willchan/bamboo/pull/80) |
-| T2 Neural TTS | merged | PR_T2 |
+| T2 Neural TTS | merged | [#81](https://github.com/willchan/bamboo/pull/81) |
 
 Finished milestones (M0–M6, H1–H7, T1, T2) and their **Notes** are in [PLAN-done.md](PLAN-done.md). Read
 one there only when your task depends on it; never read that file in full. New milestones go in
