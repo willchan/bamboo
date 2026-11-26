@@ -23,7 +23,7 @@ and shares that Mac's OpenClaw (and its Ollama, now only the worker's fallback).
 | [docs/DESIGN.md](docs/DESIGN.md) | You're changing architecture, schema, API, algorithms, prompts or ops |
 | [docs/PLAN.md](docs/PLAN.md) | You're executing a build milestone: follow its *Session protocol* |
 | [docs/PROMPTS.md](docs/PROMPTS.md) | You're Will, starting a session (orchestrator, milestone, plan update, quality review) |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build Cantonese or a Discord quiz: they're deferred (neural TTS is proposed: DESIGN §6.1) |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | You're tempted to build Cantonese or a Discord quiz: they're deferred (neural TTS is approved, T2 builds it: DESIGN §6.1) |
 
 Read only the sections your task needs. DESIGN.md is very long (40k+ tokens): find yours with
 `grep -n '^#' docs/DESIGN.md` and read only that range, never the whole file. The same goes

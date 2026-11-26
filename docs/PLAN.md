@@ -119,74 +119,16 @@ H5's host change, H7's full run) are gathered by the orchestrator as inputs, as 
 | H5 Tutor capture | merged | [#47](https://github.com/willchan/bamboo/pull/47) |
 | H6 Re-run extension | merged | [#49](https://github.com/willchan/bamboo/pull/49) |
 | H7 Backfill | merged | [#50](https://github.com/willchan/bamboo/pull/50), [#51](https://github.com/willchan/bamboo/pull/51), [#52](https://github.com/willchan/bamboo/pull/52); two keys in [#48](https://github.com/willchan/bamboo/pull/48) |
-| T1 Neural TTS spike | ready (needs Will's Azure key, see T1) | |
-| T2 Neural TTS | proposed (after T1) | |
+| T1 Neural TTS spike | merged | PR_T1 |
+| T2 Neural TTS | ready | |
 
-Finished milestones (M0–M6, H1–H7) and their **Notes** are in [PLAN-done.md](PLAN-done.md). Read
+Finished milestones (M0–M6, H1–H7, T1) and their **Notes** are in [PLAN-done.md](PLAN-done.md). Read
 one there only when your task depends on it; never read that file in full. New milestones go in
 this file and move there once merged.
 
-## T1 — Neural TTS spike
-
-*Approved 2026-11-25 (DESIGN §6.1, §10 #111). Starts once Will has done the steps below.*
-
-**Will first: an Azure Speech resource** (about 10 minutes, free). The session can't do this
-for you, and it must never see the key in chat.
-
-1. **Azure account.** If you have none, sign up at <https://azure.microsoft.com/free> with a
-   Microsoft account. Azure asks for a phone and a card to verify you. The free tier (F0) below
-   never charges: past its monthly allowance, requests fail until the month resets.
-2. **Create the resource.** At <https://portal.azure.com>, choose *Create a resource*, search for
-   **Speech** (*Azure AI services › Speech*) and choose *Create*. Fill in:
-   - *Subscription*: yours.
-   - *Resource group*: *Create new* → `bamboo`.
-   - *Region*: **West US 2** (any region that offers neural voices will do; note which one).
-   - *Name*: `bamboo-speech`. Names are global, so add a suffix if it's taken.
-   - *Pricing tier*: **Free F0**. A subscription can have only one F0 Speech resource; if F0
-     isn't offered, one already exists, so use that one.
-   - Accept any terms notice the form shows, then *Review + create* → *Create*.
-3. **Copy the key and region.** Open the resource (*Go to resource*), then *Resource Management
-   › Keys and Endpoint*. Copy **KEY 1** and the **Location/Region** (for example `westus2`, the
-   short form, not "West US 2").
-4. **Give them to the spike, not the chat.** In the checkout where the T1 session runs, create
-   `web/.env.local` (it's gitignored by `.env*`):
-
-   ```
-   AZURE_SPEECH_KEY=<KEY 1>
-   AZURE_SPEECH_REGION=westus2
-   ```
-
-   Then tell the session "the Azure key is in web/.env.local".
-5. **Check it works** (optional): this prints the number of Mandarin voices, and something above
-   0 means the key and region are right.
-
-   ```bash
-   cd web && set -a && . ./.env.local && set +a && curl -s -H "Ocp-Apim-Subscription-Key: $AZURE_SPEECH_KEY" "https://$AZURE_SPEECH_REGION.tts.speech.microsoft.com/cognitiveservices/voices/list" | grep -o '"Locale":"zh-CN"' | wc -l
-   ```
-
-If a key ever leaks, *Keys and Endpoint › Regenerate Key 1* invalidates it at once (switch the
-app to KEY 2 first if it's live).
-
-**Build:** `web/scripts/tts-spike.ts`, which isn't shipped. It synthesizes a fixed list of
-**synthetic** phrases: 长了, 长大, 头发很长, 银行, 还钱, 我得走了, 你好, 一个, 不对, 觉得, 睡觉, plus
-one example sentence. Each is made in three variants: plain text, polyphones pinned and every
-syllable pinned. It uses two or three `zh-CN` neural voices (HD voices included, if they accept
-phonemes), with slow replay made both ways (§6.1). It writes the MP3s and an `index.html` to
-the gitignored `private/tts-spike/` for Will to play on his iPhone, from the installed PWA's
-origin if possible.
-
-**Decide, and record in Notes:** the voice; whether to pin only polyphones or every syllable
-(listen for 3-3 sandhi in 你好 and 一/不); the slow-replay method; whether a clip autoplays after
-the Start-tap unlock in standalone mode; how F0 counts characters (markup or not) and its rate
-limit; and Azure's handling of synthesis input. If Azure fails on readings, repeat with Google
-Cloud TTS (`pinyin` alphabet) before giving up.
-
-**Acceptance:** Will's choices are in Notes, and DESIGN §6.1 and §10 #111 are updated to match
-(drop "Proposed" from #111 if he goes ahead). No product code.
-
 ## T2 — Neural TTS
 
-*Proposed; after T1 (DESIGN §6.1). Adds a migration, so it follows the serial-migration rule.*
+*Ready (T1 settled the voice and pins: PLAN-done › T1 Notes; DESIGN §6.1). Adds a migration, so it follows the serial-migration rule.*
 
 **Build:** `web/lib/domain/tts.ts` (`speechSsml`, clip key; tested, including 长了 → `zhang 3`
 and an override); migration `tts_clip`; the Azure client (`web/lib/tts-azure.ts`, a timeout,
@@ -207,7 +149,7 @@ and `.env.example`; a README step 4 table row for the two Azure variables. PRD: 
 2. **Redeploy** production (*Deployments → … → Redeploy*) so it picks them up. Until then the app
    keeps using the device voice, so the merge itself is safe.
 3. **Delete** `web/.env.local` from the spike checkout if you no longer need it locally.
-4. If T1 found F0's rate limit too low: in the Azure resource, open *Pricing tier*, move to
+4. If F0's rate limit proves too low in practice (T1 saw 429s on an unpaced burst): in the Azure resource, open *Pricing tier*, move to
    **Standard S0**, and add a budget alert (*Cost Management › Budgets*, for example $5 a month,
    emailing you at 50%).
 
